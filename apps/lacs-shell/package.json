@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.4.1",
+    "@vitest/coverage-v8": "^4.1.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
@@ -23,6 +24,6 @@
     "jsdom": "^25.0.1",
     "typescript": "^5.7.2",
     "vite": "^6.0.3",
-    "vitest": "^2.1.8"
+    "vitest": "^4.1.4"
   }
 }
