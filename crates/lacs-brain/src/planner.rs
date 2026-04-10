@@ -1,7 +1,7 @@
 use crate::state_client::{CuratedState, StateClient};
 use lacs_types::RiskLevel;
 use serde::{Deserialize, Serialize};
-use std::cell::Cell;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use thiserror::Error;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -31,20 +31,65 @@ impl From<RiskLevel> for PlanRiskLevel {
     }
 }
 
+/// A single action within a plan.
+///
+/// Fields are private to enforce the invariant that `approval_required` is always
+/// `true` for `Medium` and `High` risk steps and `false` for `Low` risk steps.
+/// Use [`read_only_step`] or [`mutating_step`] (module-private) to construct.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlanStep {
-    pub action_name: String,
-    pub summary: String,
-    pub risk_level: PlanRiskLevel,
-    pub approval_required: bool,
+    action_name: String,
+    summary: String,
+    risk_level: PlanRiskLevel,
+    approval_required: bool,
 }
 
+impl PlanStep {
+    pub fn action_name(&self) -> &str {
+        &self.action_name
+    }
+
+    pub fn summary(&self) -> &str {
+        &self.summary
+    }
+
+    pub fn risk_level(&self) -> &PlanRiskLevel {
+        &self.risk_level
+    }
+
+    pub fn approval_required(&self) -> bool {
+        self.approval_required
+    }
+}
+
+/// A complete plan produced by the planner for a given intent.
+///
+/// Fields are private to enforce construction through [`Planner::plan_intent`],
+/// which validates the intent and guarantees `steps` is non-empty.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Plan {
-    pub intent: String,
-    pub current_state: CuratedState,
-    pub summary: String,
-    pub steps: Vec<PlanStep>,
+    intent: String,
+    current_state: CuratedState,
+    summary: String,
+    steps: Vec<PlanStep>,
+}
+
+impl Plan {
+    pub fn intent(&self) -> &str {
+        &self.intent
+    }
+
+    pub fn current_state(&self) -> &CuratedState {
+        &self.current_state
+    }
+
+    pub fn summary(&self) -> &str {
+        &self.summary
+    }
+
+    pub fn steps(&self) -> &[PlanStep] {
+        &self.steps
+    }
 }
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
@@ -56,9 +101,14 @@ pub enum PlanningError {
     StateUnavailable(String),
 }
 
+/// Plans user intents into typed, approval-gated action sequences.
+///
+/// Generic over `C: StateClient` so tests can inject a mock without I/O.
+/// Uses `AtomicUsize` internally so `Planner<C>` is `Sync` when `C: Sync`,
+/// enabling use as Tauri managed state.
 pub struct Planner<C> {
     state_client: C,
-    call_count: Cell<usize>,
+    call_count: AtomicUsize,
 }
 
 impl<C> Planner<C>
@@ -68,12 +118,8 @@ where
     pub fn new(state_client: C) -> Self {
         Self {
             state_client,
-            call_count: Cell::new(0),
+            call_count: AtomicUsize::new(0),
         }
-    }
-
-    pub fn state_client_call_count(&self) -> usize {
-        self.call_count.get()
     }
 
     pub fn plan_intent(&self, intent: &str) -> Result<Plan, PlanningError> {
@@ -82,7 +128,7 @@ where
             return Err(PlanningError::EmptyIntent);
         }
 
-        self.call_count.set(self.call_count.get() + 1);
+        self.call_count.fetch_add(1, Ordering::Relaxed);
         let current_state = self.state_client.curated_state()?;
         let lowered = intent.to_ascii_lowercase();
         let mut steps = Vec::new();
