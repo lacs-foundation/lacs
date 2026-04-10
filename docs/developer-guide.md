@@ -22,8 +22,13 @@ That means:
 
 ## Repository Layout
 
-- `docs/plans/` contains the live spec and implementation plan.
-- future code will live under `crates/` and `apps/`.
+- `docs/plans/` — live spec and implementation plan.
+- `crates/lacs-brain/` — unprivileged LLM planner (complete).
+- `crates/lacs-daemon/` — privileged executor (scaffolded; IPC not yet wired).
+- `crates/lacs-core/` — shared constants.
+- `crates/lacs-proto/` — wire types shared between daemon and shell.
+- `crates/lacs-types/` — common domain types.
+- `apps/lacs-shell/` — Tauri + React control surface (scaffolded).
 
 ## Contribution Workflow
 

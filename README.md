@@ -22,8 +22,19 @@ It is a privileged Linux execution layer with:
 
 ## Current Status
 
-The repository currently contains the design and implementation
-planning docs for the v0 control plane.
+LACS is under active development. The brain planning layer is
+complete and all 143 Rust tests pass. The daemon action framework
+and shell UI scaffolding are in place; daemon-to-shell IPC and
+end-to-end execution are the next milestone.
+
+| Component | Status |
+| --- | --- |
+| `lacs-brain` — LLM planner, tool loop, safety fence | **complete** |
+| `lacs-daemon` — action families, policy, previews, jobs | scaffolded |
+| `lacs-shell` — intent, plan, approval, timeline UI | scaffolded |
+| daemon ↔ shell IPC | not yet wired |
+
+Reference docs:
 
 - [Specification draft](docs/plans/2026-04-10-lacs-spec.md)
 - [Implementation plan](docs/plans/2026-04-10-lacs-implementation-plan.md)
