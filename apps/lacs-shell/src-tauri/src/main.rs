@@ -1,4 +1,5 @@
 mod commands;
+mod daemon_client;
 mod events;
 
 use commands::{
@@ -8,14 +9,11 @@ use commands::{
 fn main() {
     tauri::Builder::default()
         .setup(|_app| {
-            // TODO(daemon-ipc): System state is fabricated by DemoStateClient.
-            // Plans reflect a hardcoded Silverblue fixture, not the real machine.
-            // Replace DemoStateClient with a real daemon IPC client before
-            // shipping to production.
+            #[cfg(any(test, feature = "demo"))]
             eprintln!(
                 "[LACS WARNING] Running with DemoStateClient — \
                  system state is fabricated. \
-                 Replace DemoStateClient with a real daemon IPC client before production use."
+                 Disable the 'demo' feature to query the live lacs-daemon."
             );
             Ok(())
         })

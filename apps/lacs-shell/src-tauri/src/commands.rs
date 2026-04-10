@@ -4,7 +4,8 @@ use lacs_brain::config::BrainConfig;
 use lacs_brain::planner::PlanningError;
 use lacs_brain::planner::{LlmPlanner, Plan};
 #[cfg(any(test, feature = "demo"))]
-use lacs_brain::state_client::{CuratedState, StateClient};
+use lacs_brain::state_client::CuratedState;
+use lacs_brain::state_client::StateClient;
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
@@ -42,9 +43,8 @@ pub struct ShellPreview {
 // Demo state client (hardcoded Silverblue fixture)
 // ---------------------------------------------------------------------------
 
-// TODO(daemon-ipc): DemoStateClient returns a hardcoded Silverblue fixture.
-// Replace with a real StateClient that queries the daemon over the Unix socket
-// (gRPC or Unix-domain IPC) before this shell is used in a production context.
+/// Hardcoded Silverblue fixture. Used in tests and demo builds.
+/// Production builds use `DaemonIpcClient` instead.
 #[cfg(any(test, feature = "demo"))]
 #[derive(Clone, Debug, Default)]
 pub struct DemoStateClient;
@@ -68,8 +68,9 @@ impl StateClient for DemoStateClient {
 
 /// Returns the `StateClient` for the current build.
 ///
-/// When the `demo` feature is disabled, this panics — replace with a
-/// real daemon IPC client first.
+/// In `demo` or test builds, returns `DemoStateClient` (hardcoded Silverblue
+/// fixture). In production builds, returns `DaemonIpcClient`, which queries
+/// the running `lacs-daemon` over its Unix socket.
 #[cfg(any(test, feature = "demo"))]
 fn build_state_client() -> Box<dyn StateClient> {
     Box::new(DemoStateClient)
@@ -77,9 +78,11 @@ fn build_state_client() -> Box<dyn StateClient> {
 
 #[cfg(not(any(test, feature = "demo")))]
 fn build_state_client() -> Box<dyn StateClient> {
-    panic!(
-        "No StateClient available: enable the 'demo' feature or implement a real daemon IPC client"
-    )
+    // Strip the "unix://" URI scheme to get the filesystem path.
+    let socket_path = lacs_core::DEFAULT_LISTEN_URI
+        .strip_prefix("unix://")
+        .unwrap_or(lacs_core::DEFAULT_LISTEN_URI);
+    Box::new(crate::daemon_client::DaemonIpcClient::new(socket_path))
 }
 
 pub struct ShellCommandState {
@@ -93,9 +96,9 @@ impl ShellCommandState {
     /// is not set or the config is invalid, so the shell starts even without
     /// API credentials configured.
     ///
-    /// Note: requires the `demo` feature (enabled by default) via
-    /// `build_state_client()`. Replace `DemoStateClient` with a real daemon
-    /// IPC client before disabling that feature.
+    /// In demo or test builds, uses `DemoStateClient` (hardcoded fixture).
+    /// In production builds, uses `DaemonIpcClient` to query live state from
+    /// the running `lacs-daemon`.
     pub fn new() -> Self {
         let config = BrainConfig::from_env().unwrap_or_else(|err| {
             eprintln!("[LACS WARNING] Brain config error: {err}. Falling back to Ollama defaults.");
@@ -139,9 +142,8 @@ pub async fn plan_intent(
 
 #[tauri::command]
 pub fn approve_preview(app: AppHandle, request_hash: String) -> Result<(), String> {
-    // TODO(daemon-ipc): This currently emits a frontend event only.
-    // Wire to the daemon over gRPC / Unix-domain socket to forward approval
-    // before production use so the daemon can execute the plan step.
+    // Emit the approval event so the frontend can update its state while the
+    // daemon execute call is wired in a follow-on task.
     app.emit("lacs:approval-granted", request_hash)
         .map_err(|err| err.to_string())?;
     Ok(())
