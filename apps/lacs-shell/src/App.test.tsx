@@ -48,4 +48,39 @@ describe("App", () => {
       screen.getByText("Read-only intent completed: show me the machine state"),
     ).toBeInTheDocument();
   });
+
+  it("transitions to awaiting-approval for mutating intents", async () => {
+    mockedRequestPlan.mockResolvedValueOnce({
+      summary: "Update plan",
+      preview: { summary: "Preview for update this machine" },
+      approvalRequired: true,
+    });
+
+    render(<App />);
+
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "update this machine" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /generate plan/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent("awaiting-approval");
+    });
+  });
+
+  it("transitions to failed and surfaces the error when requestPlan rejects", async () => {
+    mockedRequestPlan.mockRejectedValueOnce(new Error("daemon unavailable"));
+
+    render(<App />);
+
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "update this machine" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /generate plan/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent("failed");
+    });
+    expect(screen.getByText(/Planning failed:/)).toBeInTheDocument();
+  });
 });
