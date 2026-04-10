@@ -312,9 +312,8 @@ fn wire_response_to_completion(resp: OpenAiResponse) -> Result<Completion, Provi
     let stop_reason = match choice.finish_reason.as_str() {
         "tool_calls" => StopReason::ToolUse,
         "length" => StopReason::MaxTokens,
-        // "stop" is the normal OpenAI-compatible completion reason.
-        // "function_call" is the legacy single-function calling format.
-        "stop" | "function_call" => StopReason::EndTurn,
+        // "stop" is the normal OpenAI-compatible end-of-turn reason.
+        "stop" => StopReason::EndTurn,
         other => {
             return Err(ProviderError::Parse(format!(
                 "unexpected finish_reason from Ollama: '{other}'"
@@ -549,6 +548,32 @@ mod tests {
             wire_response_to_completion(resp).unwrap_err(),
             ProviderError::Parse(_)
         ));
+    }
+
+    #[test]
+    fn function_call_finish_reason_returns_parse_error() {
+        // "function_call" is the legacy single-function format; it is NOT equivalent
+        // to "stop" (end of turn). Mapping it to EndTurn would silently discard the
+        // function result. It must surface as a Parse error so the caller knows this
+        // model format is unsupported.
+        let resp = OpenAiResponse {
+            choices: vec![OpenAiChoice {
+                message: OpenAiMessage {
+                    role: "assistant".into(),
+                    content: None,
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+                finish_reason: "function_call".into(),
+            }],
+        };
+        assert!(
+            matches!(
+                wire_response_to_completion(resp).unwrap_err(),
+                ProviderError::Parse(_)
+            ),
+            "function_call finish_reason must return Parse error (unsupported legacy format)"
+        );
     }
 
     #[test]

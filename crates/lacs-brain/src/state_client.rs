@@ -12,8 +12,10 @@ pub struct CuratedState {
 
 impl CuratedState {
     /// Construct a `CuratedState` with non-empty `host_name` and `deployment`.
-    /// Panics in debug builds if either is empty; callers should validate
-    /// before construction rather than relying on runtime panics.
+    ///
+    /// # Panics
+    /// Panics if `host_name` or `deployment` is empty — these are programmer
+    /// errors; callers must validate before construction.
     pub fn new(
         host_name: impl Into<String>,
         deployment: impl Into<String>,
@@ -23,8 +25,8 @@ impl CuratedState {
     ) -> Self {
         let host_name = host_name.into();
         let deployment = deployment.into();
-        debug_assert!(!host_name.is_empty(), "host_name must not be empty");
-        debug_assert!(!deployment.is_empty(), "deployment must not be empty");
+        assert!(!host_name.is_empty(), "host_name must not be empty");
+        assert!(!deployment.is_empty(), "deployment must not be empty");
         Self {
             host_name,
             deployment,
@@ -36,5 +38,10 @@ impl CuratedState {
 }
 
 pub trait StateClient: Send + Sync {
+    /// Return the curated system state for LLM consumption.
+    ///
+    /// Implementors should return `Err(PlanningError::StateUnavailable(_))`
+    /// when the daemon is unreachable or the state cannot be read. Other
+    /// `PlanningError` variants are semantically incorrect here.
     fn curated_state(&self) -> Result<CuratedState, PlanningError>;
 }

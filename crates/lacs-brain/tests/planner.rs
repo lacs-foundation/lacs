@@ -374,50 +374,104 @@ async fn state_client_error_propagates() {
 }
 
 #[tokio::test]
-async fn unknown_action_name_returns_invalid_plan_output() {
-    let planner = make_planner(MockProvider::new([Ok(Completion {
-        content: vec![ContentBlock::ToolUse {
-            id: "tu_bad".into(),
-            name: "propose_plan".into(),
-            input: serde_json::json!({
-                "summary": "bad plan",
-                "explanation": "using a fake action",
-                "steps": [{
-                    "action_name": "RunShellCommand",
-                    "summary": "run arbitrary shell",
-                    "risk_level": "low",
-                    "params": {}
-                }]
-            }),
-        }],
-        stop_reason: StopReason::ToolUse,
-    })]));
+async fn invalid_plan_with_single_turn_returns_planner_stuck() {
+    // With max_turns=1, a rejected propose_plan exhausts the only available turn.
+    // The planner feeds the rejection back as a tool-result error but has no more
+    // turns to retry, so it returns PlannerStuck. This verifies that the KNOWN_ACTIONS
+    // fence correctly rejects unknown action names.
+    let planner = LlmPlanner::new(
+        Box::new(MockProvider::new([Ok(Completion {
+            content: vec![ContentBlock::ToolUse {
+                id: "tu_bad".into(),
+                name: "propose_plan".into(),
+                input: serde_json::json!({
+                    "summary": "bad plan",
+                    "explanation": "using a fake action",
+                    "steps": [{
+                        "action_name": "RunShellCommand",
+                        "summary": "run arbitrary shell",
+                        "risk_level": "low",
+                        "params": {}
+                    }]
+                }),
+            }],
+            stop_reason: StopReason::ToolUse,
+        })])),
+        Box::new(MockStateClient::default()),
+        1,
+    );
 
-    assert!(matches!(
+    assert_eq!(
         planner.plan_intent("run a command").await.unwrap_err(),
-        PlanningError::InvalidPlanOutput(_)
-    ));
+        PlanningError::PlannerStuck
+    );
 }
 
 #[tokio::test]
-async fn empty_steps_array_returns_invalid_plan_output() {
-    let planner = make_planner(MockProvider::new([Ok(Completion {
-        content: vec![ContentBlock::ToolUse {
-            id: "tu_empty".into(),
-            name: "propose_plan".into(),
-            input: serde_json::json!({
-                "summary": "nothing to do",
-                "explanation": "no steps",
-                "steps": []
+async fn invalid_proposed_plan_is_retried_and_succeeds_on_second_call() {
+    // Turn 1: LLM proposes a plan with an unknown action → safety fence rejects,
+    //         error feedback is sent back as a tool result.
+    // Turn 2: LLM corrects the plan with a valid action → accepted.
+    // This verifies symmetry with the unknown-tool retry path.
+    let planner = LlmPlanner::new(
+        Box::new(MockProvider::new([
+            Ok(Completion {
+                content: vec![ContentBlock::ToolUse {
+                    id: "tu_bad".into(),
+                    name: "propose_plan".into(),
+                    input: serde_json::json!({
+                        "summary": "bad plan",
+                        "explanation": "using a fake action",
+                        "steps": [{
+                            "action_name": "RunShellCommand",
+                            "summary": "run arbitrary shell",
+                            "risk_level": "low",
+                            "params": {}
+                        }]
+                    }),
+                }],
+                stop_reason: StopReason::ToolUse,
             }),
-        }],
-        stop_reason: StopReason::ToolUse,
-    })]));
+            propose_plan(
+                "Inspect system",
+                &[("GetSystemState", "Read current deployment", "low")],
+            ),
+        ])),
+        Box::new(MockStateClient::default()),
+        3,
+    );
 
-    assert!(matches!(
+    let plan = planner.plan_intent("inspect the system").await.unwrap();
+    assert_eq!(plan.steps().len(), 1);
+    assert_eq!(plan.steps()[0].action_name(), "GetSystemState");
+    assert_eq!(plan.intent(), "inspect the system");
+}
+
+#[tokio::test]
+async fn empty_steps_array_with_single_turn_returns_planner_stuck() {
+    // A plan with zero steps is rejected by the safety fence and the error
+    // is fed back as a tool result. With max_turns=1, no retry is possible.
+    let planner = LlmPlanner::new(
+        Box::new(MockProvider::new([Ok(Completion {
+            content: vec![ContentBlock::ToolUse {
+                id: "tu_empty".into(),
+                name: "propose_plan".into(),
+                input: serde_json::json!({
+                    "summary": "nothing to do",
+                    "explanation": "no steps",
+                    "steps": []
+                }),
+            }],
+            stop_reason: StopReason::ToolUse,
+        })])),
+        Box::new(MockStateClient::default()),
+        1,
+    );
+
+    assert_eq!(
         planner.plan_intent("do nothing").await.unwrap_err(),
-        PlanningError::InvalidPlanOutput(_)
-    ));
+        PlanningError::PlannerStuck
+    );
 }
 
 // ---------------------------------------------------------------------------

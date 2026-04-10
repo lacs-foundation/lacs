@@ -8,11 +8,10 @@
 //! The loop is bounded by `max_turns`. If the LLM exhausts all turns without
 //! calling `propose_plan`, the planner returns `PlanningError::PlannerStuck`.
 //!
-//! Note: `StateClient::curated_state()` is a synchronous call invoked directly
-//! from the async planning loop, which runs on a Tokio worker thread. This is
-//! acceptable as long as the implementation does not perform blocking I/O.
-//! If the real daemon client uses a blocking socket, either make the trait
-//! async (via `async_trait`) or dispatch it with `tokio::task::spawn_blocking`.
+//! Note: `StateClient::curated_state()` is synchronous. The current
+//! `DemoStateClient` is non-blocking. A real daemon client using a blocking
+//! socket must either make the trait async (via `async_trait`) or dispatch
+//! via `tokio::task::spawn_blocking` to avoid stalling the runtime thread.
 
 use crate::config::{BrainConfig, ProviderConfig};
 use crate::planning_tools::get_state::get_state_tool_def;
@@ -173,6 +172,7 @@ impl Plan {
 // PlanningError
 // ---------------------------------------------------------------------------
 
+#[non_exhaustive]
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum PlanningError {
     #[error("intent must not be empty")]
@@ -272,7 +272,7 @@ impl LlmPlanner {
 
         let mut messages: Vec<Message> = vec![Message::user_text(intent)];
 
-        for _turn in 0..self.max_turns {
+        for turn in 0..self.max_turns {
             let completion = self
                 .provider
                 .complete(&self.system_prompt, &messages, &self.tools, 4096)
@@ -329,21 +329,41 @@ impl LlmPlanner {
                             }
                             "propose_plan" => {
                                 // Parse and validate before returning.
-                                // If validation fails, log the rejection for security audit
-                                // (safety fence activations are security-relevant events)
-                                // and propagate the error.
+                                // If validation fails, log the rejection (safety fence
+                                // activations are security-relevant events) and feed the
+                                // error back as a tool result so the LLM can self-correct
+                                // within the remaining turns. Symmetric with the
+                                // unknown-tool retry path below.
                                 match parse_proposed_plan(intent, input) {
                                     Ok(plan) => return Ok(plan),
                                     Err(e) => {
                                         eprintln!(
-                                            "[LACS SAFETY] propose_plan rejected: {e}. \
-                                             Input: {input}"
+                                            "[LACS SAFETY] propose_plan rejected \
+                                             (turn {}/{max}): {e}. Input: {input}",
+                                            turn + 1,
+                                            max = self.max_turns
                                         );
-                                        return Err(e);
+                                        tool_results.push(ToolResultBlock {
+                                            tool_use_id: id.clone(),
+                                            content: format!(
+                                                "Plan rejected: {e}. \
+                                                 Correct the plan and call propose_plan again."
+                                            ),
+                                            is_error: true,
+                                        });
                                     }
                                 }
                             }
                             unknown => {
+                                // An unknown tool call is a protocol violation — log it
+                                // as a safety event and feed the error back so the LLM
+                                // has a chance to recover within the remaining turns.
+                                eprintln!(
+                                    "[LACS WARNING] LLM called unknown tool '{unknown}' \
+                                     (turn {}/{max}); sending error feedback.",
+                                    turn + 1,
+                                    max = self.max_turns
+                                );
                                 tool_results.push(ToolResultBlock {
                                     tool_use_id: id.clone(),
                                     content: format!("unknown tool: {unknown}"),

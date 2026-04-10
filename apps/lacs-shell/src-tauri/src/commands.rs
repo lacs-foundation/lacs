@@ -1,6 +1,9 @@
 use crate::events::{DaemonJobOutcome, TimelineEvent};
 use lacs_brain::config::BrainConfig;
-use lacs_brain::planner::{LlmPlanner, Plan, PlanningError};
+#[cfg(any(test, feature = "demo"))]
+use lacs_brain::planner::PlanningError;
+use lacs_brain::planner::{LlmPlanner, Plan};
+#[cfg(any(test, feature = "demo"))]
 use lacs_brain::state_client::{CuratedState, StateClient};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -39,7 +42,7 @@ pub struct ShellPreview {
 // Demo state client (hardcoded Silverblue fixture)
 // ---------------------------------------------------------------------------
 
-// NOTE(task-8): DemoStateClient returns a hardcoded Silverblue fixture.
+// TODO(daemon-ipc): DemoStateClient returns a hardcoded Silverblue fixture.
 // Replace with a real StateClient that queries the daemon over the Unix socket
 // (gRPC or Unix-domain IPC) before this shell is used in a production context.
 #[cfg(any(test, feature = "demo"))]
@@ -63,12 +66,10 @@ impl StateClient for DemoStateClient {
 // Shell command state
 // ---------------------------------------------------------------------------
 
-/// Returns the `StateClient` to use at runtime.
+/// Returns the `StateClient` for the current build.
 ///
-/// Requires the `demo` feature (on by default) because `DemoStateClient`
-/// is the only available implementation. Replace both usages of
-/// `DemoStateClient` here with the real daemon IPC client before disabling
-/// that feature.
+/// When the `demo` feature is disabled, this panics — replace with a
+/// real daemon IPC client first.
 #[cfg(any(test, feature = "demo"))]
 fn build_state_client() -> Box<dyn StateClient> {
     Box::new(DemoStateClient)
@@ -138,7 +139,7 @@ pub async fn plan_intent(
 
 #[tauri::command]
 pub fn approve_preview(app: AppHandle, request_hash: String) -> Result<(), String> {
-    // NOTE(task-8): This currently emits a frontend event only.
+    // TODO(daemon-ipc): This currently emits a frontend event only.
     // Wire to the daemon over gRPC / Unix-domain socket to forward approval
     // before production use so the daemon can execute the plan step.
     app.emit("lacs:approval-granted", request_hash)
@@ -363,6 +364,29 @@ mod tests {
         assert!(resp.approval_required);
         assert_eq!(resp.steps[0].risk_level, "high");
         assert_eq!(resp.preview.summary, "Preview for rebase intent");
+    }
+
+    #[tokio::test]
+    async fn provider_error_surfaces_as_err_string() {
+        // Verify that a ProviderError from plan_intent arrives at the frontend
+        // as a non-empty Err(String) containing recognisable content. This pins
+        // the execute_plan_intent → plan_intent → map_err chain.
+        let planner = LlmPlanner::new(
+            Box::new(MockProvider::once(Err(ProviderError::Http {
+                status: 500,
+                body: "internal server error".into(),
+            }))),
+            Box::new(DemoStateClient),
+            5,
+        );
+        let state = ShellCommandState::with_planner(planner);
+        let err = execute_plan_intent(&state, "install vim")
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("500") || err.contains("http"),
+            "provider HTTP error must appear in err string, got: {err}"
+        );
     }
 
     #[test]

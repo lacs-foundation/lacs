@@ -2,8 +2,6 @@
 //!
 //! Wire format: POST /v1/messages with `input_schema` tool definitions.
 //! Tool results are sent as `type: "tool_result"` blocks in user messages.
-//! `is_error: false` is omitted from serialisation via `skip_serializing_if`
-//! to keep the payload compact; Anthropic ignores the field when absent.
 
 use crate::provider::{
     Completion, ContentBlock, LlmProvider, Message, ProviderError, Role, StopReason, ToolDefinition,
@@ -161,6 +159,10 @@ enum AnthropicBlock {
     ToolResult {
         tool_use_id: String,
         content: String,
+        /// Omitted when `false`: `skip_serializing_if = "Not::not"` calls
+        /// `not()` on the value and skips the field when that returns `true`
+        /// (i.e., when `is_error` is false). Keeps the payload compact;
+        /// Anthropic ignores the field when absent.
         #[serde(skip_serializing_if = "std::ops::Not::not")]
         is_error: bool,
     },
@@ -210,25 +212,24 @@ fn block_to_wire(block: &ContentBlock) -> AnthropicBlock {
 }
 
 fn wire_response_to_completion(resp: AnthropicResponse) -> Result<Completion, ProviderError> {
-    let content = resp
-        .content
-        .into_iter()
-        .filter_map(|block| match block {
-            AnthropicBlock::Text { text } => Some(ContentBlock::Text { text }),
+    let mut content = Vec::with_capacity(resp.content.len());
+    for block in resp.content {
+        match block {
+            AnthropicBlock::Text { text } => content.push(ContentBlock::Text { text }),
             AnthropicBlock::ToolUse { id, name, input } => {
-                Some(ContentBlock::ToolUse { id, name, input })
+                content.push(ContentBlock::ToolUse { id, name, input });
             }
-            // tool_result blocks should not appear in assistant responses;
-            // log a warning if one arrives so protocol violations are visible.
+            // tool_result blocks must not appear in assistant responses.
+            // Return an error so the caller sees the protocol violation rather
+            // than a misleading NoPlanProposed from an empty content vec.
             AnthropicBlock::ToolResult { tool_use_id, .. } => {
-                eprintln!(
-                    "[LACS WARNING] Unexpected tool_result block in Anthropic assistant \
-                     response (tool_use_id: {tool_use_id}); discarding."
-                );
-                None
+                return Err(ProviderError::Parse(format!(
+                    "unexpected tool_result block in Anthropic assistant \
+                     response (tool_use_id: {tool_use_id}); API protocol violation"
+                )));
             }
-        })
-        .collect();
+        }
+    }
 
     let stop_reason = match resp.stop_reason.as_str() {
         "tool_use" => StopReason::ToolUse,
@@ -384,5 +385,41 @@ mod tests {
         let json = serde_json::to_value(&wire).unwrap();
         assert!(json.get("input_schema").is_some());
         assert!(json.get("parameters").is_none());
+    }
+
+    #[test]
+    fn unexpected_tool_result_in_response_returns_parse_error() {
+        // An Anthropic assistant response must never contain a tool_result block.
+        // If one arrives it is an API protocol violation and must be surfaced as
+        // an error rather than silently discarded.
+        let resp = AnthropicResponse {
+            content: vec![AnthropicBlock::ToolResult {
+                tool_use_id: "tu_123".into(),
+                content: "some content".into(),
+                is_error: false,
+            }],
+            stop_reason: "tool_use".into(),
+        };
+        assert!(
+            matches!(
+                wire_response_to_completion(resp),
+                Err(ProviderError::Parse(_))
+            ),
+            "unexpected ToolResult in assistant response must return Parse error"
+        );
+    }
+
+    #[test]
+    fn stop_sequence_is_parsed_as_end_turn() {
+        // Anthropic may return "stop_sequence" when a custom stop sequence fires.
+        // It should be treated identically to "end_turn" from the planner's view.
+        let resp = AnthropicResponse {
+            content: vec![AnthropicBlock::Text {
+                text: "stopped".into(),
+            }],
+            stop_reason: "stop_sequence".into(),
+        };
+        let completion = wire_response_to_completion(resp).unwrap();
+        assert_eq!(completion.stop_reason, StopReason::EndTurn);
     }
 }

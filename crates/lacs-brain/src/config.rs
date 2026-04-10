@@ -76,6 +76,7 @@ impl fmt::Debug for BrainConfig {
 // Errors
 // ---------------------------------------------------------------------------
 
+#[non_exhaustive]
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ConfigError {
     #[error("ANTHROPIC_API_KEY is required when provider is 'anthropic' and must not be empty")]
@@ -100,6 +101,7 @@ impl BrainConfig {
     ///
     /// Returns `Err(ConfigError::MissingAnthropicKey)` if the provider is
     /// `anthropic` and `ANTHROPIC_API_KEY` is absent or empty.
+    #[must_use = "config errors must be handled; ignoring them silently falls back to wrong provider"]
     pub fn from_env() -> Result<Self, ConfigError> {
         let model_override = std::env::var("LACS_LLM_MODEL").ok();
 
@@ -393,5 +395,52 @@ mod tests {
         }
         let cfg = result.expect("config with max_turns=3 should succeed");
         assert_eq!(cfg.max_turns, 3);
+    }
+
+    #[test]
+    fn from_env_anthropic_url_override_is_applied() {
+        let _g = ENV_LOCK.lock().unwrap();
+        unsafe {
+            std::env::set_var("LACS_LLM_PROVIDER", "anthropic");
+            std::env::set_var("ANTHROPIC_API_KEY", "sk-test");
+            std::env::set_var("LACS_ANTHROPIC_URL", "https://proxy.internal");
+            std::env::remove_var("LACS_LLM_MODEL");
+            std::env::remove_var("LACS_BRAIN_MAX_TURNS");
+        }
+        let result = BrainConfig::from_env();
+        unsafe {
+            std::env::remove_var("LACS_LLM_PROVIDER");
+            std::env::remove_var("ANTHROPIC_API_KEY");
+            std::env::remove_var("LACS_ANTHROPIC_URL");
+        }
+        let cfg = result.expect("anthropic config with url override should succeed");
+        if let ProviderConfig::Anthropic { base_url, .. } = cfg.provider {
+            assert_eq!(base_url, "https://proxy.internal");
+        } else {
+            panic!("expected Anthropic provider");
+        }
+    }
+
+    #[test]
+    fn from_env_ollama_url_override_is_applied() {
+        let _g = ENV_LOCK.lock().unwrap();
+        unsafe {
+            std::env::set_var("LACS_LLM_PROVIDER", "ollama");
+            std::env::remove_var("ANTHROPIC_API_KEY");
+            std::env::remove_var("LACS_LLM_MODEL");
+            std::env::set_var("LACS_OLLAMA_URL", "http://gpu-box.local:11434");
+            std::env::remove_var("LACS_BRAIN_MAX_TURNS");
+        }
+        let result = BrainConfig::from_env();
+        unsafe {
+            std::env::remove_var("LACS_LLM_PROVIDER");
+            std::env::remove_var("LACS_OLLAMA_URL");
+        }
+        let cfg = result.expect("ollama config with url override should succeed");
+        if let ProviderConfig::Ollama { base_url, .. } = cfg.provider {
+            assert_eq!(base_url, "http://gpu-box.local:11434");
+        } else {
+            panic!("expected Ollama provider");
+        }
     }
 }

@@ -8,14 +8,14 @@ use commands::{
 fn main() {
     tauri::Builder::default()
         .setup(|_app| {
-            // NOTE(task-8): System state is fabricated by DemoStateClient.
+            // TODO(daemon-ipc): System state is fabricated by DemoStateClient.
             // Plans reflect a hardcoded Silverblue fixture, not the real machine.
             // Replace DemoStateClient with a real daemon IPC client before
             // shipping to production.
             eprintln!(
                 "[LACS WARNING] Running with DemoStateClient — \
                  system state is fabricated. \
-                 Replace with real daemon IPC (task-8) before production use."
+                 Replace DemoStateClient with a real daemon IPC client before production use."
             );
             Ok(())
         })
