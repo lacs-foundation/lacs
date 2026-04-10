@@ -3,10 +3,11 @@
 //! Resolution order:
 //!   1. `LACS_LLM_PROVIDER` — "anthropic" | "ollama"
 //!      If unset: "anthropic" when `ANTHROPIC_API_KEY` is present, else "ollama".
-//!   2. `ANTHROPIC_API_KEY` — required when provider is anthropic.
+//!   2. `ANTHROPIC_API_KEY` — required when provider is anthropic. Must be non-empty.
 //!   3. `LACS_LLM_MODEL` — overrides the provider default model.
-//!   4. `LACS_OLLAMA_URL` — overrides the Ollama base URL.
-//!   5. `LACS_BRAIN_MAX_TURNS` — planning loop turn limit (default: 5).
+//!   4. `LACS_ANTHROPIC_URL` — overrides the Anthropic base URL (default: https://api.anthropic.com).
+//!   5. `LACS_OLLAMA_URL` — overrides the Ollama base URL (default: http://localhost:11434).
+//!   6. `LACS_BRAIN_MAX_TURNS` — planning loop turn limit (default: 5). Must be >= 1 when set.
 
 use std::fmt;
 
@@ -22,12 +23,12 @@ pub const DEFAULT_MAX_TURNS: usize = 5;
 
 #[derive(Clone)]
 pub struct BrainConfig {
-    pub provider: ProviderConfig,
+    pub(crate) provider: ProviderConfig,
     pub max_turns: usize,
 }
 
 #[derive(Clone)]
-pub enum ProviderConfig {
+pub(crate) enum ProviderConfig {
     Anthropic {
         /// Never logged or exposed in error messages.
         api_key: String,
@@ -76,11 +77,14 @@ impl fmt::Debug for BrainConfig {
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ConfigError {
-    #[error("ANTHROPIC_API_KEY is required when provider is 'anthropic'")]
+    #[error("ANTHROPIC_API_KEY is required when provider is 'anthropic' and must not be empty")]
     MissingAnthropicKey,
 
     #[error("unknown provider '{0}': expected 'anthropic' or 'ollama'")]
     UnknownProvider(String),
+
+    #[error("LACS_BRAIN_MAX_TURNS must be a positive integer (>= 1), got '{0}'")]
+    InvalidMaxTurns(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -89,13 +93,27 @@ pub enum ConfigError {
 
 impl BrainConfig {
     /// Load from environment variables.
+    ///
+    /// Returns `Err(ConfigError::InvalidMaxTurns)` if `LACS_BRAIN_MAX_TURNS` is
+    /// set to a non-positive integer or an unparseable value. Unset → default of 5.
+    ///
+    /// Returns `Err(ConfigError::MissingAnthropicKey)` if the provider is
+    /// `anthropic` and `ANTHROPIC_API_KEY` is absent or empty.
     pub fn from_env() -> Result<Self, ConfigError> {
         let model_override = std::env::var("LACS_LLM_MODEL").ok();
 
-        let max_turns = std::env::var("LACS_BRAIN_MAX_TURNS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(DEFAULT_MAX_TURNS);
+        let max_turns = match std::env::var("LACS_BRAIN_MAX_TURNS") {
+            Err(_) => DEFAULT_MAX_TURNS, // not set → use default
+            Ok(raw) => {
+                let parsed: usize = raw
+                    .parse()
+                    .map_err(|_| ConfigError::InvalidMaxTurns(raw.clone()))?;
+                if parsed == 0 {
+                    return Err(ConfigError::InvalidMaxTurns(raw));
+                }
+                parsed
+            }
+        };
 
         let provider_name = std::env::var("LACS_LLM_PROVIDER").unwrap_or_else(|_| {
             if std::env::var("ANTHROPIC_API_KEY").is_ok() {
@@ -108,7 +126,9 @@ impl BrainConfig {
         let provider = match provider_name.to_lowercase().as_str() {
             "anthropic" => {
                 let api_key = std::env::var("ANTHROPIC_API_KEY")
-                    .map_err(|_| ConfigError::MissingAnthropicKey)?;
+                    .ok()
+                    .filter(|k| !k.is_empty())
+                    .ok_or(ConfigError::MissingAnthropicKey)?;
                 let base_url = std::env::var("LACS_ANTHROPIC_URL")
                     .unwrap_or_else(|_| DEFAULT_ANTHROPIC_BASE_URL.into());
                 ProviderConfig::Anthropic {
@@ -181,5 +201,126 @@ mod tests {
         let debug_str = format!("{cfg:?}");
         assert!(!debug_str.contains("sk-secret-key"));
         assert!(debug_str.contains("[redacted]"));
+    }
+
+    // -- InvalidMaxTurns -------------------------------------------------------
+
+    #[test]
+    fn invalid_max_turns_error_message_includes_value() {
+        let err = ConfigError::InvalidMaxTurns("0".into());
+        assert!(err.to_string().contains("0"), "got: {err}");
+    }
+
+    #[test]
+    fn invalid_max_turns_error_message_includes_non_numeric() {
+        let err = ConfigError::InvalidMaxTurns("abc".into());
+        assert!(err.to_string().contains("abc"), "got: {err}");
+    }
+
+    // -- env-var isolation tests ----------------------------------------------
+    // These tests mutate process env vars and must not run concurrently.
+    // A crate-level mutex ensures sequential execution.
+
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn from_env_max_turns_zero_returns_error() {
+        let _g = ENV_LOCK.lock().unwrap();
+        unsafe {
+            std::env::remove_var("LACS_LLM_PROVIDER");
+            std::env::remove_var("ANTHROPIC_API_KEY");
+            std::env::remove_var("LACS_LLM_MODEL");
+            std::env::remove_var("LACS_OLLAMA_URL");
+            std::env::set_var("LACS_BRAIN_MAX_TURNS", "0");
+        }
+        let result = BrainConfig::from_env();
+        unsafe {
+            std::env::remove_var("LACS_BRAIN_MAX_TURNS");
+        }
+        assert!(
+            matches!(result, Err(ConfigError::InvalidMaxTurns(_))),
+            "expected InvalidMaxTurns, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn from_env_max_turns_non_numeric_returns_error() {
+        let _g = ENV_LOCK.lock().unwrap();
+        unsafe {
+            std::env::remove_var("LACS_LLM_PROVIDER");
+            std::env::remove_var("ANTHROPIC_API_KEY");
+            std::env::remove_var("LACS_LLM_MODEL");
+            std::env::remove_var("LACS_OLLAMA_URL");
+            std::env::set_var("LACS_BRAIN_MAX_TURNS", "not-a-number");
+        }
+        let result = BrainConfig::from_env();
+        unsafe {
+            std::env::remove_var("LACS_BRAIN_MAX_TURNS");
+        }
+        assert!(
+            matches!(result, Err(ConfigError::InvalidMaxTurns(_))),
+            "expected InvalidMaxTurns, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn from_env_empty_api_key_returns_missing_key() {
+        let _g = ENV_LOCK.lock().unwrap();
+        unsafe {
+            std::env::set_var("LACS_LLM_PROVIDER", "anthropic");
+            std::env::set_var("ANTHROPIC_API_KEY", "");
+            std::env::remove_var("LACS_LLM_MODEL");
+            std::env::remove_var("LACS_ANTHROPIC_URL");
+            std::env::remove_var("LACS_BRAIN_MAX_TURNS");
+        }
+        let result = BrainConfig::from_env();
+        unsafe {
+            std::env::remove_var("LACS_LLM_PROVIDER");
+            std::env::remove_var("ANTHROPIC_API_KEY");
+        }
+        assert!(
+            matches!(result, Err(ConfigError::MissingAnthropicKey)),
+            "expected MissingAnthropicKey for empty key, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn from_env_ollama_explicit_builds_config() {
+        let _g = ENV_LOCK.lock().unwrap();
+        unsafe {
+            std::env::set_var("LACS_LLM_PROVIDER", "ollama");
+            std::env::remove_var("ANTHROPIC_API_KEY");
+            std::env::remove_var("LACS_LLM_MODEL");
+            std::env::remove_var("LACS_OLLAMA_URL");
+            std::env::remove_var("LACS_BRAIN_MAX_TURNS");
+        }
+        let result = BrainConfig::from_env();
+        unsafe {
+            std::env::remove_var("LACS_LLM_PROVIDER");
+        }
+        let cfg = result.expect("ollama config should succeed");
+        assert!(matches!(cfg.provider, ProviderConfig::Ollama { .. }));
+        assert_eq!(cfg.max_turns, DEFAULT_MAX_TURNS);
+    }
+
+    #[test]
+    fn from_env_max_turns_valid_override() {
+        let _g = ENV_LOCK.lock().unwrap();
+        unsafe {
+            std::env::set_var("LACS_LLM_PROVIDER", "ollama");
+            std::env::remove_var("ANTHROPIC_API_KEY");
+            std::env::remove_var("LACS_LLM_MODEL");
+            std::env::remove_var("LACS_OLLAMA_URL");
+            std::env::set_var("LACS_BRAIN_MAX_TURNS", "3");
+        }
+        let result = BrainConfig::from_env();
+        unsafe {
+            std::env::remove_var("LACS_LLM_PROVIDER");
+            std::env::remove_var("LACS_BRAIN_MAX_TURNS");
+        }
+        let cfg = result.expect("config with max_turns=3 should succeed");
+        assert_eq!(cfg.max_turns, 3);
     }
 }

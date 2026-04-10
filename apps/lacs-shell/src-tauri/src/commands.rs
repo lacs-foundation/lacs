@@ -1,9 +1,6 @@
 use crate::events::{DaemonJobOutcome, TimelineEvent};
-use lacs_brain::config::{BrainConfig, ProviderConfig};
+use lacs_brain::config::BrainConfig;
 use lacs_brain::planner::{LlmPlanner, Plan, PlanningError};
-use lacs_brain::provider::LlmProvider;
-use lacs_brain::providers::anthropic::AnthropicProvider;
-use lacs_brain::providers::ollama::OllamaProvider;
 use lacs_brain::state_client::{CuratedState, StateClient};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -44,10 +41,12 @@ pub struct ShellPreview {
 
 // NOTE(task-8): DemoStateClient returns a hardcoded Silverblue fixture.
 // Replace with a real StateClient that queries the daemon over the Unix socket
-// before this shell is used in a production context.
+// (gRPC or Unix-domain IPC) before this shell is used in a production context.
+#[cfg(any(test, feature = "demo"))]
 #[derive(Clone, Debug, Default)]
 pub struct DemoStateClient;
 
+#[cfg(any(test, feature = "demo"))]
 impl StateClient for DemoStateClient {
     fn curated_state(&self) -> Result<CuratedState, PlanningError> {
         Ok(CuratedState {
@@ -70,13 +69,25 @@ pub struct ShellCommandState {
 
 impl ShellCommandState {
     /// Create from environment-derived config.
-    /// Falls back to Ollama defaults when no provider is configured.
+    ///
+    /// Logs a warning and falls back to Ollama defaults when `LACS_LLM_PROVIDER`
+    /// is not set or the config is invalid, so the shell starts even without
+    /// API credentials configured.
     pub fn new() -> Self {
-        let config = BrainConfig::from_env().unwrap_or_else(|_| BrainConfig::ollama_defaults());
-        let provider = make_provider(&config);
-        Self {
-            planner: LlmPlanner::new(provider, Box::new(DemoStateClient), config.max_turns),
-        }
+        let config = BrainConfig::from_env().unwrap_or_else(|err| {
+            eprintln!("[LACS WARNING] Brain config error: {err}. Falling back to Ollama defaults.");
+            BrainConfig::ollama_defaults()
+        });
+        let planner =
+            LlmPlanner::from_config(config, Box::new(DemoStateClient)).unwrap_or_else(|err| {
+                eprintln!(
+                    "[LACS WARNING] Failed to build LLM provider: {err}. \
+                     Check LACS_LLM_PROVIDER and related env vars."
+                );
+                LlmPlanner::from_config(BrainConfig::ollama_defaults(), Box::new(DemoStateClient))
+                    .expect("Ollama defaults must always produce a valid planner")
+            });
+        Self { planner }
     }
 
     /// Inject a pre-built planner — used in unit tests.
@@ -89,22 +100,6 @@ impl ShellCommandState {
 impl Default for ShellCommandState {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-fn make_provider(config: &BrainConfig) -> Box<dyn LlmProvider> {
-    match &config.provider {
-        ProviderConfig::Anthropic {
-            api_key,
-            model,
-            base_url,
-        } => Box::new(
-            AnthropicProvider::new(api_key, model, base_url)
-                .expect("failed to build Anthropic HTTP client"),
-        ),
-        ProviderConfig::Ollama { base_url, model } => Box::new(
-            OllamaProvider::new(base_url, model).expect("failed to build Ollama HTTP client"),
-        ),
     }
 }
 
@@ -199,7 +194,7 @@ mod tests {
     use async_trait::async_trait;
     use lacs_brain::planner::PlanRiskLevel;
     use lacs_brain::provider::{
-        Completion, ContentBlock, Message, ProviderError, StopReason, ToolDefinition,
+        Completion, ContentBlock, LlmProvider, Message, ProviderError, StopReason, ToolDefinition,
     };
     use std::collections::VecDeque;
     use std::sync::Mutex;

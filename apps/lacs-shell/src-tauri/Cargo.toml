@@ -5,6 +5,12 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+# Enable the hardcoded Silverblue fixture state client.
+# Active by default until a real daemon IPC client is implemented.
+default = ["demo"]
+demo = []
+
 [dependencies]
 lacs-brain = { path = "../../../crates/lacs-brain" }
 serde = { workspace = true, features = ["derive"] }
