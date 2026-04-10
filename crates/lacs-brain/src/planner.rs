@@ -1,12 +1,18 @@
 //! Core planning types and `LlmPlanner`.
 //!
 //! `LlmPlanner` drives a tool-use loop with a configured `LlmProvider`,
-//! dispatches the `get_system_state` planning tool to the `StateClient`,
-//! and returns a validated `Plan` when the LLM calls `propose_plan`.
+//! calls `StateClient::curated_state()` when the LLM invokes the
+//! `get_system_state` tool, and returns a validated `Plan` when the LLM
+//! calls `propose_plan`.
 //!
 //! The loop is bounded by `max_turns`. If the LLM exhausts all turns without
 //! calling `propose_plan`, the planner returns `PlanningError::PlannerStuck`.
+//!
+//! Note: `StateClient` is invoked synchronously (blocking the async task) on
+//! each `get_system_state` call. If the state client ever needs I/O, the trait
+//! must be made async.
 
+use crate::config::{BrainConfig, ProviderConfig};
 use crate::planning_tools::get_state::get_state_tool_def;
 use crate::planning_tools::propose_plan::{parse_proposed_plan, propose_plan_tool_def};
 use crate::prompt::build_system_prompt;
@@ -14,9 +20,10 @@ use crate::provider::{
     ContentBlock, LlmProvider, Message, ProviderError, Role, StopReason, ToolDefinition,
     ToolResultBlock,
 };
+use crate::providers::anthropic::AnthropicProvider;
+use crate::providers::ollama::OllamaProvider;
 use crate::state_client::StateClient;
-use serde::{Deserialize, Serialize};
-use std::sync::OnceLock;
+use serde::Serialize;
 use thiserror::Error;
 
 // ---------------------------------------------------------------------------
@@ -26,7 +33,10 @@ use thiserror::Error;
 /// Risk classification for a single plan step.
 ///
 /// Determines whether the step requires explicit user approval before execution.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Serialises to lowercase strings (`"low"`, `"medium"`, `"high"`) matching the
+/// values expected by `parse_proposed_plan` and the system prompt.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum PlanRiskLevel {
     Low,
     Medium,
@@ -49,32 +59,28 @@ impl PlanRiskLevel {
 
 /// A single action within a plan.
 ///
-/// `approval_required` is derived from `risk_level` at construction time:
-/// `Low` → false, `Medium`/`High` → true. Consumers should rely on
-/// `approval_required()` rather than the risk level directly.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// `approval_required` is a pure function of `risk_level`: `Low` → false,
+/// `Medium`/`High` → true. It is not stored separately to prevent the class of
+/// bugs where the stored value disagrees with the risk level.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct PlanStep {
     action_name: String,
     summary: String,
     risk_level: PlanRiskLevel,
-    approval_required: bool,
     params: serde_json::Value,
 }
 
 impl PlanStep {
-    /// Construct a step. `approval_required` is derived from `risk_level`.
     pub fn new(
         action_name: String,
         summary: String,
         risk_level: PlanRiskLevel,
         params: serde_json::Value,
     ) -> Self {
-        let approval_required = !matches!(risk_level, PlanRiskLevel::Low);
         Self {
             action_name,
             summary,
             risk_level,
-            approval_required,
             params,
         }
     }
@@ -91,8 +97,9 @@ impl PlanStep {
         &self.risk_level
     }
 
+    /// Derived from risk level: `true` for Medium and High, `false` for Low.
     pub fn approval_required(&self) -> bool {
-        self.approval_required
+        !matches!(self.risk_level, PlanRiskLevel::Low)
     }
 
     pub fn params(&self) -> &serde_json::Value {
@@ -105,7 +112,10 @@ impl PlanStep {
 // ---------------------------------------------------------------------------
 
 /// A complete, validated plan returned by `LlmPlanner::plan_intent`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// Guaranteed to have at least one step. Constructed only through
+/// `parse_proposed_plan`, which validates all fields before calling `Plan::new`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Plan {
     intent: String,
     summary: String,
@@ -114,7 +124,16 @@ pub struct Plan {
 }
 
 impl Plan {
+    /// Construct a plan. Panics if `steps` is empty or any string field is
+    /// empty — these are programmer errors; callers must validate first.
     pub fn new(intent: String, summary: String, explanation: String, steps: Vec<PlanStep>) -> Self {
+        assert!(!intent.is_empty(), "Plan intent must not be empty");
+        assert!(!summary.is_empty(), "Plan summary must not be empty");
+        assert!(
+            !explanation.is_empty(),
+            "Plan explanation must not be empty"
+        );
+        assert!(!steps.is_empty(), "Plan must have at least one step");
         Self {
             intent,
             summary,
@@ -175,32 +194,59 @@ impl From<ProviderError> for PlanningError {
 // LlmPlanner
 // ---------------------------------------------------------------------------
 
-// Built once; reused across all planning requests in the process lifetime.
-static SYSTEM_PROMPT: OnceLock<String> = OnceLock::new();
-static TOOLS: OnceLock<[ToolDefinition; 2]> = OnceLock::new();
-
 /// Drives the LLM planning loop.
 ///
-/// Calls `LlmProvider::complete` in a loop until the LLM calls `propose_plan`
-/// (success) or the turn budget is exhausted (error). The `StateClient` is
-/// invoked synchronously whenever the LLM calls `get_system_state`.
+/// The system prompt and tool definitions are built once at construction time
+/// and reused across all planning calls on this instance.
 pub struct LlmPlanner {
     provider: Box<dyn LlmProvider>,
     state_client: Box<dyn StateClient>,
     max_turns: usize,
+    system_prompt: String,
+    tools: Vec<ToolDefinition>,
 }
 
 impl LlmPlanner {
+    /// Construct a planner directly.
+    ///
+    /// # Panics
+    /// Panics if `max_turns` is zero.
     pub fn new(
         provider: Box<dyn LlmProvider>,
         state_client: Box<dyn StateClient>,
         max_turns: usize,
     ) -> Self {
+        assert!(max_turns >= 1, "max_turns must be at least 1");
         Self {
             provider,
             state_client,
             max_turns,
+            system_prompt: build_system_prompt(),
+            tools: vec![get_state_tool_def(), propose_plan_tool_def()],
         }
+    }
+
+    /// Construct a planner from a [`BrainConfig`].
+    ///
+    /// Returns an error if the HTTP client cannot be initialised (rare; only
+    /// fails if the TLS subsystem is unavailable).
+    pub fn from_config(
+        config: BrainConfig,
+        state_client: Box<dyn StateClient>,
+    ) -> Result<Self, String> {
+        let provider: Box<dyn LlmProvider> = match config.provider {
+            ProviderConfig::Anthropic {
+                api_key,
+                model,
+                base_url,
+            } => Box::new(
+                AnthropicProvider::new(&api_key, &model, &base_url).map_err(|e| e.to_string())?,
+            ),
+            ProviderConfig::Ollama { base_url, model } => {
+                Box::new(OllamaProvider::new(&base_url, &model).map_err(|e| e.to_string())?)
+            }
+        };
+        Ok(Self::new(provider, state_client, config.max_turns))
     }
 
     /// Run the planning loop for the given natural-language intent.
@@ -214,15 +260,12 @@ impl LlmPlanner {
             return Err(PlanningError::EmptyIntent);
         }
 
-        let system = SYSTEM_PROMPT.get_or_init(build_system_prompt);
-        let tools = TOOLS.get_or_init(|| [get_state_tool_def(), propose_plan_tool_def()]);
-
         let mut messages: Vec<Message> = vec![Message::user_text(intent)];
 
         for _turn in 0..self.max_turns {
             let completion = self
                 .provider
-                .complete(system, &messages, tools, 4096)
+                .complete(&self.system_prompt, &messages, &self.tools, 4096)
                 .await
                 .map_err(PlanningError::from)?;
 
@@ -254,7 +297,6 @@ impl LlmPlanner {
 
                     let mut tool_results: Vec<ToolResultBlock> =
                         Vec::with_capacity(tool_calls.len());
-                    let mut proposed_plan: Option<Plan> = None;
 
                     for (id, name, input) in &tool_calls {
                         match name.as_str() {
@@ -269,13 +311,10 @@ impl LlmPlanner {
                                 });
                             }
                             "propose_plan" => {
+                                // Parse and validate before returning — if parse fails
+                                // the error propagates via `?` without adding a tool result.
                                 let plan = parse_proposed_plan(intent, input)?;
-                                tool_results.push(ToolResultBlock {
-                                    tool_use_id: id.clone(),
-                                    content: "Plan accepted.".into(),
-                                    is_error: false,
-                                });
-                                proposed_plan = Some(plan);
+                                return Ok(plan);
                             }
                             unknown => {
                                 tool_results.push(ToolResultBlock {
@@ -285,10 +324,6 @@ impl LlmPlanner {
                                 });
                             }
                         }
-                    }
-
-                    if let Some(plan) = proposed_plan {
-                        return Ok(plan);
                     }
 
                     messages.push(Message::tool_results(tool_results));
