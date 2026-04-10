@@ -78,14 +78,6 @@ fn preview_profile(action_name: &str) -> PreviewProfile {
         | "DeleteUser"
         | "AddUserToGroup"
         | "RemoveUserFromGroup"
-        | "AddPackageRepository"
-        | "RemovePackageRepository"
-        | "EnablePackageRepository"
-        | "DisablePackageRepository"
-        | "CreateContainer"
-        | "StartContainer"
-        | "StopContainer"
-        | "RemoveContainer"
         | "EnterToolbox" => PreviewProfile {
             risk_level: RiskLevel::Medium,
             expected_side_effects: vec!["service interruption".to_string()],
@@ -93,6 +85,25 @@ fn preview_profile(action_name: &str) -> PreviewProfile {
             rollback_available: false,
             warnings: vec!["approval required".to_string()],
         },
+        "AddPackageRepository"
+        | "RemovePackageRepository"
+        | "EnablePackageRepository"
+        | "DisablePackageRepository" => PreviewProfile {
+            risk_level: RiskLevel::Medium,
+            expected_side_effects: vec!["package repository configuration will change".to_string()],
+            reboot_required: false,
+            rollback_available: false,
+            warnings: vec!["approval required".to_string()],
+        },
+        "CreateContainer" | "StartContainer" | "StopContainer" | "RemoveContainer" => {
+            PreviewProfile {
+                risk_level: RiskLevel::Medium,
+                expected_side_effects: vec!["container lifecycle will change".to_string()],
+                reboot_required: false,
+                rollback_available: false,
+                warnings: vec!["approval required".to_string()],
+            }
+        }
         "UpdateSystem" | "InstallPackages" | "RemovePackages" | "RebaseSystem"
         | "RollbackDeployment" => PreviewProfile {
             risk_level: RiskLevel::High,

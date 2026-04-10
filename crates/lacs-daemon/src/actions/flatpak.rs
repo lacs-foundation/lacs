@@ -1,0 +1,84 @@
+use super::{command_mechanism, ActionSpec};
+use lacs_types::RiskLevel;
+
+pub fn specs() -> Vec<ActionSpec> {
+    vec![
+        install_flatpak("app-id", "flathub"),
+        remove_flatpak("app-id"),
+        search_flatpak_apps("search-term"),
+        list_flatpak_remotes(),
+        add_flatpak_remote("remote", "https://example.invalid"),
+        remove_flatpak_remote("remote"),
+        get_flatpak_app_info("app-id"),
+    ]
+}
+
+pub fn install_flatpak(app_id: &str, remote: &str) -> ActionSpec {
+    ActionSpec {
+        action_name: "InstallFlatpak",
+        mechanism: command_mechanism("flatpak", ["install", "-y", remote, app_id]),
+        risk_level: RiskLevel::Medium,
+        reboot_required: false,
+        rollback_available: true,
+    }
+}
+
+pub fn remove_flatpak(app_id: &str) -> ActionSpec {
+    ActionSpec {
+        action_name: "RemoveFlatpak",
+        mechanism: command_mechanism("flatpak", ["uninstall", "-y", app_id]),
+        risk_level: RiskLevel::Medium,
+        reboot_required: false,
+        rollback_available: true,
+    }
+}
+
+pub fn search_flatpak_apps(term: &str) -> ActionSpec {
+    ActionSpec {
+        action_name: "SearchFlatpakApps",
+        mechanism: command_mechanism("flatpak", ["search", term]),
+        risk_level: RiskLevel::Low,
+        reboot_required: false,
+        rollback_available: false,
+    }
+}
+
+pub fn list_flatpak_remotes() -> ActionSpec {
+    ActionSpec {
+        action_name: "ListFlatpakRemotes",
+        mechanism: command_mechanism("flatpak", ["remotes", "--columns=name,url"]),
+        risk_level: RiskLevel::Low,
+        reboot_required: false,
+        rollback_available: false,
+    }
+}
+
+pub fn add_flatpak_remote(remote: &str, url: &str) -> ActionSpec {
+    ActionSpec {
+        action_name: "AddFlatpakRemote",
+        mechanism: command_mechanism("flatpak", ["remote-add", "--if-not-exists", remote, url]),
+        risk_level: RiskLevel::Medium,
+        reboot_required: false,
+        rollback_available: true,
+    }
+}
+
+pub fn remove_flatpak_remote(remote: &str) -> ActionSpec {
+    ActionSpec {
+        action_name: "RemoveFlatpakRemote",
+        mechanism: command_mechanism("flatpak", ["remote-delete", remote]),
+        risk_level: RiskLevel::Medium,
+        reboot_required: false,
+        rollback_available: true,
+    }
+}
+
+pub fn get_flatpak_app_info(app_id: &str) -> ActionSpec {
+    ActionSpec {
+        action_name: "GetFlatpakAppInfo",
+        mechanism: command_mechanism("flatpak", ["info", app_id]),
+        risk_level: RiskLevel::Low,
+        reboot_required: false,
+        rollback_available: false,
+    }
+}
