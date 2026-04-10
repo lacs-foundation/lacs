@@ -17,6 +17,11 @@ function aggregateRisk(steps: PlanResponse["steps"]): "low" | "medium" | "high" 
   return "low";
 }
 
+// Returns the first high-risk action name for the confirmation input.
+// Design choice: the user types one action name as an awareness check — all
+// steps are visible in the plan list and the aggregate risk badge communicates
+// overall risk. Requiring one name avoids O(n) typing for multi-step plans
+// while preserving meaningful friction for high-risk changes.
 function firstHighRiskName(steps: PlanResponse["steps"]): string {
   return steps.find((s) => s.riskLevel === "high")?.actionName ?? "";
 }

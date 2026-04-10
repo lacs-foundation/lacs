@@ -4,6 +4,8 @@ import App from "./App";
 import * as bridge from "./daemonBridge";
 import type { PlanResponse } from "./types";
 
+const mockedRequestApproval = vi.mocked(bridge.requestApproval);
+
 vi.mock("./daemonBridge", () => ({
   requestPlan: vi.fn(),
   requestApproval: vi.fn().mockResolvedValue(undefined),
@@ -24,6 +26,18 @@ const READ_ONLY_PLAN: PlanResponse = {
   approvalRequired: false,
   steps: [
     { actionName: "GetSystemState", summary: "Read state", riskLevel: "low", approvalRequired: false, params: {} },
+  ],
+  hostName: "silverblue", deployment: "fedora/41", toolboxCount: 1, flatpakCount: 2,
+};
+
+// Low-risk plan that still requires explicit approval (approvalRequired: true).
+// Used to test the Approve button without needing a checkbox or text input.
+const LOW_RISK_APPROVAL_PLAN: PlanResponse = {
+  summary: "Check system state",
+  explanation: "Reads the current state only.",
+  approvalRequired: true,
+  steps: [
+    { actionName: "GetSystemState", summary: "Read state", riskLevel: "low", approvalRequired: true, params: {} },
   ],
   hostName: "silverblue", deployment: "fedora/41", toolboxCount: 1, flatpakCount: 2,
 };
@@ -77,6 +91,28 @@ describe("App", () => {
       expect(screen.getByRole("status")).toHaveTextContent("Ready");
     });
     expect(screen.getByRole("alert")).toBeInTheDocument();
+  });
+
+  it("transitions to Failed when requestApproval rejects (not stuck in Executing)", async () => {
+    // Regression test: approval_granted is dispatched before requestApproval()
+    // resolves. If requestApproval rejects, policy_errored would be dropped in
+    // "executing" mode. The fix dispatches job_completed("failed") instead.
+    mockedRequestPlan.mockResolvedValueOnce(LOW_RISK_APPROVAL_PLAN);
+    mockedRequestApproval.mockRejectedValueOnce(new Error("IPC connection lost"));
+
+    render(<App />);
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "check state" } });
+    fireEvent.click(screen.getByRole("button", { name: /generate plan/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent("Awaiting your approval");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /approve/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent("Failed");
+    });
   });
 
   it("sets grid data-mode attribute to the current mode", async () => {

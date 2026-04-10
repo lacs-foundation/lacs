@@ -134,18 +134,39 @@ pub fn resolve_caller_role(stream: &UnixStream) -> CallerRole {
         }
         Err(_) => return CallerRole::Observer,
     };
-    let mut groups = groups_for_pid(pid);
+    // Read /etc/group once and build a lookup map — avoids N+1 file reads when
+    // a process has many supplementary groups (one read per GID in the old code).
+    let gid_map = read_gid_map();
+    let mut groups = groups_for_pid(pid, &gid_map);
     // Include the primary GID from SO_PEERCRED. It is not listed in the
     // supplementary Groups: line so must be resolved and added explicitly.
-    if let Some(name) = group_name_for_gid(primary_gid) {
-        if !groups.contains(&name) {
-            groups.push(name);
+    if let Some(name) = gid_map.get(&primary_gid) {
+        if !groups.contains(name) {
+            groups.push(name.clone());
         }
     }
     highest_role_from_groups(groups)
 }
 
-fn groups_for_pid(pid: u32) -> Vec<String> {
+/// Read `/etc/group` once and return a `HashMap<gid, group_name>`.
+/// Silently returns an empty map on I/O failure (falls back to Observer role).
+fn read_gid_map() -> std::collections::HashMap<u32, String> {
+    let mut map = std::collections::HashMap::new();
+    if let Ok(content) = std::fs::read_to_string("/etc/group") {
+        for line in content.lines() {
+            let mut parts = line.splitn(4, ':');
+            let name = match parts.next() { Some(n) => n, None => continue };
+            let _ = parts.next(); // password field
+            let gid_str = match parts.next() { Some(g) => g, None => continue };
+            if let Ok(gid) = gid_str.parse::<u32>() {
+                map.insert(gid, name.to_string());
+            }
+        }
+    }
+    map
+}
+
+fn groups_for_pid(pid: u32, gid_map: &std::collections::HashMap<u32, String>) -> Vec<String> {
     let status = match std::fs::read_to_string(format!("/proc/{pid}/status")) {
         Ok(s) => s,
         Err(e) => {
@@ -155,32 +176,15 @@ fn groups_for_pid(pid: u32) -> Vec<String> {
     };
     for line in status.lines() {
         if line.starts_with("Groups:") {
-            let gids: Vec<u32> = line
+            return line
                 .trim_start_matches("Groups:")
                 .split_whitespace()
-                .filter_map(|s| s.parse().ok())
-                .collect();
-            return gids
-                .iter()
-                .filter_map(|gid| group_name_for_gid(*gid))
+                .filter_map(|s| s.parse::<u32>().ok())
+                .filter_map(|gid| gid_map.get(&gid).cloned())
                 .collect();
         }
     }
     vec![]
-}
-
-fn group_name_for_gid(target_gid: u32) -> Option<String> {
-    let group_file = std::fs::read_to_string("/etc/group").ok()?;
-    for line in group_file.lines() {
-        let mut parts = line.splitn(4, ':');
-        let name = parts.next()?;
-        let _password = parts.next()?;
-        let gid: u32 = parts.next()?.parse().ok()?;
-        if gid == target_gid {
-            return Some(name.to_string());
-        }
-    }
-    None
 }
 
 // ---------------------------------------------------------------------------
@@ -610,6 +614,36 @@ async fn handle_execute(
             .await;
         }
     };
+
+    // Atomically claim the transaction for execution (Queued → Running).
+    // This closes the TOCTOU window: two concurrent execute requests that both
+    // pass find_by_request_hash cannot both proceed — the loser's UPDATE sees
+    // status ≠ Queued and returns false.
+    let claimed = match state.transactions.claim_for_execution(&transaction_id) {
+        Ok(c) => c,
+        Err(e) => {
+            return send_response(
+                framed,
+                &DaemonResponse::ErrorResponse {
+                    request_id: request_id.to_string(),
+                    category: "transient_infrastructure_failure".into(),
+                    message: format!("failed to claim transaction: {e}"),
+                },
+            )
+            .await;
+        }
+    };
+    if !claimed {
+        return send_response(
+            framed,
+            &DaemonResponse::ErrorResponse {
+                request_id: request_id.to_string(),
+                category: "stale_approval".into(),
+                message: "transaction already claimed by a concurrent request".into(),
+            },
+        )
+        .await;
+    }
 
     let job_id = Uuid::new_v4().to_string();
 

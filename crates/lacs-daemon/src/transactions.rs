@@ -202,6 +202,33 @@ impl TransactionStore {
         Ok(())
     }
 
+    /// Atomically claim a `Queued` transaction for execution by transitioning
+    /// its status to `Running` in a single SQL statement.
+    ///
+    /// Returns `Ok(true)` if the transaction was claimed (it was in `Queued`
+    /// state). Returns `Ok(false)` if the transaction could not be claimed —
+    /// it either does not exist or was already transitioned away from `Queued`
+    /// by a concurrent request.
+    ///
+    /// This closes the TOCTOU window in replay protection: two concurrent
+    /// execute requests that both pass `find_by_request_hash` cannot both
+    /// proceed — only the first `claim_for_execution` wins; the loser must
+    /// return `stale_approval`.
+    pub fn claim_for_execution(
+        &self,
+        transaction_id: &str,
+    ) -> Result<bool, TransactionStoreError> {
+        let conn = self.connection()?;
+        let queued_json = serialize_field(&JobState::Queued)?;
+        let running_json = serialize_field(&JobState::Running)?;
+        let rows_affected = conn.execute(
+            "UPDATE transactions SET status = ?1 \
+             WHERE transaction_id = ?2 AND status = ?3",
+            params![running_json, transaction_id, queued_json],
+        )?;
+        Ok(rows_affected > 0)
+    }
+
     fn connection(&self) -> Result<Connection, TransactionStoreError> {
         Ok(Connection::open(&self.path)?)
     }
@@ -421,6 +448,58 @@ mod tests {
         assert!(
             found.is_none(),
             "executed transaction must not be returned (replay protection)"
+        );
+    }
+
+    #[test]
+    fn claim_for_execution_succeeds_for_queued_transaction() {
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let tx = store.record(queued_transaction()).unwrap();
+
+        let claimed = store.claim_for_execution(&tx.transaction_id).unwrap();
+        assert!(claimed, "should claim Queued transaction");
+
+        let updated = store.get(&tx.transaction_id).unwrap().unwrap();
+        assert_eq!(updated.status, JobState::Running, "status must be Running after claim");
+    }
+
+    #[test]
+    fn claim_for_execution_returns_false_when_already_running() {
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let tx = store.record(queued_transaction()).unwrap();
+
+        assert!(store.claim_for_execution(&tx.transaction_id).unwrap(), "first claim must succeed");
+        assert!(
+            !store.claim_for_execution(&tx.transaction_id).unwrap(),
+            "second claim must return false — simulates concurrent execute request"
+        );
+    }
+
+    #[test]
+    fn claim_for_execution_returns_false_for_unknown_id() {
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+
+        let claimed = store.claim_for_execution("does-not-exist").unwrap();
+        assert!(!claimed, "unknown transaction must not be claimable");
+    }
+
+    #[test]
+    fn find_by_request_hash_returns_none_for_running_transaction() {
+        // A Running transaction must not be returned — it has already been
+        // claimed by a concurrent request and must not be executed again.
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let tx = store.record(queued_transaction()).unwrap();
+
+        store.claim_for_execution(&tx.transaction_id).unwrap();
+
+        let found = store.find_by_request_hash("hash-abc").unwrap();
+        assert!(
+            found.is_none(),
+            "Running transaction must not be returned (prevents duplicate execution)"
         );
     }
 

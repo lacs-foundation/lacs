@@ -109,16 +109,18 @@ export default function App() {
   const handleApprove = useCallback(async () => {
     if (state.mode !== "awaiting-approval") return;
     const steps = state.plan.steps;
+    // Dispatch approval_granted immediately so the UI transitions to "executing"
+    // and stays responsive during the (potentially long) daemon execution.
     dispatch({ type: "approval_granted" });
     try {
       await requestApproval(steps);
       dispatch({ type: "daemon_status_changed", status: "connected" });
-    } catch (err) {
-      const shellError: ShellError =
-        err && typeof err === "object" && "code" in err
-          ? (err as ShellError)
-          : { code: "unknown", message: String(err), systemChanged: false };
-      dispatch({ type: "policy_errored", error: shellError });
+    } catch (_err) {
+      // The state is now "executing" — policy_errored is only handled in
+      // awaiting-approval/previewing mode and would be silently dropped here.
+      // Use job_completed("failed") instead so the reducer transitions correctly.
+      dispatch({ type: "daemon_status_changed", status: "unreachable" });
+      dispatch({ type: "job_completed", outcome: "failed" });
     }
   }, [state]);
 
