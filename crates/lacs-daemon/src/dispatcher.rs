@@ -287,7 +287,7 @@ pub async fn connection_handler(
 
         let result = match &request {
             DaemonRequest::QueryState { request_id } => {
-                handle_query_state(&mut framed, &*runner, request_id).await
+                handle_query_state(&mut framed, Arc::clone(&runner), request_id).await
             }
             DaemonRequest::Preview {
                 request_id,
@@ -297,7 +297,7 @@ pub async fn connection_handler(
                 handle_preview(
                     &mut framed,
                     &state,
-                    &*runner,
+                    Arc::clone(&runner),
                     &caller_role,
                     request_id,
                     action_name,
@@ -349,15 +349,34 @@ pub async fn connection_handler(
 
 async fn handle_query_state(
     framed: &mut FramedStream<UnixStream>,
-    runner: &dyn CommandRunner,
+    runner: Arc<dyn CommandRunner + Send + Sync>,
     request_id: &str,
 ) -> Result<(), HandlerError> {
-    let state = collect_state(runner).map_err(HandlerError::StateCollection)?;
+    // collect_state uses std::process::Command (blocking). Offload to the
+    // blocking thread pool so the async executor is not stalled.
+    let collected =
+        match tokio::task::spawn_blocking(move || collect_state(&*runner))
+            .await
+            .expect("collect_state task should not panic")
+        {
+            Ok(s) => s,
+            Err(e) => {
+                return send_response(
+                    framed,
+                    &DaemonResponse::ErrorResponse {
+                        request_id: request_id.to_string(),
+                        category: "state_collection_failed".into(),
+                        message: e.to_string(),
+                    },
+                )
+                .await;
+            }
+        };
     send_response(
         framed,
         &DaemonResponse::StateResponse {
             request_id: request_id.to_string(),
-            state,
+            state: collected,
         },
     )
     .await
@@ -366,7 +385,7 @@ async fn handle_query_state(
 async fn handle_preview(
     framed: &mut FramedStream<UnixStream>,
     state: &DaemonState,
-    runner: &dyn CommandRunner,
+    runner: Arc<dyn CommandRunner + Send + Sync>,
     caller_role: &CallerRole,
     request_id: &str,
     action_name: &str,
@@ -406,8 +425,12 @@ async fn handle_preview(
 
     let request_hash = compute_request_hash(action_name, params);
 
-    // Snapshot current state for the preview.
-    let current_state = collect_state(runner)
+    // Snapshot current state for the preview. collect_state uses
+    // std::process::Command (blocking), so offload to the blocking thread pool.
+    let runner_for_preview = Arc::clone(&runner);
+    let current_state = tokio::task::spawn_blocking(move || collect_state(&*runner_for_preview))
+        .await
+        .expect("collect_state task should not panic")
         .map(|s| serde_json::to_value(&s).unwrap_or(Value::Null))
         .unwrap_or(Value::Null);
     let proposed_change = json!({ "action": action_name, "params": params });
