@@ -118,16 +118,20 @@ impl TransactionStore {
         }
     }
 
-    /// Find the most-recently recorded transaction with the given `request_hash`.
+    /// Find the most-recently recorded transaction with the given `request_hash`
+    /// that is still in `Queued` status.
     ///
-    /// Returns `None` if no matching transaction exists. The dispatcher uses
-    /// this to verify that a preview was generated before an execute request
-    /// is processed.
+    /// Returns `None` if no matching Queued transaction exists. The dispatcher
+    /// uses this to enforce preview-before-execute and to block replay attacks:
+    /// an already-executed (Succeeded/Failed) transaction is never returned,
+    /// so a captured approval hash cannot be reused after the first execute.
     pub fn find_by_request_hash(
         &self,
         request_hash: &str,
     ) -> Result<Option<TransactionRecord>, TransactionStoreError> {
         let conn = self.connection()?;
+        // Status is stored as its JSON serialization (e.g. `"queued"`).
+        let queued_json = serialize_field(&JobState::Queued)?;
         let mut stmt = conn.prepare(
             "SELECT
                 transaction_id,
@@ -141,10 +145,11 @@ impl TransactionStore {
                 warnings_json
              FROM transactions
              WHERE request_hash = ?1
+               AND status = ?2
              ORDER BY rowid DESC
              LIMIT 1",
         )?;
-        let mut rows = stmt.query(params![request_hash])?;
+        let mut rows = stmt.query(params![request_hash, queued_json])?;
         if let Some(row) = rows.next()? {
             Ok(Some(TransactionRecord {
                 transaction_id: row.get(0)?,
@@ -379,7 +384,7 @@ mod tests {
     }
 
     #[test]
-    fn find_by_request_hash_returns_most_recent_match() {
+    fn find_by_request_hash_returns_queued_transaction() {
         let dir = tempdir().unwrap();
         let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
         let tx = store.record(queued_transaction()).unwrap();
@@ -396,5 +401,52 @@ mod tests {
 
         let found = store.find_by_request_hash("nonexistent-hash").unwrap();
         assert!(found.is_none());
+    }
+
+    #[test]
+    fn find_by_request_hash_returns_none_after_transaction_executed() {
+        // A transaction that has already been executed (Succeeded/Failed) must
+        // not be returned — this blocks replay attacks where a captured approval
+        // hash is submitted a second time after the first execute completes.
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let tx = store.record(queued_transaction()).unwrap();
+
+        // Simulate completed execution.
+        store
+            .update_status(&tx.transaction_id, JobState::Succeeded)
+            .unwrap();
+
+        let found = store.find_by_request_hash("hash-abc").unwrap();
+        assert!(
+            found.is_none(),
+            "executed transaction must not be returned (replay protection)"
+        );
+    }
+
+    #[test]
+    fn find_by_request_hash_returns_queued_record_when_hash_shared_with_older_executed() {
+        // If a preview was generated twice for the same action, the most recent
+        // Queued record should be returned even if an older Succeeded record
+        // exists for the same hash.
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+
+        // First round: record → execute → succeed.
+        let first_tx = store.record(queued_transaction()).unwrap();
+        store
+            .update_status(&first_tx.transaction_id, JobState::Succeeded)
+            .unwrap();
+
+        // Second round: new preview with same hash (still Queued).
+        let second_tx = store.record(queued_transaction()).unwrap();
+
+        let found = store.find_by_request_hash("hash-abc").unwrap();
+        assert!(found.is_some(), "second Queued record should be found");
+        assert_eq!(
+            found.unwrap().transaction_id,
+            second_tx.transaction_id,
+            "should return the most-recent Queued record, not the older Succeeded one"
+        );
     }
 }

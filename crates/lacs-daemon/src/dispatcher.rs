@@ -116,25 +116,42 @@ struct JobResult {
 
 /// Resolve the caller's `CallerRole` from the peer process's group membership.
 ///
-/// Uses `SO_PEERCRED` (via `peer_cred()`) to obtain the peer PID, reads
-/// `/proc/{pid}/status` for the supplementary GIDs, and resolves each GID
-/// to a group name via `/etc/group`. Falls back to `Observer` on any error.
+/// Uses `SO_PEERCRED` (via `peer_cred()`) to obtain the peer PID and primary
+/// GID, reads `/proc/{pid}/status` for the supplementary GIDs, and resolves
+/// each GID to a group name via `/etc/group`. The primary GID is included
+/// explicitly because Linux's `Groups:` line in `/proc/{pid}/status` lists
+/// only supplementary groups — a process whose primary group is `wheel` would
+/// otherwise be misclassified as `Observer`. Falls back to `Observer` on any
+/// error.
 pub fn resolve_caller_role(stream: &UnixStream) -> CallerRole {
-    let pid: u32 = match stream.peer_cred() {
-        Ok(cred) => match cred.pid() {
-            Some(p) if p >= 0 => p as u32,
-            _ => return CallerRole::Observer,
-        },
+    let (pid, primary_gid) = match stream.peer_cred() {
+        Ok(cred) => {
+            let pid = match cred.pid() {
+                Some(p) if p >= 0 => p as u32,
+                _ => return CallerRole::Observer,
+            };
+            (pid, cred.gid())
+        }
         Err(_) => return CallerRole::Observer,
     };
-    let groups = groups_for_pid(pid);
+    let mut groups = groups_for_pid(pid);
+    // Include the primary GID from SO_PEERCRED. It is not listed in the
+    // supplementary Groups: line so must be resolved and added explicitly.
+    if let Some(name) = group_name_for_gid(primary_gid) {
+        if !groups.contains(&name) {
+            groups.push(name);
+        }
+    }
     highest_role_from_groups(groups)
 }
 
 fn groups_for_pid(pid: u32) -> Vec<String> {
     let status = match std::fs::read_to_string(format!("/proc/{pid}/status")) {
         Ok(s) => s,
-        Err(_) => return vec![],
+        Err(e) => {
+            eprintln!("[lacs-daemon] could not read /proc/{pid}/status: {e}; treating as no groups");
+            return vec![];
+        }
     };
     for line in status.lines() {
         if line.starts_with("Groups:") {
@@ -233,6 +250,16 @@ fn canonical_json(v: &Value) -> String {
                 .join(",");
             format!("{{{pairs}}}")
         }
+        // Arrays preserve element order (ordering is meaningful) but recurse
+        // into each element so nested objects get their keys sorted.
+        Value::Array(arr) => {
+            let items = arr
+                .iter()
+                .map(canonical_json)
+                .collect::<Vec<_>>()
+                .join(",");
+            format!("[{items}]")
+        }
         _ => serde_json::to_string(v).unwrap(),
     }
 }
@@ -328,7 +355,7 @@ pub async fn connection_handler(
                     &mut framed,
                     &DaemonResponse::ErrorResponse {
                         request_id: job_id.clone(),
-                        category: "validation_failure".into(),
+                        category: "not_implemented".into(),
                         message: "cancel not yet implemented".into(),
                     },
                 )
@@ -337,8 +364,9 @@ pub async fn connection_handler(
         };
 
         if let Err(e) = result {
-            eprintln!("[lacs-daemon] connection handler error: {e}");
-            // Error was already sent to the client as an error_response.
+            // A framing error occurred while sending a response. Log it and
+            // continue; the next recv() will return Err if the peer is gone.
+            eprintln!("[lacs-daemon] connection handler send error: {e}");
         }
     }
 }
@@ -427,12 +455,20 @@ async fn handle_preview(
 
     // Snapshot current state for the preview. collect_state uses
     // std::process::Command (blocking), so offload to the blocking thread pool.
+    // State is best-effort: if collection fails, the preview is generated with
+    // an empty state and a warning is logged rather than aborting the preview.
     let runner_for_preview = Arc::clone(&runner);
     let current_state = tokio::task::spawn_blocking(move || collect_state(&*runner_for_preview))
         .await
         .expect("collect_state task should not panic")
         .map(|s| serde_json::to_value(&s).unwrap_or(Value::Null))
-        .unwrap_or(Value::Null);
+        .unwrap_or_else(|e| {
+            eprintln!(
+                "[lacs-daemon] handle_preview: state collection failed ({e}); \
+                 generating preview with empty state"
+            );
+            Value::Null
+        });
     let proposed_change = json!({ "action": action_name, "params": params });
 
     let envelope = RequestEnvelope {
@@ -457,10 +493,23 @@ async fn handle_preview(
         warnings: preview.warnings.clone(),
     };
 
-    let recorded = state
+    let recorded = match state
         .transactions
         .record_previewed(new_tx, preview.clone())
-        .map_err(HandlerError::Transaction)?;
+    {
+        Ok(r) => r,
+        Err(e) => {
+            return send_response(
+                framed,
+                &DaemonResponse::ErrorResponse {
+                    request_id: request_id.to_string(),
+                    category: "transient_infrastructure_failure".into(),
+                    message: format!("failed to record preview transaction: {e}"),
+                },
+            )
+            .await;
+        }
+    };
 
     send_response(
         framed,
@@ -529,10 +578,22 @@ async fn handle_execute(
     }
 
     // Verify a prior preview exists (enforce preview-before-execute).
-    let prior_tx = state
-        .transactions
-        .find_by_request_hash(&stored_hash)
-        .map_err(HandlerError::Transaction)?;
+    // A lookup failure is an infrastructure error — send a response instead of
+    // propagating, which would leave the client hanging with no reply.
+    let prior_tx = match state.transactions.find_by_request_hash(&stored_hash) {
+        Ok(tx) => tx,
+        Err(e) => {
+            return send_response(
+                framed,
+                &DaemonResponse::ErrorResponse {
+                    request_id: request_id.to_string(),
+                    category: "transient_infrastructure_failure".into(),
+                    message: format!("transaction lookup failed: {e}"),
+                },
+            )
+            .await;
+        }
+    };
 
     let transaction_id = match prior_tx {
         Some(tx) => tx.transaction_id,
@@ -603,10 +664,17 @@ async fn handle_execute(
         }
     }
 
-    // Update the transaction record.
-    let _ = state
+    // Update the transaction record. A failure here is an audit-trail loss —
+    // log it. The job result is still sent to the client.
+    if let Err(e) = state
         .transactions
-        .update_status(&transaction_id, final_status.clone());
+        .update_status(&transaction_id, final_status.clone())
+    {
+        eprintln!(
+            "[lacs-daemon] failed to update transaction {transaction_id} to \
+             {final_status:?}: {e}"
+        );
+    }
 
     send_response(
         framed,
@@ -788,6 +856,31 @@ mod tests {
         let hash1 = compute_request_hash("InstallFlatpak", &json!({"app_id": "org.gnome.Builder", "remote": "flathub"}));
         let hash2 = compute_request_hash("InstallFlatpak", &json!({"remote": "flathub", "app_id": "org.gnome.Builder"}));
         assert_eq!(hash1, hash2, "canonical JSON must sort keys");
+    }
+
+    #[test]
+    fn canonical_json_recurses_into_arrays() {
+        // Objects nested inside arrays must also have sorted keys so that
+        // {"packages": [{"b": 1, "a": 2}]} and {"packages": [{"a": 2, "b": 1}]}
+        // produce the same hash.
+        let hash1 = compute_request_hash(
+            "InstallPackages",
+            &json!({"packages": [{"b": 1, "a": 2}]}),
+        );
+        let hash2 = compute_request_hash(
+            "InstallPackages",
+            &json!({"packages": [{"a": 2, "b": 1}]}),
+        );
+        assert_eq!(hash1, hash2, "nested object keys in arrays must be sorted");
+    }
+
+    #[test]
+    fn canonical_json_preserves_array_element_order() {
+        // Array element order is semantically significant ("install a then b"
+        // is different from "install b then a"), so it must be preserved.
+        let hash1 = compute_request_hash("Op", &json!({"items": ["a", "b"]}));
+        let hash2 = compute_request_hash("Op", &json!({"items": ["b", "a"]}));
+        assert_ne!(hash1, hash2, "array element order must be preserved");
     }
 
     // ------------------------------------------------------------------

@@ -41,8 +41,10 @@ impl CommandRunner for RealCommandRunner {
 
 /// Collect a system state snapshot using the provided runner.
 ///
-/// Hostname and deployment are required; service, flatpak, and toolbox lists
-/// are best-effort and default to empty on failure.
+/// Only `host_name` is required. All other fields (`deployment`, `services`,
+/// `flatpaks`, `toolboxes`) are best-effort and default to empty on failure so
+/// the daemon works on non-Silverblue systems and in CI. The brain's safety
+/// fence will reject irrelevant actions based on the curated state it receives.
 pub fn collect_state(runner: &dyn CommandRunner) -> Result<CollectedState, CollectorError> {
     let host_name = runner
         .run("hostname", &[])
@@ -55,10 +57,7 @@ pub fn collect_state(runner: &dyn CommandRunner) -> Result<CollectedState, Colle
     let deployment = runner
         .run("rpm-ostree", &["status", "--booted", "--json"])
         .map(|s| s.trim().to_string())
-        .map_err(|e| CollectorError::CommandFailed {
-            command: "rpm-ostree",
-            reason: e.to_string(),
-        })?;
+        .unwrap_or_default();
 
     let services = runner
         .run(
@@ -236,6 +235,29 @@ mod tests {
             ),
             "expected CommandFailed(hostname), got: {result:?}"
         );
+    }
+
+    #[test]
+    fn collect_state_returns_empty_deployment_when_rpm_ostree_missing() {
+        // rpm-ostree is not available on all systems (e.g. Fedora Workstation,
+        // Ubuntu, CI). A missing binary must produce an empty deployment string,
+        // not an error, so the daemon stays functional on non-Silverblue hosts.
+        struct NoRpmOstreeRunner;
+        impl CommandRunner for NoRpmOstreeRunner {
+            fn run(&self, program: &str, _args: &[&str]) -> Result<String, io::Error> {
+                match program {
+                    "hostname" => Ok("non-silverblue-host\n".to_string()),
+                    _ => Err(io::Error::new(io::ErrorKind::NotFound, "not found")),
+                }
+            }
+        }
+
+        let state = collect_state(&NoRpmOstreeRunner).unwrap();
+        assert_eq!(state.host_name, "non-silverblue-host");
+        assert_eq!(state.deployment, "", "deployment must be empty, not an error");
+        assert!(state.services.is_empty());
+        assert!(state.flatpaks.is_empty());
+        assert!(state.toolboxes.is_empty());
     }
 
     #[test]

@@ -15,6 +15,7 @@
 
 use std::io::{self, Read, Write};
 use std::os::unix::net::UnixStream;
+use std::time::Duration;
 
 use lacs_brain::planner::PlanningError;
 use lacs_brain::state_client::{CuratedState, StateClient};
@@ -22,6 +23,12 @@ use serde_json::Value;
 
 /// Maximum response size accepted from the daemon (4 MiB — mirrors daemon limit).
 const MAX_RESPONSE_BYTES: u32 = 4 * 1024 * 1024;
+
+/// Read/write timeout applied to each daemon connection.
+///
+/// Prevents the shell from hanging indefinitely if the daemon is unresponsive.
+/// 10 seconds matches the timeout specified in the IPC spec for state collection.
+const SOCKET_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// A [`StateClient`] that queries a running `lacs-daemon` over its Unix socket.
 ///
@@ -46,6 +53,16 @@ impl DaemonIpcClient {
     fn query_state_inner(&self) -> Result<CuratedState, String> {
         let mut stream = UnixStream::connect(&self.socket_path)
             .map_err(|e| format!("cannot connect to daemon at {}: {e}", self.socket_path))?;
+
+        // Apply a timeout so a blocked daemon does not stall the shell
+        // indefinitely. Both read_timeout and write_timeout must be set;
+        // only setting one leaves the other direction unbounded.
+        stream
+            .set_read_timeout(Some(SOCKET_TIMEOUT))
+            .map_err(|e| format!("failed to set read timeout: {e}"))?;
+        stream
+            .set_write_timeout(Some(SOCKET_TIMEOUT))
+            .map_err(|e| format!("failed to set write timeout: {e}"))?;
 
         let request =
             serde_json::to_vec(&serde_json::json!({
