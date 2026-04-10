@@ -118,7 +118,8 @@ pub async fn plan_intent(
 #[tauri::command]
 pub fn approve_preview(app: AppHandle, request_hash: String) -> Result<(), String> {
     // NOTE(task-8): This currently emits a frontend event only.
-    // Wire to the daemon Unix socket to forward approval before production use.
+    // Wire to the daemon over gRPC / Unix-domain socket to forward approval
+    // before production use so the daemon can execute the plan step.
     app.emit("lacs:approval-granted", request_hash)
         .map_err(|err| err.to_string())?;
     Ok(())

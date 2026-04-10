@@ -2,6 +2,8 @@
 //!
 //! Wire format: POST /v1/messages with `input_schema` tool definitions.
 //! Tool results are sent as `type: "tool_result"` blocks in user messages.
+//! `is_error: false` is omitted from serialisation via `skip_serializing_if`
+//! to keep the payload compact; Anthropic ignores the field when absent.
 
 use crate::provider::{
     Completion, ContentBlock, LlmProvider, Message, ProviderError, Role, StopReason, ToolDefinition,

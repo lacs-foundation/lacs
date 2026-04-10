@@ -3,7 +3,9 @@
 //! Wire format: POST /v1/chat/completions with OpenAI function-calling format.
 //! `function.parameters` instead of `input_schema`.
 //! Tool results sent as `role: "tool"` messages with `tool_call_id`.
-//! `function.arguments` is a JSON-encoded string (requires second parse).
+//! `function.arguments` is a JSON-encoded string (requires a second
+//! `serde_json::from_str` parse); a malformed arguments string returns
+//! `ProviderError::Parse` rather than silently substituting `null`.
 
 use crate::provider::{
     Completion, ContentBlock, LlmProvider, Message, ProviderError, Role, StopReason, ToolDefinition,
