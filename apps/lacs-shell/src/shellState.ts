@@ -97,8 +97,11 @@ export function shellReducer(state: ShellState, action: ShellAction): ShellState
       return appendTimeline(state, action.text);
     case "reset":
       return initialShellState;
-    default:
+    default: {
+      const exhaustiveCheck: never = action;
+      console.warn("[LACS] shellReducer received unknown action:", exhaustiveCheck);
       return state;
+    }
   }
 }
 

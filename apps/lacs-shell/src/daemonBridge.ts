@@ -8,22 +8,21 @@ export interface DaemonPlanResponse {
   approvalRequired: boolean;
 }
 
-export async function requestPlan(intent: string): Promise<DaemonPlanResponse> {
+function requireTauriRuntime(): void {
   if (!isTauriRuntime()) {
-    return {
-      summary: `Demo plan for ${intent}`,
-      preview: { summary: `Demo preview for ${intent}` },
-    };
+    throw new Error(
+      "LACS Shell is not running inside a Tauri runtime. The daemon bridge is unavailable.",
+    );
   }
+}
 
+export async function requestPlan(intent: string): Promise<DaemonPlanResponse> {
+  requireTauriRuntime();
   return invoke<DaemonPlanResponse>("plan_intent", { intent });
 }
 
 export async function requestApproval(requestHash: string): Promise<void> {
-  if (!isTauriRuntime()) {
-    return;
-  }
-
+  requireTauriRuntime();
   await invoke("approve_preview", { requestHash });
 }
 
@@ -32,9 +31,7 @@ export async function subscribeDaemonEvents(
   onTimeline: (payload: TimelineEntry) => void,
   onOutcome: (payload: ShellOutcome) => void,
 ): Promise<() => void> {
-  if (!isTauriRuntime()) {
-    return () => undefined;
-  }
+  requireTauriRuntime();
 
   const previewUnlisten = await listen<ShellPreview>("lacs:preview-ready", (event) => {
     onPreview(event.payload);

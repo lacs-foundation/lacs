@@ -13,31 +13,43 @@ export default function App() {
   const [state, dispatch] = useReducer(shellReducer, initialShellState);
 
   useEffect(() => {
-    let alive = true;
-    void subscribeDaemonEvents(
+    let unsubscribeFn: (() => void) | null = null;
+    let cancelled = false;
+
+    subscribeDaemonEvents(
       (payload) => {
-        if (alive) {
+        if (!cancelled) {
           dispatch({ type: "preview_ready", summary: payload.summary });
         }
       },
       (payload) => {
-        if (alive) {
+        if (!cancelled) {
           dispatch({ type: "timeline_event", text: payload.text });
         }
       },
       (outcome) => {
-        if (alive) {
+        if (!cancelled) {
           dispatch({ type: "job_completed", outcome });
         }
       },
-    ).then((unsubscribe) => {
-      if (!alive) {
-        unsubscribe();
-      }
-    });
+    )
+      .then((unsub) => {
+        if (cancelled) {
+          unsub();
+        } else {
+          unsubscribeFn = unsub;
+        }
+      })
+      .catch((err) => {
+        console.error("[LACS] Failed to subscribe to daemon events:", err);
+        if (!cancelled) {
+          dispatch({ type: "job_completed", outcome: "failed" });
+        }
+      });
 
     return () => {
-      alive = false;
+      cancelled = true;
+      unsubscribeFn?.();
     };
   }, []);
 
@@ -47,16 +59,22 @@ export default function App() {
     }
 
     dispatch({ type: "intent_submitted", intent });
-    const response = await requestPlan(intent);
-    dispatch({ type: "preview_ready", summary: response.preview.summary });
-    if (response.approvalRequired) {
-      dispatch({ type: "request_approval" });
-    } else {
-      dispatch({
-        type: "timeline_event",
-        text: `Read-only intent completed: ${intent}`,
-      });
-      dispatch({ type: "job_completed", outcome: "succeeded" });
+    try {
+      const response = await requestPlan(intent);
+      dispatch({ type: "preview_ready", summary: response.preview.summary });
+      if (response.approvalRequired) {
+        dispatch({ type: "request_approval" });
+      } else {
+        dispatch({
+          type: "timeline_event",
+          text: `Read-only intent completed: ${intent}`,
+        });
+        dispatch({ type: "job_completed", outcome: "succeeded" });
+      }
+    } catch (err) {
+      console.error("[LACS] requestPlan failed:", err);
+      dispatch({ type: "timeline_event", text: `Planning failed: ${String(err)}` });
+      dispatch({ type: "job_completed", outcome: "failed" });
     }
   }
 
