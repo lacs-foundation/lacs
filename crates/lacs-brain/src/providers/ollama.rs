@@ -95,7 +95,10 @@ impl LlmProvider for OllamaProvider {
         let status = resp.status().as_u16();
 
         if !resp.status().is_success() {
-            let body_text = resp.text().await.unwrap_or_default();
+            let body_text = resp
+                .text()
+                .await
+                .unwrap_or_else(|e| format!("<failed to read response body: {e}>"));
             return Err(ProviderError::Http {
                 status,
                 body: body_text,
@@ -197,10 +200,13 @@ fn messages_to_wire(messages: &[Message]) -> Vec<OpenAiMessage> {
         match msg.role {
             Role::User => {
                 // If all blocks are tool results, emit one `tool` message per result.
-                let all_results = msg
-                    .content
-                    .iter()
-                    .all(|b| matches!(b, ContentBlock::ToolResult { .. }));
+                // Guard with !is_empty() so an empty content vec does not vacuously
+                // satisfy Iterator::all and silently drop the message.
+                let all_results = !msg.content.is_empty()
+                    && msg
+                        .content
+                        .iter()
+                        .all(|b| matches!(b, ContentBlock::ToolResult { .. }));
 
                 if all_results {
                     for block in &msg.content {
@@ -318,7 +324,12 @@ fn wire_response_to_completion(resp: OpenAiResponse) -> Result<Completion, Provi
     if let Some(tool_calls) = choice.message.tool_calls {
         for tc in tool_calls {
             let input: serde_json::Value =
-                serde_json::from_str(&tc.function.arguments).unwrap_or(serde_json::Value::Null);
+                serde_json::from_str(&tc.function.arguments).map_err(|e| {
+                    ProviderError::Parse(format!(
+                        "tool call '{}' has unparseable arguments: {e}",
+                        tc.function.name
+                    ))
+                })?;
             content.push(ContentBlock::ToolUse {
                 id: tc.id,
                 name: tc.function.name,
@@ -455,5 +466,62 @@ mod tests {
         let json = serde_json::to_value(&tool).unwrap();
         assert!(json["function"].get("parameters").is_some());
         assert!(json["function"].get("input_schema").is_none());
+    }
+
+    #[test]
+    fn malformed_arguments_json_returns_parse_error() {
+        let resp = OpenAiResponse {
+            choices: vec![OpenAiChoice {
+                message: OpenAiMessage {
+                    role: "assistant".into(),
+                    content: None,
+                    tool_calls: Some(vec![OpenAiToolCall {
+                        id: "call_1".into(),
+                        r#type: "function".into(),
+                        function: OpenAiCalledFunction {
+                            name: "propose_plan".into(),
+                            arguments: "not valid json {{".into(),
+                        },
+                    }]),
+                    tool_call_id: None,
+                },
+                finish_reason: "tool_calls".into(),
+            }],
+        };
+        assert!(matches!(
+            wire_response_to_completion(resp).unwrap_err(),
+            ProviderError::Parse(_)
+        ));
+    }
+
+    #[test]
+    fn finish_reason_length_maps_to_max_tokens() {
+        let resp = OpenAiResponse {
+            choices: vec![OpenAiChoice {
+                message: OpenAiMessage {
+                    role: "assistant".into(),
+                    content: Some("truncated".into()),
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+                finish_reason: "length".into(),
+            }],
+        };
+        let completion = wire_response_to_completion(resp).unwrap();
+        assert_eq!(completion.stop_reason, StopReason::MaxTokens);
+    }
+
+    #[test]
+    fn empty_user_message_content_does_not_emit_tool_messages() {
+        // An empty content vec on a user message must not be treated as
+        // "all results" (empty iterator vacuously satisfies Iterator::all).
+        let messages = vec![Message {
+            role: crate::provider::Role::User,
+            content: vec![],
+        }];
+        let wire = messages_to_wire(&messages);
+        // Empty content should produce an empty user message (not zero messages)
+        assert_eq!(wire.len(), 1);
+        assert_eq!(wire[0].role, "user");
     }
 }

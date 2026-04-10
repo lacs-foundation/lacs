@@ -90,13 +90,20 @@ impl LlmProvider for AnthropicProvider {
         let status = resp.status().as_u16();
 
         if status == 401 {
-            return Err(ProviderError::Auth("invalid api key".into()));
+            let body_text = resp
+                .text()
+                .await
+                .unwrap_or_else(|e| format!("<failed to read response body: {e}>"));
+            return Err(ProviderError::Auth(body_text));
         }
         if status == 429 || status == 529 {
             return Err(ProviderError::RateLimit);
         }
         if !resp.status().is_success() {
-            let body_text = resp.text().await.unwrap_or_default();
+            let body_text = resp
+                .text()
+                .await
+                .unwrap_or_else(|e| format!("<failed to read response body: {e}>"));
             return Err(ProviderError::Http {
                 status,
                 body: body_text,
@@ -302,6 +309,18 @@ mod tests {
         };
         let completion = wire_response_to_completion(resp);
         assert_eq!(completion.stop_reason, StopReason::EndTurn);
+    }
+
+    #[test]
+    fn stop_reason_max_tokens_parsed_correctly() {
+        let resp = AnthropicResponse {
+            content: vec![AnthropicBlock::Text {
+                text: "truncated".into(),
+            }],
+            stop_reason: "max_tokens".into(),
+        };
+        let completion = wire_response_to_completion(resp);
+        assert_eq!(completion.stop_reason, StopReason::MaxTokens);
     }
 
     #[test]
