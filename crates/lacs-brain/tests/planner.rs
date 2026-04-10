@@ -421,6 +421,69 @@ async fn empty_steps_array_returns_invalid_plan_output() {
 }
 
 // ---------------------------------------------------------------------------
+// MaxTokens stop reason
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn max_tokens_stop_reason_returns_no_plan_proposed() {
+    let planner = make_planner(MockProvider::new([Ok(Completion {
+        content: vec![ContentBlock::Text {
+            text: "I was about to say something useful but ran out of tokens...".into(),
+        }],
+        stop_reason: StopReason::MaxTokens,
+    })]));
+    assert_eq!(
+        planner.plan_intent("do something").await.unwrap_err(),
+        PlanningError::NoPlanProposed
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Unknown tool call — continues loop and eventually returns PlannerStuck
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn unknown_tool_call_continues_loop_and_eventually_sticks() {
+    // Provider always calls an unknown tool; the loop feeds back an error result
+    // on every turn until max_turns is exhausted.
+    let unknown_tool_call = || {
+        Ok(Completion {
+            content: vec![ContentBlock::ToolUse {
+                id: "tu_x".into(),
+                name: "fly_to_the_moon".into(),
+                input: serde_json::json!({}),
+            }],
+            stop_reason: StopReason::ToolUse,
+        })
+    };
+    let turns: Vec<_> = (0..6).map(|_| unknown_tool_call()).collect();
+    let planner = make_planner(MockProvider::new(turns));
+    assert_eq!(
+        planner.plan_intent("do something").await.unwrap_err(),
+        PlanningError::PlannerStuck
+    );
+}
+
+// ---------------------------------------------------------------------------
+// max_turns = 1 with a state call on the first turn → PlannerStuck
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn max_turns_one_with_state_call_returns_planner_stuck() {
+    // With max_turns=1, the single turn is consumed by get_system_state;
+    // there is no turn left for propose_plan.
+    let planner = LlmPlanner::new(
+        Box::new(MockProvider::new([get_system_state_call()])),
+        Box::new(MockStateClient::default()),
+        1,
+    );
+    assert_eq!(
+        planner.plan_intent("show state").await.unwrap_err(),
+        PlanningError::PlannerStuck
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Error message stability — pin human-readable strings
 // ---------------------------------------------------------------------------
 
