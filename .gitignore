@@ -1,0 +1,7 @@
+/target/
+/node_modules/
+/.pnpm-store/
+/.turbo/
+*.swp
+*.swo
+.DS_Store
