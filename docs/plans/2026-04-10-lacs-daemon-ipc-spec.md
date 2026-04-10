@@ -1,6 +1,6 @@
 # LACS Daemon IPC Specification
 
-**Status:** In progress — 2026-04-10 (steps 1–4 complete; steps 5–8 remaining)
+**Status:** In progress — 2026-04-10 (steps 1–7 complete; step 8 remaining)
 
 ## Scope
 
@@ -610,18 +610,19 @@ connection open.
 |---|---|---|
 | `crates/lacs-daemon/src/transport/framing.rs` | **done** | `FramedStream` — 4-byte LE read/write; 8 tests |
 | `crates/lacs-daemon/src/executor.rs` | **done** | `build_action_spec` + `execute_spec`; 15 tests |
-| `crates/lacs-daemon/src/state_collector.rs` | **done** | `collect_state()` via `CommandRunner` trait; 6 tests |
-| `crates/lacs-daemon/src/dispatcher.rs` | pending | `connection_handler` + per-request handlers |
-| `apps/lacs-shell/src-tauri/src/daemon_client.rs` | pending | `DaemonIpcClient` + reader task |
+| `crates/lacs-daemon/src/state_collector.rs` | **done** | `collect_state()` via `CommandRunner` trait; 8 tests (rpm-ostree best-effort) |
+| `crates/lacs-daemon/src/dispatcher.rs` | **done** | `connection_handler` + per-request handlers; 14 unit tests |
+| `apps/lacs-shell/src-tauri/src/daemon_client.rs` | **done (partial)** | Synchronous `DaemonIpcClient` (per-call connect); 3 tests. Persistent connection (ss1.3) is follow-on work. |
 
 ### Modified files
 
 | File | Status | Change |
 |---|---|---|
-| `crates/lacs-daemon/src/transactions.rs` | **done** | `update_status` method; 4 tests |
+| `crates/lacs-daemon/src/transactions.rs` | **done** | `update_status` + `find_by_request_hash` (Queued-only, replay safe); 8 tests |
 | `crates/lacs-daemon/src/actions/deployment.rs` | **done** | Parameterized `pin_deployment`, `unpin_deployment`, `rebase_system`, `set_kernel_arguments` |
-| `crates/lacs-daemon/src/main.rs` | pending | Accept loop calling `dispatcher::connection_handler` |
-| `apps/lacs-shell/src-tauri/src/commands.rs` | pending | Replace `DemoStateClient` with `DaemonIpcClient`; rewrite `approve_preview` |
+| `crates/lacs-daemon/src/auth.rs` | **done** | 10 unit tests added |
+| `crates/lacs-daemon/src/main.rs` | **done** | Tokio accept loop with Ctrl-C signal handling |
+| `apps/lacs-shell/src-tauri/src/commands.rs` | **partial** | `DemoStateClient` replaced with `DaemonIpcClient` for `plan_intent`. `approve_preview` still emits a Tauri event only (see ss8.3 remaining work). |
 
 ---
 
@@ -633,13 +634,12 @@ Work in this order so each step leaves a testable system:
 2. ✅ `state_collector.rs` — `collect_state()` via `CommandRunner` trait; mock-based unit tests
 3. ✅ `executor.rs` — `build_action_spec` unit tests for all ~60 actions; `execute_spec`
    tests using `echo`, tempfile operations
-4. ✅ `transactions.rs` — `update_status`; 4 unit tests
-5. ⬜ `dispatcher.rs` — `connection_handler` with integration tests using a
-   `UnixStream` pair (`socketpair`)
-6. ⬜ `daemon main.rs` — accept loop; test that the daemon starts and accepts a connection
-7. ⬜ `daemon_client.rs` — `DaemonIpcClient` with integration test against a real daemon
-   started as a subprocess
-8. ⬜ `commands.rs` — replace `DemoStateClient`, rewrite `approve_preview`
+4. ✅ `transactions.rs` — `update_status` + `find_by_request_hash`; 8 unit tests
+5. ✅ `dispatcher.rs` — `connection_handler` with 14 unit tests and 2 integration tests
+6. ✅ `daemon main.rs` — Tokio accept loop; 2 integration tests (query_state, multi-client)
+7. ✅ `daemon_client.rs` — synchronous `DaemonIpcClient` with 10s timeout; 3 unit tests
+8. ⬜ `commands.rs` — rewrite `approve_preview` to call daemon `execute` via IPC;
+   wire `ShellCommandState` with a persistent `DaemonIpcClient` (see §8.1–8.4)
 
 ---
 
@@ -649,11 +649,11 @@ Work in this order so each step leaves a testable system:
 |---|---|---|
 | `framing.rs` | ✅ 8 tests | round-trip for 0, 1, 4095, 4096 bytes, JSON payload; max-size rejection on send and recv; multiple messages on same stream |
 | `executor.rs` | ✅ 15 tests | every action name → valid `ActionSpec`; pin/rebase/kargs param injection; missing param returns `MissingParam`; unknown name returns `UnknownAction`; all 5 mechanism variants via `execute_spec` |
-| `state_collector.rs` | ✅ 6 tests | hostname/deployment/services/flatpaks/toolboxes parsing; whitespace trimming; optional commands default to empty on failure; `CollectedState` JSON round-trip |
-| `transactions.rs` | ✅ 4 tests | `update_status` transitions Queued→Running, Running→Succeeded; NotFound for unknown ID; other fields unaffected |
-| `dispatcher.rs` | ⬜ | full preview → execute → job_completed flow over a `socketpair`; stale approval is rejected; insufficient role returns `authorization_failure` |
-| `daemon_client.rs` | ⬜ | connects to real daemon; `query_state` returns non-empty `CuratedState`; `execute` on a no-op action returns `succeeded` |
-| `commands.rs` | ⬜ | existing 6 tests still pass; new test for `approve_preview` forwarding to daemon mock |
+| `state_collector.rs` | ✅ 8 tests | hostname/deployment parsing; whitespace trimming; optional commands default to empty; rpm-ostree missing → empty deployment; `CollectedState` JSON round-trip |
+| `transactions.rs` | ✅ 8 tests | `update_status` transitions; NotFound; replay protection (find_by_request_hash returns None after execution) |
+| `auth.rs` | ✅ 10 tests | all role mappings; wheel=Admin; Boot beats Admin; mixed known/unknown groups |
+| `dispatcher.rs` | ✅ 14 unit + 2 integration | full preview → execute → job_completed; stale approval; insufficient role; canonical_json array recursion; replay protection |
+| `daemon_client.rs` | ✅ 3 unit tests | state_response parsing; error_response mapping; unreachable daemon |
+| `commands.rs` | ⬜ | `approve_preview` must call daemon `execute` (currently emits event only) |
 
-Current baseline: 176 tests passing (`cargo test --workspace`). All must
-remain green at each implementation step.
+Current: 208 tests passing (`cargo test --workspace`). All must remain green.
