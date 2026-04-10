@@ -18,6 +18,9 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tauri = { version = "2.5.6" }
 thiserror = { workspace = true }
+# Async I/O for the daemon execute path (net + io-util for UnixStream,
+# time for connection timeouts). Workspace provides rt/rt-multi-thread/macros.
+tokio = { workspace = true, features = ["net", "io-util", "time"] }
 
 [dev-dependencies]
 async-trait = { workspace = true }

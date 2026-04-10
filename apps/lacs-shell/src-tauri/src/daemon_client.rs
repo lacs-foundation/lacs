@@ -1,17 +1,21 @@
-//! Synchronous IPC client for querying the daemon's state.
+//! IPC client for communicating with `lacs-daemon`.
 //!
-//! `DaemonIpcClient` implements [`StateClient`] using a per-call Unix domain
-//! socket connection with the daemon's length-prefixed JSON framing protocol.
+//! Two client modes co-exist in this module:
 //!
-//! The synchronous interface matches `StateClient::curated_state()`, which the
-//! planner invokes while holding no async resources. The brief blocking read is
-//! acceptable inside a multi-threaded tokio runtime (Tauri's default).
+//! - **Synchronous** (`DaemonIpcClient`): implements [`StateClient`] for the
+//!   brain planner, which calls `curated_state()` synchronously while planning.
+//!   Uses `std::os::unix::net::UnixStream` with a 10-second timeout.
+//!
+//! - **Async** (`execute_action`): drives the approve-and-execute flow from an
+//!   async Tauri command. Uses `tokio::net::UnixStream`. Opens one connection
+//!   per step (preview → execute), streams `job_progress` lines as Tauri
+//!   `lacs:timeline-entry` events, and returns the final job status.
 //!
 //! # Framing protocol
 //!
-//! Every message is prefixed by a 4-byte little-endian `u32` that gives the
-//! payload length in bytes, followed by the UTF-8 JSON payload. This mirrors
-//! the daemon's `FramedStream` exactly.
+//! Every message in both directions uses a 4-byte little-endian `u32` length
+//! prefix followed by a UTF-8 JSON body. This mirrors the daemon's
+//! `FramedStream` exactly.
 
 use std::io::{self, Read, Write};
 use std::os::unix::net::UnixStream;
@@ -146,6 +150,189 @@ fn string_array(v: &Value) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+// ---------------------------------------------------------------------------
+// Async execute (used by approve_preview Tauri command)
+// ---------------------------------------------------------------------------
+
+/// Drive one plan step through the daemon: preview → execute → stream events.
+///
+/// Opens a single async connection, sends a `preview` request to obtain the
+/// `request_hash`, then immediately sends an `execute` request using that
+/// hash as the `approval_hash`. `job_progress` lines are emitted to the
+/// frontend as `lacs:timeline-entry` events. Returns the final job status
+/// string (`"succeeded"`, `"failed"`, `"needs_reboot"`, `"rolled_back"`).
+///
+/// The caller (`approve_preview`) emits `lacs:job-completed` after all steps
+/// are processed — this function does not emit that event.
+pub async fn execute_action(
+    socket_path: &str,
+    app: &tauri::AppHandle,
+    action_name: &str,
+    params: &serde_json::Value,
+) -> Result<String, String> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::UnixStream as TokioStream;
+    use tokio::time::{timeout, Duration as TDuration};
+
+    // ── Connect ──────────────────────────────────────────────────────────────
+    let mut stream = timeout(
+        TDuration::from_secs(10),
+        TokioStream::connect(socket_path),
+    )
+    .await
+    .map_err(|_| "connection to daemon timed out".to_string())?
+    .map_err(|e| format!("cannot connect to daemon at {socket_path}: {e}"))?;
+
+    // ── Preview ───────────────────────────────────────────────────────────────
+    let preview_req =
+        serde_json::to_vec(&serde_json::json!({
+            "type": "preview",
+            "request_id": "shell-preview",
+            "action_name": action_name,
+            "params": params
+        }))
+        .expect("static JSON is always serialisable");
+
+    async_write_framed(&mut stream, &preview_req)
+        .await
+        .map_err(|e| format!("failed to send preview request: {e}"))?;
+
+    let raw = timeout(TDuration::from_secs(30), async_read_framed(&mut stream))
+        .await
+        .map_err(|_| "timed out waiting for preview response".to_string())?
+        .map_err(|e| format!("failed to read preview response: {e}"))?;
+
+    let preview_resp: serde_json::Value = serde_json::from_slice(&raw)
+        .map_err(|e| format!("invalid JSON in preview response: {e}"))?;
+
+    let request_hash = match preview_resp["type"].as_str() {
+        Some("preview_response") => preview_resp["preview"]["request_hash"]
+            .as_str()
+            .ok_or_else(|| "preview_response missing request_hash field".to_string())?
+            .to_string(),
+        Some("error_response") => {
+            return Err(format!(
+                "daemon rejected preview for '{action_name}' ({}): {}",
+                preview_resp["category"].as_str().unwrap_or("unknown"),
+                preview_resp["message"].as_str().unwrap_or("no message"),
+            ));
+        }
+        other => {
+            return Err(format!(
+                "unexpected response type to preview: {}",
+                other.unwrap_or("<missing>")
+            ));
+        }
+    };
+
+    emit_timeline(app, format!("Preview ready for {action_name}"));
+
+    // ── Execute ───────────────────────────────────────────────────────────────
+    let execute_req =
+        serde_json::to_vec(&serde_json::json!({
+            "type": "execute",
+            "request_id": "shell-execute",
+            "action_name": action_name,
+            "params": params,
+            "approval_hash": request_hash
+        }))
+        .expect("static JSON is always serialisable");
+
+    async_write_framed(&mut stream, &execute_req)
+        .await
+        .map_err(|e| format!("failed to send execute request: {e}"))?;
+
+    // ── Stream responses ──────────────────────────────────────────────────────
+    loop {
+        let raw = async_read_framed(&mut stream)
+            .await
+            .map_err(|e| format!("failed to read execute response: {e}"))?;
+
+        let msg: serde_json::Value = serde_json::from_slice(&raw)
+            .map_err(|e| format!("invalid JSON in execute response: {e}"))?;
+
+        match msg["type"].as_str() {
+            Some("job_started") => {
+                emit_timeline(app, format!("Executing {action_name}…"));
+            }
+            Some("job_progress") => {
+                if let Some(line) = msg["line"].as_str() {
+                    if !line.is_empty() {
+                        emit_timeline(app, line.to_string());
+                    }
+                }
+            }
+            Some("job_completed") => {
+                let status = msg["result"]["status"]
+                    .as_str()
+                    .unwrap_or("failed")
+                    .to_string();
+                if let Some(summary) = msg["result"]["summary"].as_str() {
+                    if !summary.is_empty() {
+                        emit_timeline(app, summary.to_string());
+                    }
+                }
+                return Ok(status);
+            }
+            Some("error_response") => {
+                return Err(format!(
+                    "daemon error during execute ({}): {}",
+                    msg["category"].as_str().unwrap_or("unknown"),
+                    msg["message"].as_str().unwrap_or("no message"),
+                ));
+            }
+            other => {
+                return Err(format!(
+                    "unexpected response type during execute: {}",
+                    other.unwrap_or("<missing>")
+                ));
+            }
+        }
+    }
+}
+
+fn emit_timeline(app: &tauri::AppHandle, text: String) {
+    use crate::events::TimelineEvent;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use tauri::Emitter;
+
+    let id = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos()
+        .to_string();
+
+    let _ = app.emit("lacs:timeline-entry", TimelineEvent { id, text });
+}
+
+async fn async_write_framed(
+    stream: &mut tokio::net::UnixStream,
+    msg: &[u8],
+) -> io::Result<()> {
+    use tokio::io::AsyncWriteExt;
+    let len = u32::try_from(msg.len()).map_err(|_| {
+        io::Error::new(io::ErrorKind::InvalidInput, "message exceeds 4 GiB limit")
+    })?;
+    stream.write_all(&len.to_le_bytes()).await?;
+    stream.write_all(msg).await
+}
+
+async fn async_read_framed(stream: &mut tokio::net::UnixStream) -> io::Result<Vec<u8>> {
+    use tokio::io::AsyncReadExt;
+    let mut len_buf = [0u8; 4];
+    stream.read_exact(&mut len_buf).await?;
+    let len = u32::from_le_bytes(len_buf);
+    if len > MAX_RESPONSE_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("daemon response too large: {len} bytes"),
+        ));
+    }
+    let mut buf = vec![0u8; len as usize];
+    stream.read_exact(&mut buf).await?;
+    Ok(buf)
 }
 
 // ---------------------------------------------------------------------------

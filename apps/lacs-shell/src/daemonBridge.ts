@@ -1,11 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { ShellOutcome, ShellPreview, TimelineEntry } from "./shellState";
+import type { PlanStep, ShellOutcome, ShellPreview, TimelineEntry } from "./shellState";
 
 export interface DaemonPlanResponse {
   summary: string;
   preview: ShellPreview;
   approvalRequired: boolean;
+  steps: PlanStep[];
 }
 
 function requireTauriRuntime(): void {
@@ -21,9 +22,9 @@ export async function requestPlan(intent: string): Promise<DaemonPlanResponse> {
   return invoke<DaemonPlanResponse>("plan_intent", { intent });
 }
 
-export async function requestApproval(requestHash: string): Promise<void> {
+export async function requestApproval(steps: PlanStep[]): Promise<void> {
   requireTauriRuntime();
-  await invoke("approve_preview", { requestHash });
+  await invoke("approve_preview", { steps });
 }
 
 export async function subscribeDaemonEvents(

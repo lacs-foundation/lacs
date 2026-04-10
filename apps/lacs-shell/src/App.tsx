@@ -3,7 +3,7 @@ import { IntentPane } from "./components/IntentPane";
 import { ExecutionPane } from "./components/ExecutionPane";
 import { PlanPane } from "./components/PlanPane";
 import { TimelinePane } from "./components/TimelinePane";
-import { requestPlan, subscribeDaemonEvents } from "./daemonBridge";
+import { requestApproval, requestPlan, subscribeDaemonEvents } from "./daemonBridge";
 import {
   initialShellState,
   shellReducer,
@@ -61,9 +61,9 @@ export default function App() {
     dispatch({ type: "intent_submitted", intent });
     try {
       const response = await requestPlan(intent);
-      dispatch({ type: "preview_ready", summary: response.preview.summary });
+      dispatch({ type: "preview_ready", summary: response.preview.summary, steps: response.steps });
       if (response.approvalRequired) {
-        dispatch({ type: "request_approval" });
+        dispatch({ type: "request_approval", steps: response.steps });
       } else {
         dispatch({
           type: "timeline_event",
@@ -74,6 +74,18 @@ export default function App() {
     } catch (err) {
       console.error("[LACS] requestPlan failed:", err);
       dispatch({ type: "timeline_event", text: `Planning failed: ${String(err)}` });
+      dispatch({ type: "job_completed", outcome: "failed" });
+    }
+  }
+
+  async function handleApprove() {
+    if (state.mode !== "awaiting-approval") return;
+    dispatch({ type: "approval_granted" });
+    try {
+      await requestApproval(state.steps);
+    } catch (err) {
+      console.error("[LACS] requestApproval failed:", err);
+      dispatch({ type: "timeline_event", text: `Approval failed: ${String(err)}` });
       dispatch({ type: "job_completed", outcome: "failed" });
     }
   }
@@ -92,7 +104,12 @@ export default function App() {
 
       <section className="grid">
         <IntentPane intent={state.intent} mode={state.mode} onSubmit={handleIntent} />
-        <PlanPane preview={state.preview} />
+        <PlanPane
+          preview={state.preview}
+          steps={"steps" in state ? state.steps : null}
+          mode={state.mode}
+          onApprove={state.mode === "awaiting-approval" ? handleApprove : undefined}
+        />
         <ExecutionPane mode={state.mode} activeJobId={state.activeJobId} />
         <TimelinePane entries={state.timeline} />
       </section>

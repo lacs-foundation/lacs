@@ -1,4 +1,4 @@
-use crate::events::{DaemonJobOutcome, TimelineEvent};
+use crate::events::DaemonJobOutcome;
 use lacs_brain::config::BrainConfig;
 #[cfg(any(test, feature = "demo"))]
 use lacs_brain::planner::PlanningError;
@@ -7,23 +7,30 @@ use lacs_brain::planner::{LlmPlanner, Plan};
 use lacs_brain::state_client::CuratedState;
 use lacs_brain::state_client::StateClient;
 use serde::{Deserialize, Serialize};
-use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
 
 // ---------------------------------------------------------------------------
 // Response types (serialised to the frontend)
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// A single step in a plan, as sent to the frontend.
+///
+/// `params` is `serde_json::Value` so `Eq` cannot be derived (f64 ≠ Eq),
+/// but `PartialEq` works fine for test assertions.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlanStepResponse {
     pub action_name: String,
     pub summary: String,
     pub risk_level: String,
     pub approval_required: bool,
+    /// Runtime parameters the brain chose for this step.
+    /// The frontend passes them back verbatim in `approve_preview` so the
+    /// shell can forward them to the daemon without re-interpreting them.
+    pub params: serde_json::Value,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlanResponse {
     pub summary: String,
@@ -37,6 +44,18 @@ pub struct PlanResponse {
 #[serde(rename_all = "camelCase")]
 pub struct ShellPreview {
     pub summary: String,
+}
+
+// ---------------------------------------------------------------------------
+// Request types (deserialised from the frontend)
+// ---------------------------------------------------------------------------
+
+/// One plan step submitted by the frontend for execution approval.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanStepRequest {
+    pub action_name: String,
+    pub params: serde_json::Value,
 }
 
 // ---------------------------------------------------------------------------
@@ -140,32 +159,63 @@ pub async fn plan_intent(
     execute_plan_intent(&state, &intent).await
 }
 
+/// Execute approved plan steps against the daemon.
+///
+/// For each step the shell calls daemon `preview` (to obtain the
+/// `request_hash`) and then daemon `execute`. Progress lines are forwarded
+/// to the frontend as `lacs:timeline-entry` events. A single
+/// `lacs:job-completed` event is emitted after all steps finish (or on the
+/// first non-succeeded outcome).
+///
+/// This command always returns `Ok` — infrastructure failures are surfaced as
+/// a `DaemonJobOutcome::Failed` event so the frontend is never left stuck in
+/// the "executing" state.
 #[tauri::command]
-pub fn approve_preview(app: AppHandle, request_hash: String) -> Result<(), String> {
-    // Emit the approval event so the frontend can update its state while the
-    // daemon execute call is wired in a follow-on task.
-    app.emit("lacs:approval-granted", request_hash)
-        .map_err(|err| err.to_string())?;
-    Ok(())
-}
-
-#[tauri::command]
-pub fn publish_timeline_event(app: AppHandle, text: String) -> Result<(), String> {
-    let id = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|err| err.to_string())?
-        .as_nanos()
+pub async fn approve_preview(
+    app: AppHandle,
+    steps: Vec<PlanStepRequest>,
+) -> Result<(), String> {
+    let socket_path = lacs_core::DEFAULT_LISTEN_URI
+        .strip_prefix("unix://")
+        .unwrap_or(lacs_core::DEFAULT_LISTEN_URI)
         .to_string();
 
-    app.emit("lacs:timeline-entry", TimelineEvent { id, text })
-        .map_err(|err| err.to_string())?;
-    Ok(())
-}
+    let mut final_status = "succeeded".to_string();
 
-#[tauri::command]
-pub fn publish_job_outcome(app: AppHandle, outcome: DaemonJobOutcome) -> Result<(), String> {
-    app.emit("lacs:job-completed", outcome)
-        .map_err(|err| err.to_string())?;
+    'steps: for step in &steps {
+        match crate::daemon_client::execute_action(
+            &socket_path,
+            &app,
+            &step.action_name,
+            &step.params,
+        )
+        .await
+        {
+            Ok(status) => {
+                final_status = status;
+                if final_status != "succeeded" {
+                    break 'steps;
+                }
+            }
+            Err(e) => {
+                eprintln!("[lacs-shell] execute_action failed for '{}': {e}", step.action_name);
+                final_status = "failed".to_string();
+                break 'steps;
+            }
+        }
+    }
+
+    let outcome = match final_status.as_str() {
+        "succeeded"   => DaemonJobOutcome::Succeeded,
+        "needs_reboot" => DaemonJobOutcome::NeedsReboot,
+        "rolled_back" => DaemonJobOutcome::RolledBack,
+        _             => DaemonJobOutcome::Failed,
+    };
+
+    if let Err(e) = app.emit("lacs:job-completed", outcome) {
+        eprintln!("[lacs-shell] failed to emit lacs:job-completed: {e}");
+    }
+
     Ok(())
 }
 
@@ -195,6 +245,7 @@ fn plan_to_response(plan: Plan) -> PlanResponse {
             summary: step.summary().to_string(),
             risk_level: step.risk_level().as_str().to_string(),
             approval_required: step.approval_required(),
+            params: step.params().clone(),
         })
         .collect();
 

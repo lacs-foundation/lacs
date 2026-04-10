@@ -14,6 +14,14 @@ export interface ShellPreview {
   summary: string;
 }
 
+export interface PlanStep {
+  actionName: string;
+  summary: string;
+  riskLevel: string;
+  approvalRequired: boolean;
+  params: unknown;
+}
+
 export interface TimelineEntry {
   id: string;
   text: string;
@@ -30,15 +38,15 @@ export interface TimelineEntry {
 
 type Base = { intent: string; timeline: TimelineEntry[] };
 
-type IdleState        = Base & { mode: "idle";              preview: null;               activeJobId: null   };
-type PlanningState    = Base & { mode: "planning";          preview: null;               activeJobId: null   };
-type PreviewingState  = Base & { mode: "previewing";        preview: ShellPreview;       activeJobId: null   };
-type ApprovingState   = Base & { mode: "awaiting-approval"; preview: ShellPreview;       activeJobId: null   };
-type ExecutingState   = Base & { mode: "executing";         preview: ShellPreview;       activeJobId: string };
-type NeedsRebootState = Base & { mode: "needs-reboot";      preview: ShellPreview;       activeJobId: null   };
+type IdleState        = Base & { mode: "idle";              preview: null;               activeJobId: null; steps: null    };
+type PlanningState    = Base & { mode: "planning";          preview: null;               activeJobId: null; steps: null    };
+type PreviewingState  = Base & { mode: "previewing";        preview: ShellPreview;       activeJobId: null; steps: PlanStep[] };
+type ApprovingState   = Base & { mode: "awaiting-approval"; preview: ShellPreview;       activeJobId: null; steps: PlanStep[] };
+type ExecutingState   = Base & { mode: "executing";         preview: ShellPreview;       activeJobId: string; steps: PlanStep[] };
+type NeedsRebootState = Base & { mode: "needs-reboot";      preview: ShellPreview;       activeJobId: null; steps: PlanStep[] };
 // Terminal error states may be reached before a preview exists (e.g. planning failure)
-type FailedState      = Base & { mode: "failed";            preview: ShellPreview | null; activeJobId: null  };
-type RolledBackState  = Base & { mode: "rolled-back";       preview: ShellPreview | null; activeJobId: null  };
+type FailedState      = Base & { mode: "failed";            preview: ShellPreview | null; activeJobId: null; steps: PlanStep[] | null };
+type RolledBackState  = Base & { mode: "rolled-back";       preview: ShellPreview | null; activeJobId: null; steps: PlanStep[] | null };
 
 export type ShellState =
   | IdleState
@@ -52,8 +60,8 @@ export type ShellState =
 
 export type ShellAction =
   | { type: "intent_submitted"; intent: string }
-  | { type: "preview_ready"; summary: string }
-  | { type: "request_approval" }
+  | { type: "preview_ready"; summary: string; steps: PlanStep[] }
+  | { type: "request_approval"; steps: PlanStep[] }
   | { type: "approval_granted" }
   | { type: "job_completed"; outcome: ShellOutcome }
   | { type: "timeline_event"; text: string }
@@ -64,6 +72,7 @@ export const initialShellState: ShellState = {
   intent: "",
   preview: null,
   activeJobId: null,
+  steps: null,
   timeline: [],
 };
 
@@ -75,6 +84,7 @@ export function shellReducer(state: ShellState, action: ShellAction): ShellState
         intent: action.intent,
         preview: null,
         activeJobId: null,
+        steps: null,
         timeline: state.timeline,
       };
       return appendTimeline(next, `Intent submitted: ${action.intent}`);
@@ -86,6 +96,7 @@ export function shellReducer(state: ShellState, action: ShellAction): ShellState
         intent: state.intent,
         preview: { summary: action.summary },
         activeJobId: null,
+        steps: action.steps,
         timeline: state.timeline,
       };
       return appendTimeline(next, `Preview ready: ${action.summary}`);
@@ -99,6 +110,7 @@ export function shellReducer(state: ShellState, action: ShellAction): ShellState
         intent: state.intent,
         preview,
         activeJobId: null,
+        steps: action.steps,
         timeline: state.timeline,
       };
       return appendTimeline(next, "Awaiting user approval");
@@ -107,25 +119,27 @@ export function shellReducer(state: ShellState, action: ShellAction): ShellState
     case "approval_granted": {
       // Only reachable from "awaiting-approval" which guarantees preview is non-null.
       const preview = state.preview as ShellPreview;
+      const steps = (state as ApprovingState).steps;
       const next: ExecutingState = {
         mode: "executing",
         intent: state.intent,
         preview,
-        // TODO(task-8): job ID must come from the daemon's approval response.
-        // Remove this synthesised ID once approve_preview returns a real job ID.
-        activeJobId: `job-${state.timeline.length + 1}`,
+        activeJobId: "pending",
+        steps,
         timeline: state.timeline,
       };
       return appendTimeline(next, "Approval granted");
     }
 
     case "job_completed": {
+      const steps = "steps" in state ? state.steps : null;
       if (action.outcome === "needs_reboot") {
         const next: NeedsRebootState = {
           mode: "needs-reboot",
           intent: state.intent,
           preview: state.preview as ShellPreview,
           activeJobId: null,
+          steps: steps as PlanStep[],
           timeline: state.timeline,
         };
         return appendTimeline(next, "Job completed; reboot required");
@@ -136,6 +150,7 @@ export function shellReducer(state: ShellState, action: ShellAction): ShellState
           intent: state.intent,
           preview: state.preview,
           activeJobId: null,
+          steps,
           timeline: state.timeline,
         };
         return appendTimeline(next, "Job rolled back");
@@ -146,6 +161,7 @@ export function shellReducer(state: ShellState, action: ShellAction): ShellState
           intent: state.intent,
           preview: state.preview,
           activeJobId: null,
+          steps,
           timeline: state.timeline,
         };
         return appendTimeline(next, "Job failed");
@@ -156,6 +172,7 @@ export function shellReducer(state: ShellState, action: ShellAction): ShellState
         intent: state.intent,
         preview: null,
         activeJobId: null,
+        steps: null,
         timeline: state.timeline,
       };
       return appendTimeline(next, "Job completed successfully");

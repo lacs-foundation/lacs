@@ -1,7 +1,16 @@
 import {
   initialShellState,
   shellReducer,
+  type PlanStep,
 } from "./shellState";
+
+const stubStep: PlanStep = {
+  actionName: "UpdateSystem",
+  summary: "Update all system packages",
+  riskLevel: "high",
+  approvalRequired: true,
+  params: {},
+};
 
 // Helper: drive through intent_submitted → preview_ready → request_approval
 function reachAwaitingApproval() {
@@ -11,9 +20,9 @@ function reachAwaitingApproval() {
         type: "intent_submitted",
         intent: "update this machine",
       }),
-      { type: "preview_ready", summary: "UpdateSystem preview" },
+      { type: "preview_ready", summary: "UpdateSystem preview", steps: [stubStep] },
     ),
-    { type: "request_approval" },
+    { type: "request_approval", steps: [stubStep] },
   );
 }
 
@@ -30,6 +39,7 @@ describe("shellReducer", () => {
     const previewing = shellReducer(planning, {
       type: "preview_ready",
       summary: "UpdateSystem preview",
+      steps: [stubStep],
     });
 
     expect(planning.mode).toBe("planning");
@@ -51,7 +61,7 @@ describe("shellReducer", () => {
     expect(needsReboot.mode).toBe("needs-reboot");
   });
 
-  it("approval_granted synthesises a job ID when none exists", () => {
+  it("approval_granted transitions to executing with a non-null activeJobId", () => {
     const executing = shellReducer(reachAwaitingApproval(), {
       type: "approval_granted",
     });
