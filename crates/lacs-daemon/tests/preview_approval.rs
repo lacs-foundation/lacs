@@ -50,6 +50,42 @@ fn medium_risk_preview_marks_service_restart_as_mutating() {
 }
 
 #[test]
+fn package_repository_preview_mentions_repository_trust_change() {
+    let preview = preview_action(
+        &request("AddPackageRepository", "req-repo", "hash-repo"),
+        json!({"repo": "fedora"}),
+        json!({"repo": "example"}),
+    );
+
+    assert_eq!(preview.risk_level, RiskLevel::Medium);
+    assert_eq!(preview.request_hash, "hash-repo");
+    assert!(!preview.reboot_required);
+    assert!(!preview.rollback_available);
+    assert!(preview
+        .expected_side_effects
+        .iter()
+        .any(|effect: &String| effect.contains("package repository")));
+}
+
+#[test]
+fn container_preview_mentions_container_lifecycle_change() {
+    let preview = preview_action(
+        &request("CreateContainer", "req-container", "hash-container"),
+        json!({"container": "lacs-dev"}),
+        json!({"container": "lacs-dev", "image": "fedora-toolbox:41"}),
+    );
+
+    assert_eq!(preview.risk_level, RiskLevel::Medium);
+    assert_eq!(preview.request_hash, "hash-container");
+    assert!(!preview.reboot_required);
+    assert!(!preview.rollback_available);
+    assert!(preview
+        .expected_side_effects
+        .iter()
+        .any(|effect: &String| effect.contains("container")));
+}
+
+#[test]
 fn high_risk_preview_marks_system_update_as_reboot_required() {
     let preview = preview_action(
         &request("UpdateSystem", "req-high", "hash-high"),

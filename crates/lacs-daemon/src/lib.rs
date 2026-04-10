@@ -1,3 +1,4 @@
+pub mod actions;
 pub mod auth;
 pub mod jobs;
 pub mod policy;
