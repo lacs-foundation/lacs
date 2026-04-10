@@ -2,8 +2,8 @@ use std::convert::TryInto;
 
 use lacs_proto::lacs::v1 as proto;
 use lacs_types::{
-    CallerRole, FailureCategory, JobState, PreviewEnvelope, RequestEnvelope, ResultEnvelope,
-    RiskLevel, TransactionRecord,
+    BridgeError, CallerRole, FailureCategory, JobState, PreviewEnvelope, RequestEnvelope,
+    ResultEnvelope, RiskLevel, TransactionRecord,
 };
 
 #[test]
@@ -102,4 +102,47 @@ fn transaction_record_round_trips_through_proto() {
     let decoded = TransactionRecord::try_from(proto_value).unwrap();
 
     assert_eq!(decoded, value);
+}
+
+#[test]
+fn request_envelope_rejects_invalid_caller_role() {
+    let proto_value = proto::RequestEnvelope {
+        action_name: "InstallFlatpak".to_string(),
+        request_id: "req-1".to_string(),
+        params_json: "{\"app_id\":\"org.mozilla.firefox\"}".to_string(),
+        caller_role: 99,
+        request_hash: "abc123".to_string(),
+    };
+
+    let error = RequestEnvelope::try_from(proto_value).unwrap_err();
+
+    match error {
+        BridgeError::InvalidEnum { field, value } => {
+            assert_eq!(field, "caller_role");
+            assert_eq!(value, 99);
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
+}
+
+#[test]
+fn preview_envelope_rejects_invalid_json() {
+    let proto_value = proto::PreviewEnvelope {
+        summary: "Install Firefox".to_string(),
+        risk_level: 2,
+        current_state_json: "{not json}".to_string(),
+        proposed_change_json: "{\"flatpaks\":[\"org.mozilla.firefox\"]}".to_string(),
+        expected_side_effects: vec!["downloads application metadata".to_string()],
+        reboot_required: false,
+        rollback_available: true,
+        warnings: vec!["network required".to_string()],
+        request_hash: "abc123".to_string(),
+    };
+
+    let error = PreviewEnvelope::try_from(proto_value).unwrap_err();
+
+    match error {
+        BridgeError::InvalidJson(field, _) => assert_eq!(field, "current_state_json"),
+        other => panic!("unexpected error: {other:?}"),
+    }
 }
