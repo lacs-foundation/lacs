@@ -44,3 +44,20 @@ Before merging, a change should be:
 - documented
 - safe by default
 - consistent with the trust model
+
+## Testing And CI Standards
+
+LACS uses test-first development for behavioral changes.
+
+- write the test before the implementation
+- verify the failing test before adding code
+- keep behavior coverage close to complete for protocol and daemon
+- prefer deterministic unit and integration tests over manual checks
+- keep CI strict enough to catch regressions before merge
+
+The CI baseline should include:
+
+- `cargo fmt --check`
+- `cargo clippy --all-targets --all-features -- -D warnings`
+- `cargo test --workspace`
+- documentation and markdown checks for contributor-facing files

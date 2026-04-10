@@ -1,3 +1,4 @@
+---
 name: Feature request
 description: Suggest an improvement or new capability
 title: "[Feature]: "
@@ -26,4 +27,3 @@ body:
     attributes:
       label: Impact
       description: Who benefits and what risks does this create?
-

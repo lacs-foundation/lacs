@@ -1,9 +1,13 @@
+---
 name: ci
 
 on:
   push:
     branches: [main]
   pull_request:
+
+permissions:
+  contents: read
 
 jobs:
   docs-and-hygiene:
@@ -59,4 +63,29 @@ jobs:
           done
 
       - name: Lint GitHub issue templates
-        run: yamllint .github/ISSUE_TEMPLATE/*.yml
+        run: yamllint .github/ISSUE_TEMPLATE/*.yml .github/workflows/*.yml
+
+  rust:
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Format check
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-features --locked -- -D warnings
+
+      - name: Test workspace
+        run: cargo test --workspace --locked
