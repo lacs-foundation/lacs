@@ -1,4 +1,4 @@
-use lacs_types::{JobState, RiskLevel, TransactionRecord};
+use lacs_types::{JobState, PreviewEnvelope, RiskLevel, TransactionRecord};
 use rusqlite::{params, Connection};
 use serde::{de::DeserializeOwned, Serialize};
 use std::path::{Path, PathBuf};
@@ -19,6 +19,12 @@ pub struct NewTransaction {
 #[derive(Clone, Debug)]
 pub struct TransactionStore {
     path: PathBuf,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RecordedPreviewedTransaction {
+    pub transaction: TransactionRecord,
+    pub preview: PreviewEnvelope,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -49,54 +55,27 @@ impl TransactionStore {
         &self,
         transaction: NewTransaction,
     ) -> Result<TransactionRecord, TransactionStoreError> {
-        let transaction_id = Uuid::new_v4().to_string();
-        let request_id = transaction.request_id;
-        let request_hash = transaction.request_hash;
-        let action_name = transaction.action_name;
-        let risk_level = transaction.risk_level;
-        let status = transaction.status;
-        let approval_id = transaction.approval_id;
-        let summary = transaction.summary;
-        let warnings = transaction.warnings;
-
-        let record = TransactionRecord {
-            transaction_id: transaction_id.clone(),
-            request_id: request_id.clone(),
-            request_hash: request_hash.clone(),
-            action_name: action_name.clone(),
-            risk_level: risk_level.clone(),
-            status: status.clone(),
-            approval_id: approval_id.clone(),
-            summary: summary.clone(),
-            warnings: warnings.clone(),
-        };
-
         let conn = self.connection()?;
-        conn.execute(
-            "INSERT INTO transactions (
-                transaction_id,
-                request_id,
-                request_hash,
-                action_name,
-                risk_level,
-                status,
-                approval_id,
-                summary,
-                warnings_json
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            params![
-                transaction_id,
-                request_id,
-                request_hash,
-                action_name,
-                serialize_field(&risk_level)?,
-                serialize_field(&status)?,
-                approval_id,
-                summary,
-                serde_json::to_string(&warnings)?,
-            ],
-        )?;
-        Ok(record)
+        let transaction_id = Uuid::new_v4().to_string();
+        Self::insert_transaction(&conn, &transaction_id, transaction)
+    }
+
+    pub fn record_previewed(
+        &self,
+        transaction: NewTransaction,
+        preview: PreviewEnvelope,
+    ) -> Result<RecordedPreviewedTransaction, TransactionStoreError> {
+        let mut conn = self.connection()?;
+        let tx = conn.transaction()?;
+        let transaction_id = Uuid::new_v4().to_string();
+        let transaction = Self::insert_transaction(&tx, &transaction_id, transaction)?;
+        Self::insert_preview(&tx, &transaction.transaction_id, &preview)?;
+        tx.commit()?;
+
+        Ok(RecordedPreviewedTransaction {
+            transaction,
+            preview,
+        })
     }
 
     pub fn get(
@@ -136,6 +115,25 @@ impl TransactionStore {
         }
     }
 
+    pub fn get_preview(
+        &self,
+        transaction_id: &str,
+    ) -> Result<Option<PreviewEnvelope>, TransactionStoreError> {
+        let conn = self.connection()?;
+        let mut stmt = conn.prepare(
+            "SELECT preview_json
+             FROM transaction_previews
+             WHERE transaction_id = ?1",
+        )?;
+        let mut rows = stmt.query(params![transaction_id])?;
+        if let Some(row) = rows.next()? {
+            let preview_json: String = row.get(0)?;
+            Ok(Some(serde_json::from_str(&preview_json)?))
+        } else {
+            Ok(None)
+        }
+    }
+
     fn connection(&self) -> Result<Connection, TransactionStoreError> {
         Ok(Connection::open(&self.path)?)
     }
@@ -155,7 +153,78 @@ impl TransactionStore {
                 summary TEXT NOT NULL,
                 warnings_json TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS transaction_previews (
+                transaction_id TEXT PRIMARY KEY,
+                preview_json TEXT NOT NULL
+            );
             "#,
+        )?;
+        Ok(())
+    }
+
+    fn insert_transaction(
+        conn: &Connection,
+        transaction_id: &str,
+        transaction: NewTransaction,
+    ) -> Result<TransactionRecord, TransactionStoreError> {
+        let request_id = transaction.request_id;
+        let request_hash = transaction.request_hash;
+        let action_name = transaction.action_name;
+        let risk_level = transaction.risk_level;
+        let status = transaction.status;
+        let approval_id = transaction.approval_id;
+        let summary = transaction.summary;
+        let warnings = transaction.warnings;
+
+        let record = TransactionRecord {
+            transaction_id: transaction_id.to_string(),
+            request_id: request_id.clone(),
+            request_hash: request_hash.clone(),
+            action_name: action_name.clone(),
+            risk_level: risk_level.clone(),
+            status: status.clone(),
+            approval_id: approval_id.clone(),
+            summary: summary.clone(),
+            warnings: warnings.clone(),
+        };
+
+        conn.execute(
+            "INSERT INTO transactions (
+                transaction_id,
+                request_id,
+                request_hash,
+                action_name,
+                risk_level,
+                status,
+                approval_id,
+                summary,
+                warnings_json
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                transaction_id,
+                request_id,
+                request_hash,
+                action_name,
+                serialize_field(&risk_level)?,
+                serialize_field(&status)?,
+                approval_id,
+                summary,
+                serde_json::to_string(&warnings)?,
+            ],
+        )?;
+        Ok(record)
+    }
+
+    fn insert_preview(
+        conn: &Connection,
+        transaction_id: &str,
+        preview: &PreviewEnvelope,
+    ) -> Result<(), TransactionStoreError> {
+        conn.execute(
+            "INSERT INTO transaction_previews (transaction_id, preview_json)
+             VALUES (?1, ?2)",
+            params![transaction_id, serde_json::to_string(preview)?],
         )?;
         Ok(())
     }

@@ -39,6 +39,25 @@ impl JobStateMachine {
             })
         }
     }
+
+    pub fn cancel(&mut self) -> Result<(), JobError> {
+        self.transition_to(JobState::Canceled)
+    }
+
+    pub fn needs_reboot(&mut self) -> Result<(), JobError> {
+        self.transition_to(JobState::NeedsReboot)
+    }
+
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self.state,
+            JobState::Succeeded
+                | JobState::Failed
+                | JobState::Canceled
+                | JobState::RolledBack
+                | JobState::NeedsReboot
+        )
+    }
 }
 
 fn allowed_transition(current: &JobState, next: &JobState) -> bool {
