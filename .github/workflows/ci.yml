@@ -1,0 +1,62 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  docs-and-hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install lint tools
+        run: |
+          npm install --global markdownlint-cli2 markdown-link-check
+          python -m pip install --upgrade pip
+          pip install yamllint
+
+      - name: Check required repository files
+        run: bash scripts/check_repo_completeness.sh
+
+      - name: Lint markdown
+        run: |
+          markdownlint-cli2 \
+            README.md \
+            CONTRIBUTING.md \
+            SECURITY.md \
+            CODE_OF_CONDUCT.md \
+            ROADMAP.md \
+            docs/architecture.md \
+            docs/developer-guide.md \
+            docs/adr/*.md
+
+      - name: Check markdown links
+        run: |
+          for file in \
+            README.md \
+            CONTRIBUTING.md \
+            SECURITY.md \
+            CODE_OF_CONDUCT.md \
+            ROADMAP.md \
+            docs/architecture.md \
+            docs/developer-guide.md \
+            docs/adr/0001-system-boundaries.md
+          do
+            markdown-link-check "$file"
+          done
+
+      - name: Lint GitHub issue templates
+        run: yamllint .github/ISSUE_TEMPLATE/*.yml
