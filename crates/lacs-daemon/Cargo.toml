@@ -6,6 +6,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+lacs-core = { path = "../lacs-core" }
 lacs-types = { path = "../lacs-types" }
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { workspace = true, features = ["derive"] }

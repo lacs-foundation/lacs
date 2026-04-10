@@ -508,14 +508,12 @@ dependencies = [
 [[package]]
 name = "lacs-core"
 version = "0.1.0"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "lacs-daemon"
 version = "0.1.0"
 dependencies = [
+ "lacs-core",
  "lacs-types",
  "rusqlite",
  "serde",

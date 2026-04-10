@@ -27,7 +27,6 @@ planning docs for the v0 control plane.
 
 - [Specification draft](docs/plans/2026-04-10-lacs-spec.md)
 - [Implementation plan](docs/plans/2026-04-10-lacs-implementation-plan.md)
-- [Original implementation memo](IMPLEMENTATION_LACS.md)
 
 ## Architecture at a Glance
 

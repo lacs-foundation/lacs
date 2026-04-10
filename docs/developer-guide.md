@@ -22,7 +22,6 @@ That means:
 
 ## Repository Layout
 
-- `IMPLEMENTATION_LACS.md` is the original design memo.
 - `docs/plans/` contains the live spec and implementation plan.
 - future code will live under `crates/` and `apps/`.
 

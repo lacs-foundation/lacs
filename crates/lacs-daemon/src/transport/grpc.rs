@@ -39,12 +39,6 @@ impl ListenTarget {
 
         Ok(Self::Unix(PathBuf::from(path)))
     }
-
-    pub fn socket_path(&self) -> &Path {
-        match self {
-            ListenTarget::Unix(path) => path.as_path(),
-        }
-    }
 }
 
 pub fn bind_unix_listener(target: &ListenTarget) -> Result<UnixListener, ListenTargetError> {
