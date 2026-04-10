@@ -37,6 +37,9 @@ pub enum TransactionStoreError {
 
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
+
+    #[error("transaction not found: {0}")]
+    NotFound(String),
 }
 
 impl TransactionStore {
@@ -132,6 +135,22 @@ impl TransactionStore {
         } else {
             Ok(None)
         }
+    }
+
+    pub fn update_status(
+        &self,
+        transaction_id: &str,
+        new_status: JobState,
+    ) -> Result<(), TransactionStoreError> {
+        let conn = self.connection()?;
+        let rows_affected = conn.execute(
+            "UPDATE transactions SET status = ?1 WHERE transaction_id = ?2",
+            params![serialize_field(&new_status)?, transaction_id],
+        )?;
+        if rows_affected == 0 {
+            return Err(TransactionStoreError::NotFound(transaction_id.to_string()));
+        }
+        Ok(())
     }
 
     fn connection(&self) -> Result<Connection, TransactionStoreError> {
@@ -236,4 +255,82 @@ fn serialize_field<T: Serialize>(value: &T) -> Result<String, serde_json::Error>
 
 fn deserialize_field<T: DeserializeOwned>(value: &str) -> Result<T, serde_json::Error> {
     serde_json::from_str(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn queued_transaction() -> NewTransaction {
+        NewTransaction {
+            request_id: "req-1".to_string(),
+            request_hash: "hash-abc".to_string(),
+            action_name: "UpdateSystem".to_string(),
+            risk_level: RiskLevel::High,
+            status: JobState::Queued,
+            approval_id: None,
+            summary: "Upgrade the system".to_string(),
+            warnings: vec![],
+        }
+    }
+
+    #[test]
+    fn update_status_transitions_queued_to_running() {
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let tx = store.record(queued_transaction()).unwrap();
+
+        store
+            .update_status(&tx.transaction_id, JobState::Running)
+            .unwrap();
+
+        let updated = store.get(&tx.transaction_id).unwrap().unwrap();
+        assert_eq!(updated.status, JobState::Running);
+    }
+
+    #[test]
+    fn update_status_transitions_running_to_succeeded() {
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let tx = store.record(queued_transaction()).unwrap();
+
+        store
+            .update_status(&tx.transaction_id, JobState::Running)
+            .unwrap();
+        store
+            .update_status(&tx.transaction_id, JobState::Succeeded)
+            .unwrap();
+
+        let updated = store.get(&tx.transaction_id).unwrap().unwrap();
+        assert_eq!(updated.status, JobState::Succeeded);
+    }
+
+    #[test]
+    fn update_status_for_unknown_id_returns_not_found() {
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+
+        let result = store.update_status("does-not-exist", JobState::Running);
+        assert!(
+            matches!(result, Err(TransactionStoreError::NotFound(ref id)) if id == "does-not-exist"),
+            "expected NotFound, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn update_status_leaves_other_fields_intact() {
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let tx = store.record(queued_transaction()).unwrap();
+
+        store
+            .update_status(&tx.transaction_id, JobState::Failed)
+            .unwrap();
+
+        let updated = store.get(&tx.transaction_id).unwrap().unwrap();
+        assert_eq!(updated.action_name, "UpdateSystem");
+        assert_eq!(updated.risk_level, RiskLevel::High);
+        assert_eq!(updated.status, JobState::Failed);
+    }
 }

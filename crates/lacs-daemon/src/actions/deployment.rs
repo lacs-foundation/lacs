@@ -8,14 +8,14 @@ pub fn specs() -> Vec<ActionSpec> {
         get_deployment_history(),
         list_deployments(),
         update_system(),
-        pin_deployment(),
-        unpin_deployment(),
-        rebase_system(),
+        pin_deployment(0),
+        unpin_deployment(0),
+        rebase_system("fedora/41/x86_64/silverblue"),
         cleanup_deployments(),
         reboot_system(),
         rollback_deployment(),
         get_kernel_arguments(),
-        set_kernel_arguments(),
+        set_kernel_arguments(&[], &[]),
     ]
 }
 
@@ -69,30 +69,41 @@ pub fn update_system() -> ActionSpec {
     }
 }
 
-pub fn pin_deployment() -> ActionSpec {
+pub fn pin_deployment(index: u32) -> ActionSpec {
     ActionSpec {
         action_name: "PinDeployment",
-        mechanism: command_mechanism("ostree", ["admin", "pin"]),
+        mechanism: super::ActionMechanism::Command {
+            program: "ostree",
+            args: vec!["admin".to_string(), "pin".to_string(), index.to_string()],
+        },
         risk_level: RiskLevel::High,
         reboot_required: false,
         rollback_available: false,
     }
 }
 
-pub fn unpin_deployment() -> ActionSpec {
+pub fn unpin_deployment(index: u32) -> ActionSpec {
     ActionSpec {
         action_name: "UnpinDeployment",
-        mechanism: command_mechanism("ostree", ["admin", "pin", "--unpin"]),
+        mechanism: super::ActionMechanism::Command {
+            program: "ostree",
+            args: vec![
+                "admin".to_string(),
+                "pin".to_string(),
+                "--unpin".to_string(),
+                index.to_string(),
+            ],
+        },
         risk_level: RiskLevel::High,
         reboot_required: false,
         rollback_available: false,
     }
 }
 
-pub fn rebase_system() -> ActionSpec {
+pub fn rebase_system(target_ref: &str) -> ActionSpec {
     ActionSpec {
         action_name: "RebaseSystem",
-        mechanism: command_mechanism("rpm-ostree", ["rebase"]),
+        mechanism: command_mechanism("rpm-ostree", ["rebase", target_ref]),
         risk_level: RiskLevel::High,
         reboot_required: true,
         rollback_available: true,
@@ -139,10 +150,18 @@ pub fn get_kernel_arguments() -> ActionSpec {
     }
 }
 
-pub fn set_kernel_arguments() -> ActionSpec {
+pub fn set_kernel_arguments(args_to_add: &[&str], args_to_remove: &[&str]) -> ActionSpec {
+    let args = std::iter::once("kargs".to_string())
+        .chain(args_to_add.iter().map(|a| format!("--append={a}")))
+        .chain(args_to_remove.iter().map(|a| format!("--delete={a}")))
+        .collect();
+
     ActionSpec {
         action_name: "SetKernelArguments",
-        mechanism: command_mechanism("rpm-ostree", ["kargs"]),
+        mechanism: super::ActionMechanism::Command {
+            program: "rpm-ostree",
+            args,
+        },
         risk_level: RiskLevel::High,
         reboot_required: true,
         rollback_available: true,
