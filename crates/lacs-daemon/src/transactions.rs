@@ -118,6 +118,50 @@ impl TransactionStore {
         }
     }
 
+    /// Find the most-recently recorded transaction with the given `request_hash`.
+    ///
+    /// Returns `None` if no matching transaction exists. The dispatcher uses
+    /// this to verify that a preview was generated before an execute request
+    /// is processed.
+    pub fn find_by_request_hash(
+        &self,
+        request_hash: &str,
+    ) -> Result<Option<TransactionRecord>, TransactionStoreError> {
+        let conn = self.connection()?;
+        let mut stmt = conn.prepare(
+            "SELECT
+                transaction_id,
+                request_id,
+                request_hash,
+                action_name,
+                risk_level,
+                status,
+                approval_id,
+                summary,
+                warnings_json
+             FROM transactions
+             WHERE request_hash = ?1
+             ORDER BY rowid DESC
+             LIMIT 1",
+        )?;
+        let mut rows = stmt.query(params![request_hash])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(TransactionRecord {
+                transaction_id: row.get(0)?,
+                request_id: row.get(1)?,
+                request_hash: row.get(2)?,
+                action_name: row.get(3)?,
+                risk_level: deserialize_field(&row.get::<_, String>(4)?)?,
+                status: deserialize_field(&row.get::<_, String>(5)?)?,
+                approval_id: row.get(6)?,
+                summary: row.get(7)?,
+                warnings: serde_json::from_str(&row.get::<_, String>(8)?)?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
     pub fn get_preview(
         &self,
         transaction_id: &str,
@@ -332,5 +376,25 @@ mod tests {
         assert_eq!(updated.action_name, "UpdateSystem");
         assert_eq!(updated.risk_level, RiskLevel::High);
         assert_eq!(updated.status, JobState::Failed);
+    }
+
+    #[test]
+    fn find_by_request_hash_returns_most_recent_match() {
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let tx = store.record(queued_transaction()).unwrap();
+
+        let found = store.find_by_request_hash("hash-abc").unwrap();
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().transaction_id, tx.transaction_id);
+    }
+
+    #[test]
+    fn find_by_request_hash_returns_none_for_unknown_hash() {
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+
+        let found = store.find_by_request_hash("nonexistent-hash").unwrap();
+        assert!(found.is_none());
     }
 }

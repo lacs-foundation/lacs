@@ -1,5 +1,6 @@
 pub mod actions;
 pub mod auth;
+pub mod dispatcher;
 pub mod executor;
 pub mod jobs;
 pub mod policy;
