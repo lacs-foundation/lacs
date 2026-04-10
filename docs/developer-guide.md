@@ -5,7 +5,7 @@ This guide explains how to work on LACS as a contributor.
 ## Read First
 
 - [Specification draft](plans/2026-04-10-lacs-spec.md)
-- [Implementation plan](plans/2026-04-10-lacs-implementation-plan.md)
+- [Daemon IPC spec](plans/2026-04-10-lacs-daemon-ipc-spec.md)
 - [Architecture overview](architecture.md)
 
 ## Working Style

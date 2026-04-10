@@ -37,7 +37,7 @@ end-to-end execution are the next milestone.
 Reference docs:
 
 - [Specification draft](docs/plans/2026-04-10-lacs-spec.md)
-- [Implementation plan](docs/plans/2026-04-10-lacs-implementation-plan.md)
+- [Daemon IPC spec](docs/plans/2026-04-10-lacs-daemon-ipc-spec.md)
 
 ## Architecture at a Glance
 

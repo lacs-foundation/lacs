@@ -7,7 +7,8 @@ aligned with the system boundary.
 ## Before You Start
 
 - Read the [specification draft](docs/plans/2026-04-10-lacs-spec.md).
-- Read the [implementation plan](docs/plans/2026-04-10-lacs-implementation-plan.md).
+- Read the [daemon IPC spec](docs/plans/2026-04-10-lacs-daemon-ipc-spec.md)
+  for current active work.
 - Read the [ADRs](docs/adr/) for architectural decisions.
 - Open an issue before starting major work.
 - Keep the planner, shell, and daemon roles separate.
