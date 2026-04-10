@@ -2,9 +2,11 @@
 resolver = "2"
 members = [
   "crates/lacs-core",
+  "crates/lacs-brain",
   "crates/lacs-daemon",
   "crates/lacs-proto",
   "crates/lacs-types",
+  "apps/lacs-shell/src-tauri",
 ]
 
 [workspace.package]
