@@ -8,9 +8,11 @@
 //! The loop is bounded by `max_turns`. If the LLM exhausts all turns without
 //! calling `propose_plan`, the planner returns `PlanningError::PlannerStuck`.
 //!
-//! Note: `StateClient` is invoked synchronously (blocking the async task) on
-//! each `get_system_state` call. If the state client ever needs I/O, the trait
-//! must be made async.
+//! Note: `StateClient::curated_state()` is a synchronous call invoked directly
+//! from the async planning loop, which runs on a Tokio worker thread. This is
+//! acceptable as long as the implementation does not perform blocking I/O.
+//! If the real daemon client uses a blocking socket, either make the trait
+//! async (via `async_trait`) or dispatch it with `tokio::task::spawn_blocking`.
 
 use crate::config::{BrainConfig, ProviderConfig};
 use crate::planning_tools::get_state::get_state_tool_def;
@@ -71,12 +73,20 @@ pub struct PlanStep {
 }
 
 impl PlanStep {
+    /// Construct a step. Panics if `action_name` or `summary` is empty —
+    /// these are programmer errors; callers must validate first.
+    /// The intended caller is `parse_proposed_plan` which validates all fields.
     pub fn new(
         action_name: String,
         summary: String,
         risk_level: PlanRiskLevel,
         params: serde_json::Value,
     ) -> Self {
+        assert!(
+            !action_name.is_empty(),
+            "PlanStep action_name must not be empty"
+        );
+        assert!(!summary.is_empty(), "PlanStep summary must not be empty");
         Self {
             action_name,
             summary,
@@ -302,8 +312,15 @@ impl LlmPlanner {
                         match name.as_str() {
                             "get_system_state" => {
                                 let state = self.state_client.curated_state()?;
-                                let state_json =
-                                    serde_json::to_string(&state).unwrap_or_else(|_| "{}".into());
+                                // Propagate serialisation errors: feeding `{}` to the LLM
+                                // would cause it to plan against phantom data. In practice
+                                // CuratedState is always serialisable (only String/Vec<String>
+                                // fields), but this guards against future type changes.
+                                let state_json = serde_json::to_string(&state).map_err(|e| {
+                                    PlanningError::StateUnavailable(format!(
+                                        "failed to serialize system state: {e}"
+                                    ))
+                                })?;
                                 tool_results.push(ToolResultBlock {
                                     tool_use_id: id.clone(),
                                     content: state_json,
@@ -311,10 +328,20 @@ impl LlmPlanner {
                                 });
                             }
                             "propose_plan" => {
-                                // Parse and validate before returning — if parse fails
-                                // the error propagates via `?` without adding a tool result.
-                                let plan = parse_proposed_plan(intent, input)?;
-                                return Ok(plan);
+                                // Parse and validate before returning.
+                                // If validation fails, log the rejection for security audit
+                                // (safety fence activations are security-relevant events)
+                                // and propagate the error.
+                                match parse_proposed_plan(intent, input) {
+                                    Ok(plan) => return Ok(plan),
+                                    Err(e) => {
+                                        eprintln!(
+                                            "[LACS SAFETY] propose_plan rejected: {e}. \
+                                             Input: {input}"
+                                        );
+                                        return Err(e);
+                                    }
+                                }
                             }
                             unknown => {
                                 tool_results.push(ToolResultBlock {

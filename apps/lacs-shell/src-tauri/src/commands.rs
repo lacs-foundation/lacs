@@ -63,6 +63,24 @@ impl StateClient for DemoStateClient {
 // Shell command state
 // ---------------------------------------------------------------------------
 
+/// Returns the `StateClient` to use at runtime.
+///
+/// Requires the `demo` feature (on by default) because `DemoStateClient`
+/// is the only available implementation. Replace both usages of
+/// `DemoStateClient` here with the real daemon IPC client before disabling
+/// that feature.
+#[cfg(any(test, feature = "demo"))]
+fn build_state_client() -> Box<dyn StateClient> {
+    Box::new(DemoStateClient)
+}
+
+#[cfg(not(any(test, feature = "demo")))]
+fn build_state_client() -> Box<dyn StateClient> {
+    panic!(
+        "No StateClient available: enable the 'demo' feature or implement a real daemon IPC client"
+    )
+}
+
 pub struct ShellCommandState {
     planner: LlmPlanner,
 }
@@ -73,20 +91,23 @@ impl ShellCommandState {
     /// Logs a warning and falls back to Ollama defaults when `LACS_LLM_PROVIDER`
     /// is not set or the config is invalid, so the shell starts even without
     /// API credentials configured.
+    ///
+    /// Note: requires the `demo` feature (enabled by default) via
+    /// `build_state_client()`. Replace `DemoStateClient` with a real daemon
+    /// IPC client before disabling that feature.
     pub fn new() -> Self {
         let config = BrainConfig::from_env().unwrap_or_else(|err| {
             eprintln!("[LACS WARNING] Brain config error: {err}. Falling back to Ollama defaults.");
             BrainConfig::ollama_defaults()
         });
-        let planner =
-            LlmPlanner::from_config(config, Box::new(DemoStateClient)).unwrap_or_else(|err| {
-                eprintln!(
-                    "[LACS WARNING] Failed to build LLM provider: {err}. \
+        let planner = LlmPlanner::from_config(config, build_state_client()).unwrap_or_else(|err| {
+            eprintln!(
+                "[LACS WARNING] Failed to build LLM provider: {err}. \
                      Check LACS_LLM_PROVIDER and related env vars."
-                );
-                LlmPlanner::from_config(BrainConfig::ollama_defaults(), Box::new(DemoStateClient))
-                    .expect("Ollama defaults must always produce a valid planner")
-            });
+            );
+            LlmPlanner::from_config(BrainConfig::ollama_defaults(), build_state_client())
+                .expect("Ollama defaults must always produce a valid planner")
+        });
         Self { planner }
     }
 
@@ -342,5 +363,48 @@ mod tests {
         assert!(resp.approval_required);
         assert_eq!(resp.steps[0].risk_level, "high");
         assert_eq!(resp.preview.summary, "Preview for rebase intent");
+    }
+
+    #[test]
+    fn plan_to_response_approval_required_when_any_step_is_high_risk() {
+        // Mixed plan: first step is low, second is high. The aggregated
+        // approval_required must be true (any() semantics, not all()).
+        use lacs_brain::planner::{Plan, PlanStep};
+
+        let steps = vec![
+            PlanStep::new(
+                "GetSystemState".into(),
+                "Read current state".into(),
+                PlanRiskLevel::Low,
+                serde_json::json!({}),
+            ),
+            PlanStep::new(
+                "InstallPackages".into(),
+                "Layer vim via rpm-ostree".into(),
+                PlanRiskLevel::High,
+                serde_json::json!({}),
+            ),
+        ];
+        let plan = Plan::new(
+            "install vim intent".into(),
+            "Install vim on the system".into(),
+            "Reads state then layers vim. Requires reboot.".into(),
+            steps,
+        );
+        let resp = plan_to_response(plan);
+
+        assert!(
+            resp.approval_required,
+            "approval_required must be true when any step is high-risk"
+        );
+        assert_eq!(resp.steps.len(), 2);
+        assert!(
+            !resp.steps[0].approval_required,
+            "low step should not require approval"
+        );
+        assert!(
+            resp.steps[1].approval_required,
+            "high step must require approval"
+        );
     }
 }

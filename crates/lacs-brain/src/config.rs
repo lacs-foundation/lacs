@@ -2,7 +2,8 @@
 //!
 //! Resolution order:
 //!   1. `LACS_LLM_PROVIDER` — "anthropic" | "ollama"
-//!      If unset: "anthropic" when `ANTHROPIC_API_KEY` is present, else "ollama".
+//!      If unset: "anthropic" when `ANTHROPIC_API_KEY` is set and non-whitespace,
+//!      else "ollama". Whitespace-only values are treated as absent.
 //!   2. `ANTHROPIC_API_KEY` — required when provider is anthropic. Must be non-empty.
 //!   3. `LACS_LLM_MODEL` — overrides the provider default model.
 //!   4. `LACS_ANTHROPIC_URL` — overrides the Anthropic base URL (default: https://api.anthropic.com).
@@ -116,7 +117,13 @@ impl BrainConfig {
         };
 
         let provider_name = std::env::var("LACS_LLM_PROVIDER").unwrap_or_else(|_| {
-            if std::env::var("ANTHROPIC_API_KEY").is_ok() {
+            // Auto-detect: use anthropic only when a non-whitespace key is present.
+            // A whitespace-only key would pass is_ok() but fail validation below,
+            // giving a confusing error. Unset ANTHROPIC_API_KEY to force Ollama.
+            if std::env::var("ANTHROPIC_API_KEY")
+                .map(|v| !v.trim().is_empty())
+                .unwrap_or(false)
+            {
                 "anthropic".into()
             } else {
                 "ollama".into()
@@ -127,7 +134,7 @@ impl BrainConfig {
             "anthropic" => {
                 let api_key = std::env::var("ANTHROPIC_API_KEY")
                     .ok()
-                    .filter(|k| !k.is_empty())
+                    .filter(|k| !k.trim().is_empty())
                     .ok_or(ConfigError::MissingAnthropicKey)?;
                 let base_url = std::env::var("LACS_ANTHROPIC_URL")
                     .unwrap_or_else(|_| DEFAULT_ANTHROPIC_BASE_URL.into());
@@ -176,10 +183,8 @@ mod tests {
 
     #[test]
     fn unknown_provider_returns_error() {
-        // Temporarily set the env var; since tests may run in parallel
-        // we use a scoped approach with a unique var name.
-        // We can't easily set LACS_LLM_PROVIDER per-test without a mutex,
-        // so we test ConfigError directly.
+        // Validates ConfigError::UnknownProvider message formatting only
+        // and does not set env vars, so no mutex is needed.
         let err = ConfigError::UnknownProvider("foobar".into());
         assert!(err.to_string().contains("foobar"));
     }
@@ -266,6 +271,49 @@ mod tests {
     }
 
     #[test]
+    fn from_env_auto_detects_anthropic_when_api_key_present() {
+        let _g = ENV_LOCK.lock().unwrap();
+        unsafe {
+            std::env::remove_var("LACS_LLM_PROVIDER");
+            std::env::set_var("ANTHROPIC_API_KEY", "sk-test-key");
+            std::env::remove_var("LACS_LLM_MODEL");
+            std::env::remove_var("LACS_ANTHROPIC_URL");
+            std::env::remove_var("LACS_BRAIN_MAX_TURNS");
+        }
+        let result = BrainConfig::from_env();
+        unsafe {
+            std::env::remove_var("ANTHROPIC_API_KEY");
+        }
+        let cfg = result.expect("auto-detect should select anthropic when key is present");
+        assert!(
+            matches!(cfg.provider, ProviderConfig::Anthropic { .. }),
+            "expected Anthropic provider"
+        );
+    }
+
+    #[test]
+    fn from_env_whitespace_api_key_does_not_auto_detect_anthropic() {
+        let _g = ENV_LOCK.lock().unwrap();
+        unsafe {
+            std::env::remove_var("LACS_LLM_PROVIDER");
+            std::env::set_var("ANTHROPIC_API_KEY", "   ");
+            std::env::remove_var("LACS_LLM_MODEL");
+            std::env::remove_var("LACS_OLLAMA_URL");
+            std::env::remove_var("LACS_BRAIN_MAX_TURNS");
+        }
+        let result = BrainConfig::from_env();
+        unsafe {
+            std::env::remove_var("ANTHROPIC_API_KEY");
+        }
+        // whitespace-only key should fall through to Ollama, not fail with MissingAnthropicKey
+        let cfg = result.expect("whitespace key should fall back to Ollama");
+        assert!(
+            matches!(cfg.provider, ProviderConfig::Ollama { .. }),
+            "expected Ollama fallback for whitespace-only key"
+        );
+    }
+
+    #[test]
     fn from_env_empty_api_key_returns_missing_key() {
         let _g = ENV_LOCK.lock().unwrap();
         unsafe {
@@ -303,6 +351,29 @@ mod tests {
         let cfg = result.expect("ollama config should succeed");
         assert!(matches!(cfg.provider, ProviderConfig::Ollama { .. }));
         assert_eq!(cfg.max_turns, DEFAULT_MAX_TURNS);
+    }
+
+    #[test]
+    fn from_env_model_override_is_applied() {
+        let _g = ENV_LOCK.lock().unwrap();
+        unsafe {
+            std::env::set_var("LACS_LLM_PROVIDER", "ollama");
+            std::env::remove_var("ANTHROPIC_API_KEY");
+            std::env::set_var("LACS_LLM_MODEL", "custom-model");
+            std::env::remove_var("LACS_OLLAMA_URL");
+            std::env::remove_var("LACS_BRAIN_MAX_TURNS");
+        }
+        let result = BrainConfig::from_env();
+        unsafe {
+            std::env::remove_var("LACS_LLM_PROVIDER");
+            std::env::remove_var("LACS_LLM_MODEL");
+        }
+        let cfg = result.expect("model override should not fail");
+        if let ProviderConfig::Ollama { model, .. } = cfg.provider {
+            assert_eq!(model, "custom-model");
+        } else {
+            panic!("expected Ollama provider");
+        }
     }
 
     #[test]

@@ -312,7 +312,14 @@ fn wire_response_to_completion(resp: OpenAiResponse) -> Result<Completion, Provi
     let stop_reason = match choice.finish_reason.as_str() {
         "tool_calls" => StopReason::ToolUse,
         "length" => StopReason::MaxTokens,
-        _ => StopReason::EndTurn,
+        // "stop" is the normal OpenAI-compatible completion reason.
+        // "function_call" is the legacy single-function calling format.
+        "stop" | "function_call" => StopReason::EndTurn,
+        other => {
+            return Err(ProviderError::Parse(format!(
+                "unexpected finish_reason from Ollama: '{other}'"
+            )));
+        }
     };
 
     let mut content = Vec::new();
@@ -511,6 +518,37 @@ mod tests {
         };
         let completion = wire_response_to_completion(resp).unwrap();
         assert_eq!(completion.stop_reason, StopReason::MaxTokens);
+    }
+
+    #[test]
+    fn unknown_finish_reason_returns_parse_error() {
+        let resp = OpenAiResponse {
+            choices: vec![OpenAiChoice {
+                message: OpenAiMessage {
+                    role: "assistant".into(),
+                    content: Some("done".into()),
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+                finish_reason: "content_filter".into(),
+            }],
+        };
+        assert!(
+            matches!(
+                wire_response_to_completion(resp).unwrap_err(),
+                ProviderError::Parse(_)
+            ),
+            "unknown finish_reason must return Parse error"
+        );
+    }
+
+    #[test]
+    fn empty_choices_array_returns_parse_error() {
+        let resp = OpenAiResponse { choices: vec![] };
+        assert!(matches!(
+            wire_response_to_completion(resp).unwrap_err(),
+            ProviderError::Parse(_)
+        ));
     }
 
     #[test]

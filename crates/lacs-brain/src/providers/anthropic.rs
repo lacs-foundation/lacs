@@ -117,7 +117,7 @@ impl LlmProvider for AnthropicProvider {
             .await
             .map_err(|e| ProviderError::Parse(e.to_string()))?;
 
-        Ok(wire_response_to_completion(wire_resp))
+        wire_response_to_completion(wire_resp)
     }
 }
 
@@ -209,7 +209,7 @@ fn block_to_wire(block: &ContentBlock) -> AnthropicBlock {
     }
 }
 
-fn wire_response_to_completion(resp: AnthropicResponse) -> Completion {
+fn wire_response_to_completion(resp: AnthropicResponse) -> Result<Completion, ProviderError> {
     let content = resp
         .content
         .into_iter()
@@ -218,21 +218,33 @@ fn wire_response_to_completion(resp: AnthropicResponse) -> Completion {
             AnthropicBlock::ToolUse { id, name, input } => {
                 Some(ContentBlock::ToolUse { id, name, input })
             }
-            // tool_result blocks should not appear in assistant responses
-            AnthropicBlock::ToolResult { .. } => None,
+            // tool_result blocks should not appear in assistant responses;
+            // log a warning if one arrives so protocol violations are visible.
+            AnthropicBlock::ToolResult { tool_use_id, .. } => {
+                eprintln!(
+                    "[LACS WARNING] Unexpected tool_result block in Anthropic assistant \
+                     response (tool_use_id: {tool_use_id}); discarding."
+                );
+                None
+            }
         })
         .collect();
 
     let stop_reason = match resp.stop_reason.as_str() {
         "tool_use" => StopReason::ToolUse,
         "max_tokens" => StopReason::MaxTokens,
-        _ => StopReason::EndTurn,
+        "end_turn" | "stop_sequence" => StopReason::EndTurn,
+        other => {
+            return Err(ProviderError::Parse(format!(
+                "unexpected stop_reason from Anthropic: '{other}'"
+            )));
+        }
     };
 
-    Completion {
+    Ok(Completion {
         content,
         stop_reason,
-    }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -297,7 +309,7 @@ mod tests {
             }],
             stop_reason: "tool_use".into(),
         };
-        let completion = wire_response_to_completion(resp);
+        let completion = wire_response_to_completion(resp).unwrap();
         assert_eq!(completion.stop_reason, StopReason::ToolUse);
     }
 
@@ -309,7 +321,7 @@ mod tests {
             }],
             stop_reason: "end_turn".into(),
         };
-        let completion = wire_response_to_completion(resp);
+        let completion = wire_response_to_completion(resp).unwrap();
         assert_eq!(completion.stop_reason, StopReason::EndTurn);
     }
 
@@ -321,8 +333,40 @@ mod tests {
             }],
             stop_reason: "max_tokens".into(),
         };
-        let completion = wire_response_to_completion(resp);
+        let completion = wire_response_to_completion(resp).unwrap();
         assert_eq!(completion.stop_reason, StopReason::MaxTokens);
+    }
+
+    #[test]
+    fn unknown_stop_reason_returns_parse_error() {
+        let resp = AnthropicResponse {
+            content: vec![],
+            stop_reason: "something_new_from_anthropic".into(),
+        };
+        assert!(
+            matches!(
+                wire_response_to_completion(resp),
+                Err(ProviderError::Parse(_))
+            ),
+            "unknown stop_reason must return Parse error"
+        );
+    }
+
+    #[test]
+    fn assistant_role_message_serialises_correctly() {
+        use crate::provider::ContentBlock;
+        let messages = vec![Message {
+            role: crate::provider::Role::Assistant,
+            content: vec![ContentBlock::Text {
+                text: "thinking...".into(),
+            }],
+        }];
+        let wire = messages_to_wire(&messages);
+        assert_eq!(wire.len(), 1);
+        assert_eq!(wire[0].role, "assistant");
+        let json = serde_json::to_value(&wire[0].content[0]).unwrap();
+        assert_eq!(json["type"], "text");
+        assert_eq!(json["text"], "thinking...");
     }
 
     #[test]

@@ -15,7 +15,9 @@ use crate::provider::ToolDefinition;
 /// is shown this enum and can only produce names from it. Any name outside
 /// this set is rejected by `parse_proposed_plan`.
 ///
-/// Must be kept in sync with the action catalogue in `lacs-daemon`.
+/// Must be kept in sync with the action catalogue in `lacs-daemon` once that
+/// crate is implemented. Until then this list is the authoritative source of
+/// valid action names.
 const KNOWN_ACTIONS: &[&str] = &[
     // Deployment and boot
     "GetSystemState",

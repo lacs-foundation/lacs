@@ -421,6 +421,27 @@ async fn empty_steps_array_returns_invalid_plan_output() {
 }
 
 // ---------------------------------------------------------------------------
+// ToolUse stop reason with no actual tool-call blocks
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn tool_use_stop_reason_with_no_tool_blocks_returns_no_plan_proposed() {
+    // A provider can return stop_reason=ToolUse but only include a Text block
+    // (no ToolUse block). The planner must detect the empty tool_calls list
+    // and return NoPlanProposed rather than looping indefinitely.
+    let planner = make_planner(MockProvider::new([Ok(Completion {
+        content: vec![ContentBlock::Text {
+            text: "I was thinking out loud but forgot to call a tool".into(),
+        }],
+        stop_reason: StopReason::ToolUse,
+    })]));
+    assert_eq!(
+        planner.plan_intent("do something").await.unwrap_err(),
+        PlanningError::NoPlanProposed
+    );
+}
+
+// ---------------------------------------------------------------------------
 // MaxTokens stop reason
 // ---------------------------------------------------------------------------
 

@@ -143,7 +143,7 @@ pub trait LlmProvider: Send + Sync {
 // Error type
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ProviderError {
     #[error("http error {status}: {body}")]
     Http { status: u16, body: String },

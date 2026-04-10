@@ -30,7 +30,7 @@ planning docs for the v0 control plane.
 
 ## Architecture at a Glance
 
-- `zeroclaw-brain`: unprivileged planner
+- `lacs-brain` (agent identity: `zeroclaw-brain`): unprivileged planner
 - `lacs-shell`: user-facing control surface
 - `lacs-daemon`: trusted privileged executor
 

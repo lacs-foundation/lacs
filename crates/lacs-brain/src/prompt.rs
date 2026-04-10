@@ -52,7 +52,7 @@ ReplaceLayeredPackage, ResetLayeredPackageOverride
 
 - LOW: read-only queries, state inspection, log retrieval — no mutation, no approval needed.
 - MEDIUM: reversible changes to user-space configuration (services, apps, network, users) — approval required.
-- HIGH: package layering, deployment lifecycle changes, kernel arguments, reboots, user deletion — approval required, reboot may be needed.
+- HIGH: package layering, deployment lifecycle changes, kernel arguments, reboots — approval required, reboot may be needed.
 
 When in doubt, assign the higher risk level.
 
