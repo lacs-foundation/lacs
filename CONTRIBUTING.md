@@ -8,8 +8,27 @@ aligned with the system boundary.
 
 - Read the [specification draft](docs/plans/2026-04-10-lacs-spec.md).
 - Read the [implementation plan](docs/plans/2026-04-10-lacs-implementation-plan.md).
+- Read the [ADRs](docs/adr/) for architectural decisions.
 - Open an issue before starting major work.
 - Keep the planner, shell, and daemon roles separate.
+
+## Setting Up the Brain for Local Development
+
+`lacs-brain` works without API credentials — it defaults to Ollama at
+`http://localhost:11434`. Unit and integration tests use mocks and
+require no network access.
+
+To run the shell against a real LLM provider:
+
+```sh
+# Anthropic
+export ANTHROPIC_API_KEY=sk-ant-...
+
+# Ollama (default when no key is set)
+ollama pull llama3.2
+```
+
+See `README.md` for the full list of environment variables.
 
 ## Good Pull Requests
 

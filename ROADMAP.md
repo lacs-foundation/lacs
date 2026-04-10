@@ -29,9 +29,12 @@ contributors where the project is going and what matters next.
 
 ## Phase 4: Brain and Shell
 
-- implement the planner runtime
+- ~~implement the planner runtime~~ — done; `lacs-brain` has Anthropic
+  and Ollama providers, a tool-use loop, plan validation, and risk
+  classification
 - implement the sparse shell UI
 - wire previews, approvals, jobs, and timeline
+- replace `DemoStateClient` with real daemon IPC
 
 ## Phase 5: Release Quality
 
