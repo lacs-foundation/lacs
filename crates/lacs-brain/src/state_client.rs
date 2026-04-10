@@ -29,6 +29,6 @@ impl CuratedState {
     }
 }
 
-pub trait StateClient {
+pub trait StateClient: Send + Sync {
     fn curated_state(&self) -> Result<CuratedState, PlanningError>;
 }

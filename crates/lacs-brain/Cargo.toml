@@ -6,10 +6,13 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+async-trait = { workspace = true }
 lacs-types = { path = "../lacs-types" }
+reqwest = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+tokio = { workspace = true }
 
 [dev-dependencies]
-insta = { version = "1", features = ["json"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }

@@ -12,5 +12,9 @@ serde_json = { workspace = true }
 tauri = { version = "2.5.6" }
 thiserror = { workspace = true }
 
+[dev-dependencies]
+async-trait = { workspace = true }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
+
 [build-dependencies]
 tauri-build = "2.5.6"
