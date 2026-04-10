@@ -1,6 +1,7 @@
 use lacs_daemon::auth::highest_role_from_groups;
 use lacs_daemon::jobs::JobStateMachine;
 use lacs_daemon::policy::approval_matches_request;
+use lacs_daemon::state::DaemonConfig;
 use lacs_daemon::transactions::{NewTransaction, TransactionStore};
 use lacs_daemon::transport::grpc::{bind_unix_listener, ListenTarget};
 use lacs_types::{CallerRole, JobState, RiskLevel};
@@ -11,6 +12,7 @@ fn unix_socket_startup_rejects_tcp_uris() {
     let unix = ListenTarget::try_from_uri("unix:///tmp/lacs.sock").expect("unix uri should parse");
 
     assert!(matches!(unix, ListenTarget::Unix(_)));
+    assert!(ListenTarget::try_from_uri("unix://relative.sock").is_err());
     assert!(ListenTarget::try_from_uri("tcp://127.0.0.1:7000").is_err());
 }
 
@@ -24,6 +26,32 @@ fn unix_socket_listener_is_created_on_disk() {
     let listener = bind_unix_listener(&target).expect("bind unix listener");
     assert!(socket_path.exists());
     drop(listener);
+}
+
+#[test]
+fn unix_socket_listener_rejects_existing_non_socket_path() {
+    let dir = tempdir().expect("tempdir");
+    let socket_path = dir.path().join("lacs.sock");
+    std::fs::write(&socket_path, "not a socket").expect("write placeholder file");
+    let target = ListenTarget::try_from_uri(&format!("unix://{}", socket_path.display()))
+        .expect("unix uri should parse");
+
+    assert!(bind_unix_listener(&target).is_err());
+}
+
+#[test]
+fn daemon_bootstrap_opens_listener_and_state() {
+    let dir = tempdir().expect("tempdir");
+    let socket_path = dir.path().join("daemon.sock");
+    let db_path = dir.path().join("daemon.sqlite");
+    let target = ListenTarget::try_from_uri(&format!("unix://{}", socket_path.display()))
+        .expect("unix uri should parse");
+    let config = DaemonConfig::new(target, &db_path);
+
+    let runtime = lacs_daemon::state::DaemonState::bootstrap(config).expect("bootstrap");
+    assert!(socket_path.exists());
+    assert!(db_path.exists());
+    assert_eq!(runtime.state.config.database_path, db_path);
 }
 
 #[test]

@@ -1,5 +1,6 @@
 use crate::transactions::{TransactionStore, TransactionStoreError};
-use crate::transport::grpc::ListenTarget;
+use crate::transport::grpc::{bind_unix_listener, ListenTarget, ListenTargetError};
+use std::os::unix::net::UnixListener;
 use std::path::PathBuf;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -23,10 +24,19 @@ pub struct DaemonState {
     pub transactions: TransactionStore,
 }
 
+#[derive(Debug)]
+pub struct DaemonRuntime {
+    pub state: DaemonState,
+    pub listener: UnixListener,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum DaemonStateError {
     #[error(transparent)]
     Transactions(#[from] TransactionStoreError),
+
+    #[error(transparent)]
+    Listen(#[from] ListenTargetError),
 }
 
 impl DaemonState {
@@ -36,5 +46,11 @@ impl DaemonState {
             config,
             transactions,
         })
+    }
+
+    pub fn bootstrap(config: DaemonConfig) -> Result<DaemonRuntime, DaemonStateError> {
+        let state = Self::open(config)?;
+        let listener = bind_unix_listener(&state.config.listen_target)?;
+        Ok(DaemonRuntime { state, listener })
     }
 }

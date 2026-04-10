@@ -1,4 +1,5 @@
 use std::fs;
+use std::os::unix::fs::FileTypeExt;
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 
@@ -15,6 +16,9 @@ pub enum ListenTargetError {
     #[error("invalid listen uri: {0}")]
     InvalidUri(String),
 
+    #[error("existing path is not a unix socket: {0}")]
+    ExistingPathNotSocket(String),
+
     #[error("io error: {0}")]
     Io(String),
 }
@@ -26,6 +30,10 @@ impl ListenTarget {
         };
 
         if path.is_empty() {
+            return Err(ListenTargetError::InvalidUri(uri.to_string()));
+        }
+
+        if !Path::new(path).is_absolute() {
             return Err(ListenTargetError::InvalidUri(uri.to_string()));
         }
 
@@ -47,6 +55,15 @@ pub fn bind_unix_listener(target: &ListenTarget) -> Result<UnixListener, ListenT
             }
 
             if path.exists() {
+                let file_type = fs::symlink_metadata(path)
+                    .map_err(|err| ListenTargetError::Io(err.to_string()))?
+                    .file_type();
+                if !file_type.is_socket() {
+                    return Err(ListenTargetError::ExistingPathNotSocket(
+                        path.display().to_string(),
+                    ));
+                }
+
                 fs::remove_file(path).map_err(|err| ListenTargetError::Io(err.to_string()))?;
             }
 
