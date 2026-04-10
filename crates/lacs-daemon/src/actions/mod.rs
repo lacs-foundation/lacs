@@ -3,9 +3,13 @@ use lacs_types::RiskLevel;
 pub mod containers;
 pub mod deployment;
 pub mod flatpak;
+pub mod identity;
 pub mod layering;
+pub mod network;
 pub mod package_repos;
+pub mod services;
 pub mod toolbox;
+pub mod users;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ActionMechanism {

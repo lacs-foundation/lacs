@@ -50,6 +50,52 @@ fn medium_risk_preview_marks_service_restart_as_mutating() {
 }
 
 #[test]
+fn firewall_preview_is_classified_explicitly_as_medium_risk() {
+    let preview = preview_action(
+        &request("ConfigureFirewall", "req-firewall", "hash-firewall"),
+        json!({"zone": "public"}),
+        json!({"zone": "public", "service": "ssh"}),
+    );
+
+    assert_eq!(preview.risk_level, RiskLevel::Medium);
+    assert_eq!(preview.request_hash, "hash-firewall");
+    assert!(!preview.reboot_required);
+    assert!(!preview.rollback_available);
+    assert!(preview
+        .expected_side_effects
+        .iter()
+        .any(|effect: &String| effect.contains("service interruption")));
+}
+
+#[test]
+fn hostname_preview_is_classified_explicitly_as_medium_risk() {
+    let preview = preview_action(
+        &request("SetHostname", "req-hostname", "hash-hostname"),
+        json!({"hostname": "old-host"}),
+        json!({"hostname": "new-host"}),
+    );
+
+    assert_eq!(preview.risk_level, RiskLevel::Medium);
+    assert_eq!(preview.request_hash, "hash-hostname");
+    assert!(!preview.reboot_required);
+    assert!(!preview.rollback_available);
+}
+
+#[test]
+fn user_creation_preview_is_classified_explicitly_as_medium_risk() {
+    let preview = preview_action(
+        &request("CreateUser", "req-user", "hash-user"),
+        json!({"username": "alice"}),
+        json!({"username": "alice", "shell": "/bin/bash"}),
+    );
+
+    assert_eq!(preview.risk_level, RiskLevel::Medium);
+    assert_eq!(preview.request_hash, "hash-user");
+    assert!(!preview.reboot_required);
+    assert!(!preview.rollback_available);
+}
+
+#[test]
 fn package_repository_preview_mentions_repository_trust_change() {
     let preview = preview_action(
         &request("AddPackageRepository", "req-repo", "hash-repo"),
