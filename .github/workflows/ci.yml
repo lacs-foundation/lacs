@@ -57,7 +57,8 @@ jobs:
             ROADMAP.md \
             docs/architecture.md \
             docs/developer-guide.md \
-            docs/adr/0001-system-boundaries.md
+            docs/adr/0001-system-boundaries.md \
+            docs/adr/0002-brain-provider-layer.md
           do
             markdown-link-check "$file"
           done

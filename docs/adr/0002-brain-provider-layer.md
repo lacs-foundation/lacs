@@ -45,6 +45,7 @@ inside `lacs-brain`. `ProviderConfig` and `BrainConfig.provider` are
 `pub(crate)` so the shell cannot read credentials.
 
 `BrainConfig::from_env()` validates inputs at the boundary:
+
 - `LACS_BRAIN_MAX_TURNS` must be a positive integer when set.
 - `ANTHROPIC_API_KEY` must be non-empty when provider is `anthropic`.
 

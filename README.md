@@ -64,13 +64,13 @@ We welcome contributors who care about:
 Without any config, it defaults to a local Ollama instance.
 
 | Variable | Default | Description |
-|---|---|---|
+| --- | --- | --- |
 | `LACS_LLM_PROVIDER` | auto-detect | `anthropic` or `ollama` |
 | `ANTHROPIC_API_KEY` | — | Required when provider is `anthropic` |
-| `LACS_ANTHROPIC_URL` | `https://api.anthropic.com` | Override Anthropic base URL |
+| `LACS_ANTHROPIC_URL` | `https://api.anthropic.com` | Anthropic base URL |
 | `LACS_LLM_MODEL` | provider default | Override model name |
-| `LACS_OLLAMA_URL` | `http://localhost:11434` | Override Ollama base URL |
-| `LACS_BRAIN_MAX_TURNS` | `5` | Planning loop turn limit (must be >= 1) |
+| `LACS_OLLAMA_URL` | `http://localhost:11434` | Ollama base URL |
+| `LACS_BRAIN_MAX_TURNS` | `5` | Turn limit (must be >= 1) |
 
 **Quick start with Anthropic:**
 
