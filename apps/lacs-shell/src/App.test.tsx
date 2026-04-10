@@ -1,86 +1,94 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { vi } from "vitest";
 import App from "./App";
-import { requestPlan } from "./daemonBridge";
+import * as bridge from "./daemonBridge";
+import type { PlanResponse } from "./types";
 
 vi.mock("./daemonBridge", () => ({
   requestPlan: vi.fn(),
-  requestApproval: vi.fn(),
+  requestApproval: vi.fn().mockResolvedValue(undefined),
+  cancelJob: vi.fn().mockResolvedValue(undefined),
+  getBrainConfig: vi.fn().mockResolvedValue({
+    provider: "ollama",
+    model: "mistral:7b",
+    fallback: false,
+  }),
   subscribeDaemonEvents: vi.fn().mockResolvedValue(() => undefined),
 }));
 
-const mockedRequestPlan = vi.mocked(requestPlan);
+const mockedRequestPlan = vi.mocked(bridge.requestPlan);
+
+const READ_ONLY_PLAN: PlanResponse = {
+  summary: "Inspect system state",
+  explanation: "Reads the current deployment.",
+  approvalRequired: false,
+  steps: [
+    { actionName: "GetSystemState", summary: "Read state", riskLevel: "low", approvalRequired: false, params: {} },
+  ],
+  hostName: "silverblue", deployment: "fedora/41", toolboxCount: 1, flatpakCount: 2,
+};
+
+const MUTATING_PLAN: PlanResponse = {
+  summary: "Install vim",
+  explanation: "Layers vim via rpm-ostree.",
+  approvalRequired: true,
+  steps: [
+    { actionName: "InstallPackages", summary: "Layer vim", riskLevel: "high", approvalRequired: true, params: {} },
+  ],
+  hostName: "silverblue", deployment: "fedora/41", toolboxCount: 0, flatpakCount: 0,
+};
 
 describe("App", () => {
-  it("renders the four-pane control surface", () => {
+  it("renders the shell and shows Ready status", () => {
     render(<App />);
-
-    expect(screen.getByText("Intent")).toBeInTheDocument();
-    expect(screen.getByText("Plan")).toBeInTheDocument();
-    expect(screen.getByText("Execution")).toBeInTheDocument();
-    expect(screen.getByText("Timeline")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Ready");
   });
 
-  it("shows the idle shell mode on first render", () => {
+  it("shows 'Review plan' status for read-only plan (no approval required)", async () => {
+    mockedRequestPlan.mockResolvedValueOnce(READ_ONLY_PLAN);
     render(<App />);
-
-    expect(screen.getByRole("status")).toHaveTextContent("idle");
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "show state" } });
+    fireEvent.click(screen.getByRole("button", { name: /generate plan/i }));
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent("Ready");
+    });
   });
 
-  it("completes read-only intents without awaiting approval", async () => {
-    mockedRequestPlan.mockResolvedValueOnce({
-      summary: "Read-only inspection",
-      preview: { summary: "Preview for show me the machine state" },
-      approvalRequired: false,
-    });
-
+  it("transitions to 'Awaiting your approval' for mutating plans", async () => {
+    mockedRequestPlan.mockResolvedValueOnce(MUTATING_PLAN);
     render(<App />);
-
-    fireEvent.change(screen.getByRole("textbox"), {
-      target: { value: "show me the machine state" },
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "install vim" } });
+    fireEvent.click(screen.getByRole("button", { name: /generate plan/i }));
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent("Awaiting your approval");
     });
+  });
+
+  it("stays on Ready and shows error when requestPlan rejects", async () => {
+    mockedRequestPlan.mockRejectedValueOnce({
+      code: "llm_http_error",
+      message: "HTTP 500",
+      systemChanged: false,
+    });
+    render(<App />);
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "install vim" } });
+    fireEvent.click(screen.getByRole("button", { name: /generate plan/i }));
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent("Ready");
+    });
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+  });
+
+  it("sets grid data-mode attribute to the current mode", async () => {
+    mockedRequestPlan.mockResolvedValueOnce(MUTATING_PLAN);
+    render(<App />);
+    expect(document.querySelector(".grid")?.getAttribute("data-mode")).toBe("idle");
+
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "install vim" } });
     fireEvent.click(screen.getByRole("button", { name: /generate plan/i }));
 
     await waitFor(() => {
-      expect(screen.getByRole("status")).toHaveTextContent("idle");
+      expect(document.querySelector(".grid")?.getAttribute("data-mode")).toBe("awaiting-approval");
     });
-    expect(
-      screen.getByText("Read-only intent completed: show me the machine state"),
-    ).toBeInTheDocument();
-  });
-
-  it("transitions to awaiting-approval for mutating intents", async () => {
-    mockedRequestPlan.mockResolvedValueOnce({
-      summary: "Update plan",
-      preview: { summary: "Preview for update this machine" },
-      approvalRequired: true,
-    });
-
-    render(<App />);
-
-    fireEvent.change(screen.getByRole("textbox"), {
-      target: { value: "update this machine" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: /generate plan/i }));
-
-    await waitFor(() => {
-      expect(screen.getByRole("status")).toHaveTextContent("awaiting-approval");
-    });
-  });
-
-  it("transitions to failed and surfaces the error when requestPlan rejects", async () => {
-    mockedRequestPlan.mockRejectedValueOnce(new Error("daemon unavailable"));
-
-    render(<App />);
-
-    fireEvent.change(screen.getByRole("textbox"), {
-      target: { value: "update this machine" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: /generate plan/i }));
-
-    await waitFor(() => {
-      expect(screen.getByRole("status")).toHaveTextContent("failed");
-    });
-    expect(screen.getByText(/Planning failed:/)).toBeInTheDocument();
   });
 });

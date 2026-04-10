@@ -2,7 +2,7 @@ mod commands;
 mod daemon_client;
 mod events;
 
-use commands::{approve_preview, plan_intent, ShellCommandState};
+use commands::{approve_preview, cancel_job, get_brain_config, plan_intent, ShellCommandState};
 
 fn main() {
     tauri::Builder::default()
@@ -16,7 +16,12 @@ fn main() {
             Ok(())
         })
         .manage(ShellCommandState::new())
-        .invoke_handler(tauri::generate_handler![approve_preview, plan_intent])
+        .invoke_handler(tauri::generate_handler![
+            approve_preview,
+            cancel_job,
+            get_brain_config,
+            plan_intent,
+        ])
         .run(tauri::generate_context!())
         .expect("failed to run lacs-shell");
 }

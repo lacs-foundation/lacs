@@ -259,6 +259,14 @@ impl LlmPlanner {
         Ok(Self::new(provider, state_client, config.max_turns))
     }
 
+    /// Expose the current system state from the underlying `StateClient`.
+    ///
+    /// Used by the Tauri commands layer to populate system-context fields in
+    /// `PlanResponse` without requiring a second network call.
+    pub fn curated_state(&self) -> Result<crate::state_client::CuratedState, PlanningError> {
+        self.state_client.curated_state()
+    }
+
     /// Run the planning loop for the given natural-language intent.
     ///
     /// Returns `Err(EmptyIntent)` immediately if the intent is blank.
