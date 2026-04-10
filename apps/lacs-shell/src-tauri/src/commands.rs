@@ -94,18 +94,17 @@ impl Default for ShellCommandState {
 
 fn make_provider(config: &BrainConfig) -> Box<dyn LlmProvider> {
     match &config.provider {
-        ProviderConfig::Anthropic { api_key, model, base_url } => {
-            Box::new(
-                AnthropicProvider::new(api_key, model, base_url)
-                    .expect("failed to build Anthropic HTTP client"),
-            )
-        }
-        ProviderConfig::Ollama { base_url, model } => {
-            Box::new(
-                OllamaProvider::new(base_url, model)
-                    .expect("failed to build Ollama HTTP client"),
-            )
-        }
+        ProviderConfig::Anthropic {
+            api_key,
+            model,
+            base_url,
+        } => Box::new(
+            AnthropicProvider::new(api_key, model, base_url)
+                .expect("failed to build Anthropic HTTP client"),
+        ),
+        ProviderConfig::Ollama { base_url, model } => Box::new(
+            OllamaProvider::new(base_url, model).expect("failed to build Ollama HTTP client"),
+        ),
     }
 }
 
@@ -182,7 +181,9 @@ fn plan_to_response(plan: Plan) -> PlanResponse {
     PlanResponse {
         summary: plan.summary().to_string(),
         explanation: plan.explanation().to_string(),
-        preview: ShellPreview { summary: format!("Preview for {}", plan.intent()) },
+        preview: ShellPreview {
+            summary: format!("Preview for {}", plan.intent()),
+        },
         approval_required,
         steps,
     }
@@ -209,7 +210,9 @@ mod tests {
 
     impl MockProvider {
         fn once(turn: Result<Completion, ProviderError>) -> Self {
-            Self { turns: Mutex::new(std::iter::once(turn).collect()) }
+            Self {
+                turns: Mutex::new(std::iter::once(turn).collect()),
+            }
         }
     }
 
@@ -266,13 +269,18 @@ mod tests {
         // ShellCommandState::new() would call BrainConfig::from_env() which
         // may configure a real provider. Use with_planner() to inject a mock.
         let planner = LlmPlanner::new(
-            Box::new(MockProvider::once(Err(ProviderError::Parse("unused".into())))),
+            Box::new(MockProvider::once(Err(ProviderError::Parse(
+                "unused".into(),
+            )))),
             Box::new(DemoStateClient),
             5,
         );
         let state = ShellCommandState::with_planner(planner);
         let err = execute_plan_intent(&state, "").await.unwrap_err();
-        assert!(err.contains("empty"), "expected 'empty' in error, got: {err}");
+        assert!(
+            err.contains("empty"),
+            "expected 'empty' in error, got: {err}"
+        );
     }
 
     #[tokio::test]
@@ -287,7 +295,9 @@ mod tests {
             5,
         );
         let state = ShellCommandState::with_planner(planner);
-        let response = execute_plan_intent(&state, "show me the system").await.unwrap();
+        let response = execute_plan_intent(&state, "show me the system")
+            .await
+            .unwrap();
         assert!(!response.approval_required);
         assert_eq!(response.steps.len(), 1);
         assert_eq!(response.steps[0].action_name, "GetSystemState");

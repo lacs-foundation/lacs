@@ -38,15 +38,15 @@ ConfigureWifi, SetDnsServers, ConfigureFirewall,
 SetHostname, SetTimezone, SetLocale, SetNtp,
 AddPackageRepository, RemovePackageRepository, EnablePackageRepository, DisablePackageRepository,
 CreateContainer, StartContainer, StopContainer, RemoveContainer,
-CreateUser, AddUserToGroup, RemoveUserFromGroup
+CreateUser, DeleteUser, AddUserToGroup, RemoveUserFromGroup
 
 ### High risk — approval required, may require reboot
 
+UpdateSystem,
 PinDeployment, UnpinDeployment, RebaseSystem, CleanupDeployments, RebootSystem,
 RollbackDeployment, SetKernelArguments,
 InstallPackages, RemovePackages, AddLayeredPackage, RemoveLayeredPackage,
-ReplaceLayeredPackage, ResetLayeredPackageOverride,
-DeleteUser
+ReplaceLayeredPackage, ResetLayeredPackageOverride
 
 ## Risk classification rules
 

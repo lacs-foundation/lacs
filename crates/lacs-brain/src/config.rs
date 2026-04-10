@@ -44,7 +44,9 @@ pub enum ProviderConfig {
 impl fmt::Debug for ProviderConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ProviderConfig::Anthropic { model, base_url, .. } => f
+            ProviderConfig::Anthropic {
+                model, base_url, ..
+            } => f
                 .debug_struct("Anthropic")
                 .field("api_key", &"[redacted]")
                 .field("model", model)
@@ -126,7 +128,10 @@ impl BrainConfig {
             other => return Err(ConfigError::UnknownProvider(other.into())),
         };
 
-        Ok(Self { provider, max_turns })
+        Ok(Self {
+            provider,
+            max_turns,
+        })
     }
 
     /// Ollama with defaults — used when no API key is configured.

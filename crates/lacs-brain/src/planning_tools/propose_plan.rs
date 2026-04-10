@@ -11,9 +11,11 @@ use crate::provider::ToolDefinition;
 // Tool definition
 // ---------------------------------------------------------------------------
 
-/// The complete list of LACS action names. This is the safety fence: the LLM
+/// The approved list of LACS action names. This is the safety fence: the LLM
 /// is shown this enum and can only produce names from it. Any name outside
 /// this set is rejected by `parse_proposed_plan`.
+///
+/// Must be kept in sync with the action catalogue in `lacs-daemon`.
 const KNOWN_ACTIONS: &[&str] = &[
     // Deployment and boot
     "GetSystemState",
@@ -22,6 +24,7 @@ const KNOWN_ACTIONS: &[&str] = &[
     "ListDeployments",
     "PinDeployment",
     "UnpinDeployment",
+    "UpdateSystem",
     "RebaseSystem",
     "CleanupDeployments",
     "RebootSystem",
@@ -160,10 +163,7 @@ pub fn propose_plan_tool_def() -> ToolDefinition {
 /// - each step has a valid `action_name` (from [`KNOWN_ACTIONS`])
 /// - each step has a valid `risk_level` ("low", "medium", "high")
 /// - derives `approval_required` from risk level
-pub fn parse_proposed_plan(
-    intent: &str,
-    input: &serde_json::Value,
-) -> Result<Plan, PlanningError> {
+pub fn parse_proposed_plan(intent: &str, input: &serde_json::Value) -> Result<Plan, PlanningError> {
     let summary = input
         .get("summary")
         .and_then(|v| v.as_str())
@@ -174,9 +174,7 @@ pub fn parse_proposed_plan(
         .get("explanation")
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| {
-            PlanningError::InvalidPlanOutput("missing or empty 'explanation'".into())
-        })?;
+        .ok_or_else(|| PlanningError::InvalidPlanOutput("missing or empty 'explanation'".into()))?;
 
     let steps_value = input
         .get("steps")
@@ -184,7 +182,9 @@ pub fn parse_proposed_plan(
         .ok_or_else(|| PlanningError::InvalidPlanOutput("'steps' must be an array".into()))?;
 
     if steps_value.is_empty() {
-        return Err(PlanningError::InvalidPlanOutput("'steps' must not be empty".into()));
+        return Err(PlanningError::InvalidPlanOutput(
+            "'steps' must not be empty".into(),
+        ));
     }
 
     let mut steps = Vec::with_capacity(steps_value.len());
@@ -378,6 +378,86 @@ mod tests {
             });
             parse_proposed_plan("test", &input)
                 .unwrap_or_else(|e| panic!("action '{action}' rejected: {e}"));
+        }
+    }
+
+    // -- Explanation validation -----------------------------------------------
+
+    #[test]
+    fn missing_explanation_rejected() {
+        let input = serde_json::json!({
+            "summary": "test",
+            "steps": [{ "action_name": "GetSystemState", "summary": "s", "risk_level": "low", "params": {} }]
+        });
+        assert!(matches!(
+            parse_proposed_plan("intent", &input).unwrap_err(),
+            PlanningError::InvalidPlanOutput(_)
+        ));
+    }
+
+    #[test]
+    fn empty_explanation_rejected() {
+        let input = serde_json::json!({
+            "summary": "test",
+            "explanation": "",
+            "steps": [{ "action_name": "GetSystemState", "summary": "s", "risk_level": "low", "params": {} }]
+        });
+        assert!(matches!(
+            parse_proposed_plan("intent", &input).unwrap_err(),
+            PlanningError::InvalidPlanOutput(_)
+        ));
+    }
+
+    // -- Steps array validation -----------------------------------------------
+
+    #[test]
+    fn steps_not_an_array_is_rejected() {
+        let input = serde_json::json!({
+            "summary": "bad",
+            "explanation": "bad plan",
+            "steps": "GetSystemState"
+        });
+        assert!(matches!(
+            parse_proposed_plan("intent", &input).unwrap_err(),
+            PlanningError::InvalidPlanOutput(_)
+        ));
+    }
+
+    // -- Step field validation -------------------------------------------------
+
+    #[test]
+    fn step_missing_risk_level_rejected() {
+        let input = serde_json::json!({
+            "summary": "test",
+            "explanation": "test",
+            "steps": [{
+                "action_name": "RebaseSystem",
+                "summary": "rebase",
+                "params": {}
+            }]
+        });
+        assert!(matches!(
+            parse_proposed_plan("intent", &input).unwrap_err(),
+            PlanningError::InvalidPlanOutput(_)
+        ));
+    }
+
+    #[test]
+    fn invalid_risk_level_strings_rejected() {
+        for bad in &["critical", "none", "HIGH", "LOW", "0", "unknown"] {
+            let input = serde_json::json!({
+                "summary": "test",
+                "explanation": "test",
+                "steps": [{ "action_name": "GetSystemState", "summary": "s",
+                            "risk_level": bad, "params": {} }]
+            });
+            assert!(
+                matches!(
+                    parse_proposed_plan("intent", &input).unwrap_err(),
+                    PlanningError::InvalidPlanOutput(_)
+                ),
+                "risk_level '{bad}' should be rejected"
+            );
         }
     }
 }

@@ -6,8 +6,7 @@
 //! `function.arguments` is a JSON-encoded string (requires second parse).
 
 use crate::provider::{
-    Completion, ContentBlock, LlmProvider, Message, ProviderError, Role, StopReason,
-    ToolDefinition,
+    Completion, ContentBlock, LlmProvider, Message, ProviderError, Role, StopReason, ToolDefinition,
 };
 use async_trait::async_trait;
 use reqwest::Client;
@@ -28,7 +27,10 @@ pub struct OllamaProvider {
 }
 
 impl OllamaProvider {
-    pub fn new(base_url: impl Into<String>, model: impl Into<String>) -> Result<Self, ProviderError> {
+    pub fn new(
+        base_url: impl Into<String>,
+        model: impl Into<String>,
+    ) -> Result<Self, ProviderError> {
         let client = Client::builder()
             .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
             .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
@@ -70,7 +72,11 @@ impl LlmProvider for OllamaProvider {
         let body = OpenAiRequest {
             model: self.model.clone(),
             messages: wire_messages,
-            tools: if wire_tools.is_empty() { None } else { Some(wire_tools) },
+            tools: if wire_tools.is_empty() {
+                None
+            } else {
+                Some(wire_tools)
+            },
             max_tokens,
             stream: false,
         };
@@ -90,7 +96,10 @@ impl LlmProvider for OllamaProvider {
 
         if !resp.status().is_success() {
             let body_text = resp.text().await.unwrap_or_default();
-            return Err(ProviderError::Http { status, body: body_text });
+            return Err(ProviderError::Http {
+                status,
+                body: body_text,
+            });
         }
 
         let wire_resp: OpenAiResponse = resp
@@ -195,7 +204,12 @@ fn messages_to_wire(messages: &[Message]) -> Vec<OpenAiMessage> {
 
                 if all_results {
                     for block in &msg.content {
-                        if let ContentBlock::ToolResult { tool_use_id, content, .. } = block {
+                        if let ContentBlock::ToolResult {
+                            tool_use_id,
+                            content,
+                            ..
+                        } = block
+                        {
                             result.push(OpenAiMessage {
                                 role: "tool".into(),
                                 content: Some(content.clone()),
@@ -261,8 +275,16 @@ fn messages_to_wire(messages: &[Message]) -> Vec<OpenAiMessage> {
 
                 result.push(OpenAiMessage {
                     role: "assistant".into(),
-                    content: if text_content.is_empty() { None } else { Some(text_content) },
-                    tool_calls: if tool_calls.is_empty() { None } else { Some(tool_calls) },
+                    content: if text_content.is_empty() {
+                        None
+                    } else {
+                        Some(text_content)
+                    },
+                    tool_calls: if tool_calls.is_empty() {
+                        None
+                    } else {
+                        Some(tool_calls)
+                    },
                     tool_call_id: None,
                 });
             }
@@ -295,8 +317,8 @@ fn wire_response_to_completion(resp: OpenAiResponse) -> Result<Completion, Provi
 
     if let Some(tool_calls) = choice.message.tool_calls {
         for tc in tool_calls {
-            let input: serde_json::Value = serde_json::from_str(&tc.function.arguments)
-                .unwrap_or(serde_json::Value::Null);
+            let input: serde_json::Value =
+                serde_json::from_str(&tc.function.arguments).unwrap_or(serde_json::Value::Null);
             content.push(ContentBlock::ToolUse {
                 id: tc.id,
                 name: tc.function.name,
@@ -305,7 +327,10 @@ fn wire_response_to_completion(resp: OpenAiResponse) -> Result<Completion, Provi
         }
     }
 
-    Ok(Completion { content, stop_reason })
+    Ok(Completion {
+        content,
+        stop_reason,
+    })
 }
 
 // ---------------------------------------------------------------------------

@@ -1,8 +1,9 @@
 mod commands;
 mod events;
 
-use commands::{approve_preview, plan_intent, publish_job_outcome, publish_timeline_event,
-               ShellCommandState};
+use commands::{
+    approve_preview, plan_intent, publish_job_outcome, publish_timeline_event, ShellCommandState,
+};
 
 fn main() {
     tauri::Builder::default()

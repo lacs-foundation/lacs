@@ -82,10 +82,7 @@ impl StateClient for FailingStateClient {
 // Completion builders
 // ---------------------------------------------------------------------------
 
-fn propose_plan(
-    summary: &str,
-    steps: &[(&str, &str, &str)],
-) -> Result<Completion, ProviderError> {
+fn propose_plan(summary: &str, steps: &[(&str, &str, &str)]) -> Result<Completion, ProviderError> {
     let steps_json: Vec<serde_json::Value> = steps
         .iter()
         .map(|(name, step_summary, risk)| {
@@ -131,11 +128,7 @@ fn end_turn_text(text: &str) -> Result<Completion, ProviderError> {
 }
 
 fn make_planner(provider: MockProvider) -> LlmPlanner {
-    LlmPlanner::new(
-        Box::new(provider),
-        Box::new(MockStateClient::default()),
-        5,
-    )
+    LlmPlanner::new(Box::new(provider), Box::new(MockStateClient::default()), 5)
 }
 
 fn make_planner_with_state<S: StateClient + 'static>(
@@ -276,10 +269,7 @@ async fn multi_step_plan_preserves_order_and_approval_flags() {
         ],
     )]));
 
-    let plan = planner
-        .plan_intent("layer vim and reboot")
-        .await
-        .unwrap();
+    let plan = planner.plan_intent("layer vim and reboot").await.unwrap();
 
     assert_eq!(plan.steps().len(), 3);
     assert_eq!(plan.steps()[0].action_name(), "GetSystemState");

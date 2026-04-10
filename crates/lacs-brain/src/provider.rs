@@ -62,7 +62,9 @@ pub enum Role {
 /// User messages may contain `Text` and `ToolResult` blocks.
 #[derive(Debug, Clone)]
 pub enum ContentBlock {
-    Text { text: String },
+    Text {
+        text: String,
+    },
     ToolUse {
         id: String,
         name: String,

@@ -4,8 +4,7 @@
 //! Tool results are sent as `type: "tool_result"` blocks in user messages.
 
 use crate::provider::{
-    Completion, ContentBlock, LlmProvider, Message, ProviderError, Role, StopReason,
-    ToolDefinition,
+    Completion, ContentBlock, LlmProvider, Message, ProviderError, Role, StopReason, ToolDefinition,
 };
 use async_trait::async_trait;
 use reqwest::Client;
@@ -28,7 +27,11 @@ pub struct AnthropicProvider {
 }
 
 impl AnthropicProvider {
-    pub fn new(api_key: impl Into<String>, model: impl Into<String>, base_url: impl Into<String>) -> Result<Self, ProviderError> {
+    pub fn new(
+        api_key: impl Into<String>,
+        model: impl Into<String>,
+        base_url: impl Into<String>,
+    ) -> Result<Self, ProviderError> {
         let client = Client::builder()
             .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
             .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
@@ -94,7 +97,10 @@ impl LlmProvider for AnthropicProvider {
         }
         if !resp.status().is_success() {
             let body_text = resp.text().await.unwrap_or_default();
-            return Err(ProviderError::Http { status, body: body_text });
+            return Err(ProviderError::Http {
+                status,
+                body: body_text,
+            });
         }
 
         let wire_resp: AnthropicResponse = resp
@@ -182,13 +188,15 @@ fn block_to_wire(block: &ContentBlock) -> AnthropicBlock {
             name: name.clone(),
             input: input.clone(),
         },
-        ContentBlock::ToolResult { tool_use_id, content, is_error } => {
-            AnthropicBlock::ToolResult {
-                tool_use_id: tool_use_id.clone(),
-                content: content.clone(),
-                is_error: *is_error,
-            }
-        }
+        ContentBlock::ToolResult {
+            tool_use_id,
+            content,
+            is_error,
+        } => AnthropicBlock::ToolResult {
+            tool_use_id: tool_use_id.clone(),
+            content: content.clone(),
+            is_error: *is_error,
+        },
     }
 }
 
@@ -212,7 +220,10 @@ fn wire_response_to_completion(resp: AnthropicResponse) -> Completion {
         _ => StopReason::EndTurn,
     };
 
-    Completion { content, stop_reason }
+    Completion {
+        content,
+        stop_reason,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -237,11 +248,13 @@ mod tests {
 
     #[test]
     fn messages_to_wire_tool_result() {
-        let messages = vec![Message::tool_results(vec![crate::provider::ToolResultBlock {
-            tool_use_id: "tu_1".into(),
-            content: "{\"ok\": true}".into(),
-            is_error: false,
-        }])];
+        let messages = vec![Message::tool_results(vec![
+            crate::provider::ToolResultBlock {
+                tool_use_id: "tu_1".into(),
+                content: "{\"ok\": true}".into(),
+                is_error: false,
+            },
+        ])];
         let wire = messages_to_wire(&messages);
         assert_eq!(wire[0].role, "user");
         let json = serde_json::to_value(&wire[0].content[0]).unwrap();
@@ -253,11 +266,13 @@ mod tests {
 
     #[test]
     fn messages_to_wire_tool_result_with_error_flag() {
-        let messages = vec![Message::tool_results(vec![crate::provider::ToolResultBlock {
-            tool_use_id: "tu_err".into(),
-            content: "failed".into(),
-            is_error: true,
-        }])];
+        let messages = vec![Message::tool_results(vec![
+            crate::provider::ToolResultBlock {
+                tool_use_id: "tu_err".into(),
+                content: "failed".into(),
+                is_error: true,
+            },
+        ])];
         let wire = messages_to_wire(&messages);
         let json = serde_json::to_value(&wire[0].content[0]).unwrap();
         assert_eq!(json["is_error"], true);
@@ -280,7 +295,9 @@ mod tests {
     #[test]
     fn stop_reason_end_turn_parsed_correctly() {
         let resp = AnthropicResponse {
-            content: vec![AnthropicBlock::Text { text: "done".into() }],
+            content: vec![AnthropicBlock::Text {
+                text: "done".into(),
+            }],
             stop_reason: "end_turn".into(),
         };
         let completion = wire_response_to_completion(resp);

@@ -25,7 +25,13 @@ impl CuratedState {
         let deployment = deployment.into();
         debug_assert!(!host_name.is_empty(), "host_name must not be empty");
         debug_assert!(!deployment.is_empty(), "deployment must not be empty");
-        Self { host_name, deployment, services, flatpaks, toolboxes }
+        Self {
+            host_name,
+            deployment,
+            services,
+            flatpaks,
+            toolboxes,
+        }
     }
 }
 

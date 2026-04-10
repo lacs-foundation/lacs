@@ -70,7 +70,13 @@ impl PlanStep {
         params: serde_json::Value,
     ) -> Self {
         let approval_required = !matches!(risk_level, PlanRiskLevel::Low);
-        Self { action_name, summary, risk_level, approval_required, params }
+        Self {
+            action_name,
+            summary,
+            risk_level,
+            approval_required,
+            params,
+        }
     }
 
     pub fn action_name(&self) -> &str {
@@ -108,13 +114,13 @@ pub struct Plan {
 }
 
 impl Plan {
-    pub fn new(
-        intent: String,
-        summary: String,
-        explanation: String,
-        steps: Vec<PlanStep>,
-    ) -> Self {
-        Self { intent, summary, explanation, steps }
+    pub fn new(intent: String, summary: String, explanation: String, steps: Vec<PlanStep>) -> Self {
+        Self {
+            intent,
+            summary,
+            explanation,
+            steps,
+        }
     }
 
     pub fn intent(&self) -> &str {
@@ -190,7 +196,11 @@ impl LlmPlanner {
         state_client: Box<dyn StateClient>,
         max_turns: usize,
     ) -> Self {
-        Self { provider, state_client, max_turns }
+        Self {
+            provider,
+            state_client,
+            max_turns,
+        }
     }
 
     /// Run the planning loop for the given natural-language intent.
@@ -250,8 +260,8 @@ impl LlmPlanner {
                         match name.as_str() {
                             "get_system_state" => {
                                 let state = self.state_client.curated_state()?;
-                                let state_json = serde_json::to_string(&state)
-                                    .unwrap_or_else(|_| "{}".into());
+                                let state_json =
+                                    serde_json::to_string(&state).unwrap_or_else(|_| "{}".into());
                                 tool_results.push(ToolResultBlock {
                                     tool_use_id: id.clone(),
                                     content: state_json,
