@@ -9,5 +9,5 @@ prost = { workspace = true }
 prost-types = { workspace = true }
 
 [build-dependencies]
+protoc-bin-vendored = "3"
 prost-build = "0.13"
-

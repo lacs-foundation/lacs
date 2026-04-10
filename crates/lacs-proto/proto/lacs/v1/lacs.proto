@@ -2,17 +2,43 @@ syntax = "proto3";
 
 package lacs.v1;
 
+enum CallerRole {
+  CALLER_ROLE_UNSPECIFIED = 0;
+  CALLER_ROLE_OBSERVER = 1;
+  CALLER_ROLE_DEV = 2;
+  CALLER_ROLE_ADMIN = 3;
+  CALLER_ROLE_BOOT = 4;
+}
+
+enum RiskLevel {
+  RISK_LEVEL_UNSPECIFIED = 0;
+  RISK_LEVEL_LOW = 1;
+  RISK_LEVEL_MEDIUM = 2;
+  RISK_LEVEL_HIGH = 3;
+}
+
+enum JobState {
+  JOB_STATE_UNSPECIFIED = 0;
+  JOB_STATE_QUEUED = 1;
+  JOB_STATE_RUNNING = 2;
+  JOB_STATE_SUCCEEDED = 3;
+  JOB_STATE_FAILED = 4;
+  JOB_STATE_CANCELED = 5;
+  JOB_STATE_ROLLED_BACK = 6;
+  JOB_STATE_NEEDS_REBOOT = 7;
+}
+
 message RequestEnvelope {
   string action_name = 1;
   string request_id = 2;
   string params_json = 3;
-  string caller_role = 4;
+  CallerRole caller_role = 4;
   string request_hash = 5;
 }
 
 message PreviewEnvelope {
   string summary = 1;
-  string risk_level = 2;
+  RiskLevel risk_level = 2;
   string current_state_json = 3;
   string proposed_change_json = 4;
   repeated string expected_side_effects = 5;
@@ -23,7 +49,7 @@ message PreviewEnvelope {
 }
 
 message ResultEnvelope {
-  string status = 1;
+  JobState status = 1;
   string summary = 2;
   repeated string warnings = 3;
   string job_id = 4;
@@ -37,8 +63,8 @@ message TransactionRecord {
   string request_id = 2;
   string request_hash = 3;
   string action_name = 4;
-  string risk_level = 5;
-  string status = 6;
+  RiskLevel risk_level = 5;
+  JobState status = 6;
   string approval_id = 7;
   string summary = 8;
   repeated string warnings = 9;
@@ -46,26 +72,14 @@ message TransactionRecord {
 
 enum FailureCategory {
   FAILURE_CATEGORY_UNSPECIFIED = 0;
-  VALIDATION_FAILURE = 1;
-  AUTHORIZATION_FAILURE = 2;
-  POLICY_DENIED = 3;
-  STALE_APPROVAL = 4;
-  EXECUTION_FAILURE = 5;
-  TRANSIENT_INFRASTRUCTURE_FAILURE = 6;
-  CANCELLATION = 7;
-  STUCK_EXECUTION = 8;
-  REBOOT_REQUIRED = 9;
-  ROLLBACK_FAILURE = 10;
+  FAILURE_CATEGORY_VALIDATION_FAILURE = 1;
+  FAILURE_CATEGORY_AUTHORIZATION_FAILURE = 2;
+  FAILURE_CATEGORY_POLICY_DENIED = 3;
+  FAILURE_CATEGORY_STALE_APPROVAL = 4;
+  FAILURE_CATEGORY_EXECUTION_FAILURE = 5;
+  FAILURE_CATEGORY_TRANSIENT_INFRASTRUCTURE_FAILURE = 6;
+  FAILURE_CATEGORY_CANCELLATION = 7;
+  FAILURE_CATEGORY_STUCK_EXECUTION = 8;
+  FAILURE_CATEGORY_REBOOT_REQUIRED = 9;
+  FAILURE_CATEGORY_ROLLBACK_FAILURE = 10;
 }
-
-enum JobState {
-  JOB_STATE_UNSPECIFIED = 0;
-  QUEUED = 1;
-  RUNNING = 2;
-  SUCCEEDED = 3;
-  FAILED = 4;
-  CANCELED = 5;
-  ROLLED_BACK = 6;
-  NEEDS_REBOOT = 7;
-}
-
