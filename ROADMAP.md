@@ -91,7 +91,7 @@ The current focus. Tracked in the v0.2.0 milestone.
 Tracked in the v0.3.0 milestone.
 
 - reconnect banner in shell chrome
-- risk-scaled confirmation modal (type action name for High/Critical steps)
+- risk-scaled confirmation modal (type action name for High-risk steps)
 - execution pane with real-time timeline and cancel button
 - plan pane step breakdown with risk badges
 - first-run experience / LLM provider setup wizard
