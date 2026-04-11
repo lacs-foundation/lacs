@@ -797,10 +797,7 @@ async fn stream_command_with_progress(
     let stderr_bytes = stderr_task
         .await
         .map_err(|_| {
-            ExecutorError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "stderr reader task panicked",
-            ))
+            ExecutorError::Io(std::io::Error::other("stderr reader task panicked"))
         })?
         .map_err(ExecutorError::Io)?;
 
