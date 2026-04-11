@@ -92,6 +92,42 @@ button, input { font: inherit; }
 }
 
 /* ---------------------------------------------------------------------------
+   Reconnect banner
+--------------------------------------------------------------------------- */
+
+.reconnect-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  margin-bottom: 16px;
+  border-radius: 10px;
+  background: rgba(248, 113, 113, 0.08);
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  color: #f87171;
+  font-size: 0.88rem;
+  animation: reconnect-pulse 2s ease-in-out infinite;
+}
+
+.reconnect-banner__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(248, 113, 113, 0.2);
+  font-weight: 700;
+  font-size: 0.78rem;
+  flex-shrink: 0;
+}
+
+@keyframes reconnect-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+/* ---------------------------------------------------------------------------
    Grid — state-driven layout
 --------------------------------------------------------------------------- */
 

@@ -187,6 +187,23 @@ describe("shellReducer — timeline entries have timestamp and kind", () => {
   });
 });
 
+describe("shellReducer — daemon status", () => {
+  it("daemon_status_changed updates daemonStatus", () => {
+    const s1 = shellReducer(initialShellState, { type: "daemon_status_changed", status: "connected" });
+    expect(s1.daemonStatus).toBe("connected");
+
+    const s2 = shellReducer(s1, { type: "daemon_status_changed", status: "unreachable" });
+    expect(s2.daemonStatus).toBe("unreachable");
+  });
+
+  it("daemon_status_changed preserves mode and timeline", () => {
+    const planning = shellReducer(initialShellState, { type: "intent_submitted", intent: "test" });
+    const updated = shellReducer(planning, { type: "daemon_status_changed", status: "unreachable" });
+    expect(updated.mode).toBe("planning");
+    expect(updated.timeline.length).toBe(planning.timeline.length);
+  });
+});
+
 describe("shellReducer — reset", () => {
   it("reset from failed returns to idle", () => {
     const executing = shellReducer(reachAwaitingApproval(), { type: "approval_granted" });

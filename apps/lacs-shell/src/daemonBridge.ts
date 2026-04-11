@@ -34,41 +34,47 @@ export async function getBrainConfig(): Promise<BrainConfigResponse> {
 export async function subscribeDaemonEvents(
   onTimeline: (payload: TimelineEntry) => void,
   onOutcome: (payload: ShellOutcome) => void,
+  onDaemonStatus: (status: DaemonStatus) => void,
 ): Promise<() => void> {
   requireTauriRuntime();
 
-  const timelineUnlisten = await listen<{ id: string; text: string }>(
-    "lacs:timeline-entry",
-    (event) => {
-      onTimeline({
-        id: event.payload.id,
-        timestamp: new Date().toLocaleTimeString("en-US", {
-          hour12: false,
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-        }),
-        kind: "system" as TimelineEntryKind,
-        text: event.payload.text,
-      });
-    },
-  );
+  const unlisteners: (() => void)[] = [];
 
-  let outcomeUnlisten: (() => void) | null = null;
   try {
-    outcomeUnlisten = await listen<ShellOutcome>("lacs:job-completed", (event) => {
-      onOutcome(event.payload);
-    });
+    unlisteners.push(
+      await listen<{ id: string; text: string }>("lacs:timeline-entry", (event) => {
+        onTimeline({
+          id: event.payload.id,
+          timestamp: new Date().toLocaleTimeString("en-US", {
+            hour12: false,
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+          }),
+          kind: "system" as TimelineEntryKind,
+          text: event.payload.text,
+        });
+      }),
+    );
+
+    unlisteners.push(
+      await listen<ShellOutcome>("lacs:job-completed", (event) => {
+        onOutcome(event.payload);
+      }),
+    );
+
+    unlisteners.push(
+      await listen<{ status: string }>("lacs:daemon-status", (event) => {
+        const status = event.payload.status === "connected" ? "connected" : "unreachable";
+        onDaemonStatus(status);
+      }),
+    );
   } catch (err) {
-    timelineUnlisten();
+    unlisteners.forEach((fn) => fn());
     throw err;
   }
 
-  const captured = outcomeUnlisten;
-  return () => {
-    timelineUnlisten();
-    captured();
-  };
+  return () => unlisteners.forEach((fn) => fn());
 }
 
 // ---------------------------------------------------------------------------

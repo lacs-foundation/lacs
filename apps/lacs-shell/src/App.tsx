@@ -66,6 +66,11 @@ export default function App() {
           dispatch({ type: "job_completed", outcome });
         }
       },
+      (status) => {
+        if (!cancelled) {
+          dispatch({ type: "daemon_status_changed", status });
+        }
+      },
     )
       .then((unsub) => {
         if (cancelled) unsub();
@@ -190,6 +195,16 @@ export default function App() {
           )}
         </div>
       </header>
+
+      {state.daemonStatus === "unreachable" && (
+        <div className="reconnect-banner" role="alert">
+          <span className="reconnect-banner__icon">!</span>
+          <span>
+            Daemon unreachable — reconnecting. Actions are unavailable
+            until the connection is restored.
+          </span>
+        </div>
+      )}
 
       <section className="grid" data-mode={state.mode}>
         <IntentPane

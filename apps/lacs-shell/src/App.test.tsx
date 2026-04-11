@@ -90,7 +90,7 @@ describe("App", () => {
     await waitFor(() => {
       expect(screen.getByRole("status")).toHaveTextContent("Ready");
     });
-    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.getByText("HTTP 500")).toBeInTheDocument();
   });
 
   it("transitions to Failed when requestApproval rejects (not stuck in Executing)", async () => {
@@ -112,6 +112,37 @@ describe("App", () => {
 
     await waitFor(() => {
       expect(screen.getByRole("status")).toHaveTextContent("Failed");
+    });
+  });
+
+  it("shows reconnect banner when daemon status changes to unreachable", async () => {
+    // Capture the daemon status callback from subscribeDaemonEvents
+    let daemonStatusCb: ((status: "connected" | "unreachable") => void) | undefined;
+    vi.mocked(bridge.subscribeDaemonEvents).mockImplementation(
+      async (_onTimeline, _onOutcome, onDaemonStatus) => {
+        daemonStatusCb = onDaemonStatus;
+        return () => undefined;
+      },
+    );
+
+    render(<App />);
+
+    // Initially no banner
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    // Simulate daemon going down
+    await waitFor(() => expect(daemonStatusCb).toBeDefined());
+    daemonStatusCb!("unreachable");
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent(/daemon unreachable/i);
+    });
+
+    // Simulate reconnect
+    daemonStatusCb!("connected");
+
+    await waitFor(() => {
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     });
   });
 
