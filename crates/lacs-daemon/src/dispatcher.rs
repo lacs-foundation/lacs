@@ -137,7 +137,10 @@ pub fn resolve_caller_role(stream: &UnixStream) -> CallerRole {
             };
             (pid, cred.gid())
         }
-        Err(_) => return CallerRole::Observer,
+        Err(e) => {
+            eprintln!("[lacs-daemon] WARNING: peer_cred() failed: {e}; defaulting to Observer");
+            return CallerRole::Observer;
+        }
     };
     // Read /etc/group once and build a lookup map — avoids N+1 file reads when
     // a process has many supplementary groups (one read per GID in the old code).
@@ -149,6 +152,11 @@ pub fn resolve_caller_role(stream: &UnixStream) -> CallerRole {
         if !groups.contains(name) {
             groups.push(name.clone());
         }
+    }
+    if groups.is_empty() {
+        eprintln!(
+            "[lacs-daemon] WARNING: could not resolve groups for PID {pid}; defaulting to Observer"
+        );
     }
     highest_role_from_groups(groups)
 }
@@ -715,7 +723,9 @@ async fn handle_execute(
     .await;
 
     // Update the transaction record. A failure here is an audit-trail loss —
-    // log it. The job result is still sent to the client.
+    // log it and surface it as a warning in the job result so the client is
+    // aware of the gap.
+    let mut warnings = Vec::new();
     if let Err(e) = state
         .transactions
         .update_status(&transaction_id, final_status.clone())
@@ -724,6 +734,7 @@ async fn handle_execute(
             "[lacs-daemon] failed to update transaction {transaction_id} to \
              {final_status:?}: {e}"
         );
+        warnings.push(format!("audit trail update failed: {e}"));
     }
 
     send_response(
@@ -733,7 +744,7 @@ async fn handle_execute(
             result: JobResult {
                 status: job_state_str(&final_status).to_string(),
                 summary,
-                warnings: vec![],
+                warnings,
                 job_id: job_id.clone(),
                 needs_reboot: matches!(final_status, JobState::NeedsReboot),
                 rollback_ref,
