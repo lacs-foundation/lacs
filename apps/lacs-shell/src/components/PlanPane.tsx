@@ -1,8 +1,14 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import type { PlanResponse, ShellError } from "../types";
 import type { ShellMode } from "../shellState";
 import { RiskBadge } from "./RiskBadge";
 import { ErrorBlock } from "./ErrorBlock";
+
+function hasParams(params: unknown): boolean {
+  if (params === null || params === undefined) return false;
+  if (typeof params !== "object") return false;
+  return Object.keys(params as Record<string, unknown>).length > 0;
+}
 
 interface Props {
   plan: PlanResponse;
@@ -28,8 +34,18 @@ function firstHighRiskName(steps: PlanResponse["steps"]): string {
 
 export function PlanPane({ plan, mode, onApprove, error }: Props) {
   const [expanded, setExpanded] = useState(false);
+  const [expandedSteps, setExpandedSteps] = useState<Set<number>>(new Set());
   const [checked, setChecked] = useState(false);
   const [confirmText, setConfirmText] = useState("");
+
+  const toggleStepDetail = useCallback((index: number) => {
+    setExpandedSteps((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  }, []);
 
   const risk = aggregateRisk(plan.steps);
   const showGate = mode === "awaiting-approval";
@@ -61,13 +77,38 @@ export function PlanPane({ plan, mode, onApprove, error }: Props) {
 
       <ol className="plan-steps">
         {visibleSteps.map((step, i) => (
-          <li key={`${i}-${step.actionName}`} className="plan-step">
-            <span className="plan-step__index">{i + 1}</span>
-            <code className="plan-step__name">{step.actionName}</code>
-            <span className="plan-step__summary">{step.summary}</span>
-            <RiskBadge level={step.riskLevel} />
-            {step.approvalRequired && (
-              <span className="plan-step__approval-note">↳ approval required</span>
+          <li key={`${i}-${step.actionName}`} className="plan-step-wrapper">
+            <button
+              type="button"
+              className="plan-step"
+              onClick={() => toggleStepDetail(i)}
+              aria-expanded={expandedSteps.has(i)}
+            >
+              <span className="plan-step__index">{i + 1}</span>
+              <code className="plan-step__name">{step.actionName}</code>
+              <span className="plan-step__summary">{step.summary}</span>
+              <RiskBadge level={step.riskLevel} />
+              {step.approvalRequired && (
+                <span className="plan-step__approval-note">approval required</span>
+              )}
+              <span className="plan-step__chevron" aria-hidden>
+                {expandedSteps.has(i) ? "▾" : "▸"}
+              </span>
+            </button>
+            {expandedSteps.has(i) && (
+              <div className="plan-step__detail">
+                <dl className="plan-step__props">
+                  <dt>Risk</dt>
+                  <dd>{step.riskLevel}</dd>
+                  <dt>Approval</dt>
+                  <dd>{step.approvalRequired ? "Required" : "Not required"}</dd>
+                </dl>
+                {hasParams(step.params) && (
+                  <pre className="plan-step__params">
+                    <code>{JSON.stringify(step.params, null, 2)}</code>
+                  </pre>
+                )}
+              </div>
             )}
           </li>
         ))}

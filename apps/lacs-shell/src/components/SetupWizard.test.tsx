@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { SetupWizard } from "./SetupWizard";
 
 describe("SetupWizard", () => {
@@ -49,5 +49,38 @@ describe("SetupWizard", () => {
     render(<SetupWizard onDismiss={onDismiss} />);
     fireEvent.click(screen.getByText("Skip setup"));
     expect(onDismiss).toHaveBeenCalledOnce();
+  });
+
+  it("shows 'Copy failed' when clipboard write rejects", async () => {
+    // Stub clipboard to reject
+    Object.assign(navigator, {
+      clipboard: { writeText: vi.fn().mockRejectedValue(new Error("Not allowed")) },
+    });
+
+    render(<SetupWizard onDismiss={() => {}} />);
+    fireEvent.click(screen.getByText("Ollama"));
+
+    const copyBtn = screen.getByRole("button", { name: /copy to clipboard/i });
+    fireEvent.click(copyBtn);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /copy failed/i })).toBeInTheDocument();
+    });
+  });
+
+  it("shows 'Copied' when clipboard write succeeds", async () => {
+    Object.assign(navigator, {
+      clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
+    });
+
+    render(<SetupWizard onDismiss={() => {}} />);
+    fireEvent.click(screen.getByText("Ollama"));
+
+    const copyBtn = screen.getByRole("button", { name: /copy to clipboard/i });
+    fireEvent.click(copyBtn);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /copied/i })).toBeInTheDocument();
+    });
   });
 });

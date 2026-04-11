@@ -257,6 +257,7 @@ button:disabled {
 }
 
 .plan-steps { list-style: none; padding: 0; margin: 0 0 12px; display: grid; gap: 6px; }
+.plan-step-wrapper { display: grid; gap: 0; }
 .plan-step {
   display: flex;
   align-items: center;
@@ -265,11 +266,48 @@ button:disabled {
   border-radius: 10px;
   border: 1px solid rgba(148, 163, 184, 0.12);
   background: rgba(255,255,255,0.03);
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  width: 100%;
+  transition: border-color 0.15s;
 }
+.plan-step:hover { border-color: rgba(140, 162, 255, 0.3); }
 .plan-step__index { color: #9db0ff; font-size: 0.8rem; min-width: 16px; }
 .plan-step__name { font-family: monospace; font-size: 0.85rem; }
 .plan-step__summary { flex: 1; color: #c2cbdf; font-size: 0.9rem; }
 .plan-step__approval-note { font-size: 0.78rem; color: #9db0ff; }
+.plan-step__chevron { color: #9db0ff; font-size: 0.75rem; min-width: 12px; text-align: center; }
+
+.plan-step__detail {
+  padding: 8px 12px 12px 36px;
+  border: 1px solid rgba(148, 163, 184, 0.08);
+  border-top: none;
+  border-radius: 0 0 10px 10px;
+  background: rgba(255,255,255,0.02);
+}
+.plan-step__props {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  font-size: 0.82rem;
+  margin: 0 0 8px;
+}
+.plan-step__props dt { color: #9db0ff; }
+.plan-step__props dd { margin: 0; color: #c2cbdf; }
+.plan-step__params {
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(148, 163, 184, 0.08);
+  font-family: monospace;
+  font-size: 0.78rem;
+  color: #dfe6ff;
+  overflow-x: auto;
+  white-space: pre;
+  margin: 0;
+}
 
 .plan-expand { background: transparent; border: none; color: #9db0ff; cursor: pointer; padding: 4px 0; font-size: 0.85rem; }
 .plan-context { font-family: monospace; font-size: 0.78rem; color: #9db0ff; margin: 8px 0 0; }
@@ -318,6 +356,41 @@ button:disabled {
   margin-bottom: 16px;
 }
 .execution-reboot-banner code { font-family: monospace; }
+
+/* Execution live log */
+.execution-log {
+  margin-bottom: 16px;
+  max-height: 200px;
+  overflow-y: auto;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.1);
+  background: rgba(0, 0, 0, 0.25);
+  padding: 10px 14px;
+}
+.execution-log__title {
+  margin: 0 0 8px;
+  font-size: 0.78rem;
+  color: #9db0ff;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+.execution-log__entries {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 4px;
+}
+.execution-log__entry {
+  display: grid;
+  grid-template-columns: 14px auto 1fr;
+  gap: 6px;
+  align-items: baseline;
+  font-size: 0.78rem;
+}
+.execution-log__dot { font-size: 0.55rem; }
+.execution-log__timestamp { font-family: monospace; color: #9db0ff; white-space: nowrap; }
+.execution-log__text { color: #dfe6ff; }
 
 /* ---------------------------------------------------------------------------
    ErrorBlock
