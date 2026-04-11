@@ -8,8 +8,7 @@ trust boundary.
 ## Before You Start
 
 - Read the [architecture overview](docs/architecture.md).
-- Read the [specification draft](docs/plans/2026-04-10-lacs-spec.md)
-  for context on what LACS is designed to do.
+- Read the [developer guide](docs/developer-guide.md) for prerequisites.
 - Read the [ADRs](docs/adr/) for key architectural decisions.
 - Open an issue before starting any substantial change.
 - Keep the planner, shell, and daemon roles separate — this is the
@@ -17,88 +16,116 @@ trust boundary.
 
 ## Local Development Setup
 
+```sh
+# Install pre-commit hooks (run once after cloning)
+pip install pre-commit && pre-commit install
+
+# Run all tests
+cargo test --workspace
+cd apps/lacs-shell && pnpm install && pnpm test
+
+# Run hooks manually before pushing
+pre-commit run --all-files
+```
+
 See [docs/developer-guide.md](docs/developer-guide.md) for full
 prerequisites and run instructions.
 
-**Quick path to running tests:**
+## Issues
 
-```sh
-cargo test --workspace
-cd apps/lacs-shell && npm install && npm test
+### Picking an issue
+
+- Issues tagged `good first issue` are well-scoped and have clear
+  acceptance criteria — ideal for a first contribution.
+- Issues tagged `security` take priority over enhancements.
+- Check the milestone for the current release target.
+- Comment on the issue before starting work to avoid duplication.
+
+### Opening an issue
+
+Use one of the issue templates. Every issue should include:
+
+- **What**: a one-sentence summary in the title
+- **Why**: context and motivation
+- **Where**: file paths and function names when applicable
+- **Acceptance criteria**: concrete, testable conditions for done
+
+Do not open issues for questions — use GitHub Discussions or the
+`question` label.
+
+## Pull Requests
+
+### Branch conventions
+
+- Use one branch (or worktree) per issue.
+- Branch names: `<issue-number>-<short-slug>` (e.g. `19-role-allowlist`)
+- Target `main` for all PRs.
+- Keep branches small and reviewable.
+
+### PR checklist
+
+Before opening a PR, verify:
+
+- [ ] `pre-commit run --all-files` passes
+- [ ] `cargo test --workspace --locked` passes
+- [ ] New behavior is covered by tests (write the test first)
+- [ ] Docs updated if user-facing behavior changed
+- [ ] PR title is one line, imperative mood (`feat:`, `fix:`, `docs:`, etc.)
+
+### PR body template
+
+```markdown
+## Summary
+
+One paragraph on what and why. Reference the issue: Closes #N.
+
+## Changes
+
+- bullet list of what changed
+
+## Test plan
+
+- [ ] what to verify manually
+- [ ] what the automated tests cover
 ```
 
-`lacs-brain` works without an API key — it defaults to a local Ollama
-instance. Unit and integration tests use mocks and require no network
-access.
+### Review process
 
-## Help Wanted
+- Every PR requires at least one review before merge.
+- Address review comments with code or with a documented reason not to.
+- Do not merge around an unresolved review finding.
+- CI must pass before merge.
 
-These are the highest-impact open areas:
+## Commit style
 
-**systemd unit and install script** — the daemon has no service file
-and no install path. A sysadmin cannot deploy this without building
-from source manually.
+Follow conventional commits: `type(scope): message`
 
-**Multi-distro action families** — every action today targets Fedora
-Silverblue via `rpm-ostree`. apt (Debian/Ubuntu), dnf (Fedora
-Workstation), and pacman (Arch) action families would open LACS to
-the majority of the Linux user base.
+| Type | When |
+| --- | --- |
+| `feat` | New user-visible feature |
+| `fix` | Bug fix |
+| `docs` | Documentation only |
+| `chore` | Build, CI, tooling |
+| `test` | Tests only |
+| `refactor` | No behavior change |
 
-**Runtime distro detection** — the daemon needs to detect the host
-distro and route to the correct action family at runtime.
+Keep the subject line under 72 characters. Add a body for non-obvious
+changes.
 
-**Shell reconnect** — if the daemon restarts, the shell has no
-recovery. Exponential-backoff reconnect with visible status is needed
-for any production-ish use.
-
-**config.toml** — LLM provider, socket path, and model name should be
-persistable to `~/.config/lacs/config.toml` instead of requiring
-environment variables every session.
-
-**Security hardening** — the role-to-action authorization is correct,
-but there is no rate limiting, no per-user policy file, and no audit
-alerting.
-
-**Documentation** — architecture explanations, contributor tutorials,
-and real-world usage examples all help lower the barrier to entry.
-
-## Good Pull Requests
-
-- Focus on one concern per PR.
-- Write the failing test first; verify it fails before writing code.
-- Include tests for every behavior change.
-- Update docs when behavior changes.
-- Keep privileged behavior typed and bounded.
-- Preserve approval, audit, and rollback semantics.
-
-## Suggested Workflow
-
-1. Open or claim an issue.
-2. Create a branch (or worktree for larger changes).
-3. Make the smallest useful change.
-4. Run the CI checks locally.
-5. Open a PR with a clear summary.
-6. Respond to review feedback with code or doc updates.
-
-## Style
+## Code standards
 
 - Prefer explicit types and explicit error handling.
-- Keep user-facing messages short and actionable.
-- Avoid hidden behavior.
+- Write the failing test first; verify it fails before writing code.
+- Keep privileged behavior typed and bounded.
+- Preserve approval, audit, and rollback semantics.
 - Do not blur the trust boundary.
 
-## Review Expectations
+## Security
 
-We review contributions for:
-
-- correctness and safety
-- test coverage
-- documentation quality
-- maintainability
-- alignment with the trust model and architecture
+For security-sensitive issues (auth bypass, privilege escalation,
+data exposure), follow the process in [SECURITY.md](SECURITY.md)
+instead of opening a public issue.
 
 ## Questions
 
-Open a GitHub issue with the `question` label.
-For security-sensitive issues, follow the process in
-[SECURITY.md](SECURITY.md) instead.
+Open a GitHub Discussion or use the `question` label on an issue.
