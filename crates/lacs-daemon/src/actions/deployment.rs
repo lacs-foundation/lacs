@@ -136,7 +136,7 @@ pub fn rollback_deployment() -> ActionSpec {
         mechanism: command_mechanism("rpm-ostree", ["rollback"]),
         risk_level: RiskLevel::High,
         reboot_required: true,
-        rollback_available: true,
+        rollback_available: false,
     }
 }
 

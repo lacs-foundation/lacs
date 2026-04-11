@@ -360,15 +360,23 @@ fn str_array_or_empty(params: &Value, key: &'static str) -> Result<Vec<String>, 
 /// Return the rollback [`ActionSpec`] for `action_name`, or `None` if no
 /// automatic rollback is defined.
 ///
-/// Only the five rpm-ostree deployment actions support rollback — they all
-/// revert via `rpm-ostree rollback`. All other actions either have no sensible
-/// rollback or are low-risk enough that a rollback would be net-harmful.
+/// Only the rpm-ostree deployment and layering actions support rollback —
+/// they all revert via `rpm-ostree rollback`. All other actions either have
+/// no sensible rollback or are low-risk enough that a rollback would be
+/// net-harmful.
 ///
 /// `RollbackDeployment` itself is excluded to prevent infinite recursion.
 pub fn rollback_spec_for(action_name: &str) -> Option<ActionSpec> {
     match action_name {
-        "UpdateSystem" | "InstallPackages" | "RemovePackages" | "RebaseSystem"
-        | "SetKernelArguments" => Some(ActionSpec {
+        "UpdateSystem"
+        | "InstallPackages"
+        | "RemovePackages"
+        | "RebaseSystem"
+        | "SetKernelArguments"
+        | "AddLayeredPackage"
+        | "RemoveLayeredPackage"
+        | "ReplaceLayeredPackage"
+        | "ResetLayeredPackageOverride" => Some(ActionSpec {
             action_name: "RollbackDeployment",
             mechanism: ActionMechanism::Command {
                 program: "rpm-ostree",
@@ -749,5 +757,37 @@ mod tests {
         assert!(rollback_spec_for("CleanupDeployments").is_none());
         // No infinite recursion — RollbackDeployment has no rollback of its own
         assert!(rollback_spec_for("RollbackDeployment").is_none());
+    }
+
+    /// Every action that claims `rollback_available: true` MUST have a
+    /// corresponding entry in `rollback_spec_for()`; every action that claims
+    /// `false` MUST NOT. This prevents the spec and the executor from
+    /// drifting apart.
+    #[test]
+    fn rollback_available_matches_rollback_spec_for_all_actions() {
+        let all_specs: Vec<ActionSpec> = containers::specs()
+            .into_iter()
+            .chain(deployment::specs())
+            .chain(flatpak::specs())
+            .chain(identity::specs())
+            .chain(layering::specs())
+            .chain(network::specs())
+            .chain(package_repos::specs())
+            .chain(services::specs())
+            .chain(toolbox::specs())
+            .chain(users::specs())
+            .collect();
+
+        for spec in &all_specs {
+            let has_rollback = rollback_spec_for(spec.action_name).is_some();
+            assert_eq!(
+                spec.rollback_available,
+                has_rollback,
+                "action {:?}: rollback_available={} but rollback_spec_for returns {}",
+                spec.action_name,
+                spec.rollback_available,
+                if has_rollback { "Some" } else { "None" },
+            );
+        }
     }
 }
