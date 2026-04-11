@@ -1,117 +1,161 @@
-# LACS
+# LACS — Linux Agent Control Standard
 
-LACS is the Linux Agent Control Standard: a local, typed,
-rollback-aware control plane for Linux systems.
+An AI agent for Linux that shows you exactly what it intends to do
+and asks for your approval before changing anything.
 
-It is designed for power users, system administrators, and
-contributors who want to build a safe OSS platform for real system
-control without giving an agent arbitrary shell access or root.
+You describe what you want in plain language.
+LACS proposes a typed plan with risk levels, previews, and rollback
+metadata.
+You approve each step explicitly.
+The daemon executes, streams live output, and rolls back automatically
+if a high-risk action fails.
+Every execution is logged to a local SQLite audit trail.
 
-## What This Project Is
+## Why LACS
 
-LACS is not a generic chatbot, not a browser automation framework,
-and not a desktop replacement.
-It is a privileged Linux execution layer with:
+| Tool | The problem |
+| --- | --- |
+| Open Interpreter | Runs arbitrary shell commands. No approval gate. No audit log. Dangerous on servers. |
+| Claude Computer Use | Uncontrolled. Designed for desktop automation, not system administration. |
+| Ansible | Requires YAML playbooks written in advance. Not conversational. You need to know what you want before you start. |
+| shell-gpt / Copilot | Suggests raw shell commands for you to paste into a terminal. You are still reviewing and running raw shell. |
+| Manual commands | No audit trail. No rollback. One typo can be destructive. |
 
-- typed actions
-- explicit previews
-- approval gating
-- audit logs
-- rollback metadata
-- a strict boundary between planner, UI, and executor
+LACS occupies a different position: the agent proposes typed actions,
+you review them with full context, and a privileged daemon handles
+execution with an audit trail and automatic rollback.
+The AI cannot do anything you did not explicitly review and approve.
 
 ## Current Status
 
-LACS is under active development. 176 Rust tests pass. The brain
-planning layer is complete, and the daemon IPC foundation (framing,
-state collection, action execution, transaction tracking) is
-implemented. The dispatcher and shell client are the next milestone.
+The core trust chain is built, tested, and wired end-to-end.
+Packaging and multi-distro support are the next milestones.
 
 | Component | Status |
 | --- | --- |
-| `lacs-brain` — LLM planner, tool loop, safety fence | **complete** |
-| `lacs-daemon` — action families, policy, previews, transactions | **complete** |
-| `lacs-daemon` — IPC framing, executor, state collector | **complete** |
-| `lacs-daemon` — dispatcher (connection handler, job loop) | in progress |
-| `lacs-shell` — intent, plan, approval, timeline UI | scaffolded |
-| daemon ↔ shell IPC | in progress |
+| `lacs-brain` — LLM planner, tool loop, safety fence | complete |
+| `lacs-daemon` — 60+ typed actions, auth, preview, transactions | complete |
+| `lacs-daemon` — IPC dispatcher, live streaming, automatic rollback | complete |
+| `lacs-shell` — intent, plan, approval gate, job timeline | complete |
+| daemon ↔ shell IPC | complete |
+| systemd unit, install script, packaging | in progress |
+| multi-distro support (apt, dnf, pacman) | in progress |
 
-Reference docs:
+200+ tests pass across Rust and TypeScript.
+Active development. Not yet packaged for one-command install.
 
-- [Specification draft](docs/plans/2026-04-10-lacs-spec.md)
-- [Daemon IPC spec](docs/plans/2026-04-10-lacs-daemon-ipc-spec.md)
+## Architecture
 
-## Architecture at a Glance
+```text
+zeroclaw-brain  →  lacs-shell  →  lacs-daemon
+   (planner)       (approval)      (executor)
+```
 
-- `lacs-brain` (agent identity: `zeroclaw-brain`): unprivileged planner
-- `lacs-shell`: user-facing control surface
-- `lacs-daemon`: trusted privileged executor
+The brain proposes plans but cannot touch the system directly.
+The shell renders the plan, captures your approval, and streams
+progress back to you.
+The daemon is the only privileged process — it enforces policy,
+executes typed actions, writes the transaction log, and triggers
+rollback when things go wrong.
 
-The daemon owns policy, authorization, preview generation, execution,
-jobs, transactions, and rollback metadata.
-The shell renders intent, preview, approval, progress, and history.
-The brain proposes plans but does not mutate the system directly.
+Read [docs/architecture.md](docs/architecture.md) for more detail.
 
-## Who Should Contribute
+## Building From Source
 
-We welcome contributors who care about:
+**Prerequisites:**
 
-- Linux systems and admin workflows
-- Rust and typed APIs
-- Fedora Silverblue and transactional systems
-- safety, auditability, and rollback
-- Tauri UI work
-- packaging, CI, documentation, and release engineering
+- Rust stable ([rustup.rs](https://rustup.rs))
+- Node.js 20 ([nodejs.org](https://nodejs.org))
+- Tauri prerequisites ([tauri.app/start/prerequisites](https://tauri.app/start/prerequisites/))
 
-## How To Get Started
+```sh
+# Clone
+git clone https://github.com/lacs-foundation/lacs
+cd lacs
 
-1. Read the spec.
-2. Read the [daemon IPC spec](docs/plans/2026-04-10-lacs-daemon-ipc-spec.md) for active work.
-3. Open an issue for any substantial change.
-4. Keep pull requests small and reviewable.
-5. Preserve the trust boundary: planner, shell, and daemon stay separate.
+# Run Rust tests
+cargo test --workspace
 
-## Configuring the Brain (LLM Provider)
+# Run frontend tests
+cd apps/lacs-shell && npm install && npm test
+```
 
-`lacs-brain` resolves its LLM provider from environment variables.
-Without any config, it defaults to a local Ollama instance.
+To run the full stack locally:
+
+```sh
+# Terminal 1 — start the daemon (privileged actions require root)
+cargo run -p lacs-daemon
+
+# Terminal 2 — start the shell
+cd apps/lacs-shell && npm install && npm run tauri dev
+```
+
+See [docs/developer-guide.md](docs/developer-guide.md) for the full
+development setup.
+
+## LLM Configuration
+
+`lacs-brain` resolves its provider from environment variables.
+The Ollama path works without any API key and is the recommended
+starting point for local development.
 
 | Variable | Default | Description |
 | --- | --- | --- |
 | `LACS_LLM_PROVIDER` | auto-detect | `anthropic` or `ollama` |
 | `ANTHROPIC_API_KEY` | — | Required when provider is `anthropic` |
-| `LACS_ANTHROPIC_URL` | `https://api.anthropic.com` | Anthropic base URL |
-| `LACS_LLM_MODEL` | provider default | Override model name |
+| `LACS_LLM_MODEL` | provider default | Override the model name |
 | `LACS_OLLAMA_URL` | `http://localhost:11434` | Ollama base URL |
-| `LACS_BRAIN_MAX_TURNS` | `5` | Turn limit (must be >= 1) |
+| `LACS_ANTHROPIC_URL` | `https://api.anthropic.com` | Anthropic base URL |
+| `LACS_BRAIN_MAX_TURNS` | `5` | Planning turn limit (minimum 1) |
 
-**Quick start with Anthropic:**
+**Ollama (no API key required):**
+
+```sh
+ollama pull llama3.2
+cargo run -p lacs-daemon &
+cd apps/lacs-shell && npm run tauri dev
+```
+
+**Anthropic:**
 
 ```sh
 export ANTHROPIC_API_KEY=sk-ant-...
-cargo run -p lacs-shell
+cargo run -p lacs-daemon &
+cd apps/lacs-shell && npm run tauri dev
 ```
 
-**Quick start with Ollama (local model):**
+## Contributing
 
-```sh
-# Start ollama with a model that supports tool use, e.g. llama3.2
-ollama pull llama3.2
-cargo run -p lacs-shell
-```
+We welcome contributors interested in any of:
 
-## Contribution Standards
+- Rust systems programming and daemon work
+- Linux packaging and distribution (apt, dnf, pacman, RPM, Flatpak)
+- Tauri and React UI development
+- systemd service design and release engineering
+- Security hardening and audit tooling
+- Documentation and developer experience
 
-- Prefer small, focused pull requests.
-- Document user-visible behavior.
-- Add or update tests for behavior changes.
-- Keep privileged operations typed and bounded.
-- Preserve rollback and transaction history for every mutating action.
+**High-impact areas open now:**
 
-## Roadmap
+- systemd unit file and install script
+- Multi-distro action families (apt / dnf / pacman)
+- Shell reconnect logic on daemon restart
+- config.toml support for persistent LLM settings
 
-The near-term roadmap is documented in [ROADMAP.md](ROADMAP.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md) to get started.
+Open an issue before starting any substantial change.
+
+## Documentation
+
+- [Architecture overview](docs/architecture.md)
+- [Developer guide](docs/developer-guide.md)
+- [Roadmap](ROADMAP.md)
+- [ADR 0001: System boundaries](docs/adr/0001-system-boundaries.md)
+- [ADR 0002: Brain provider layer](docs/adr/0002-brain-provider-layer.md)
+- [ADR 0003: IPC wire protocol](docs/adr/0003-ipc-wire-protocol.md)
+- [Contributing](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
 
 ## License
 
-This project is licensed under the MIT License. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
