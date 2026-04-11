@@ -38,11 +38,45 @@ Packaging and multi-distro support are the next milestones.
 | `lacs-daemon` — IPC dispatcher, live streaming, automatic rollback | complete |
 | `lacs-shell` — intent, plan, approval gate, job timeline | complete |
 | daemon ↔ shell IPC | complete |
-| systemd unit, install script, packaging | in progress |
-| multi-distro support (apt, dnf, pacman) | in progress |
+| systemd unit, polkit, install script | complete |
+| `~/.config/lacs/config.toml` support | complete |
+| AppImage + RPM + Flatpak bundles | complete |
+| multi-distro support (apt, dnf, pacman) | roadmap |
 
 200+ tests pass across Rust and TypeScript.
-Active development. Not yet packaged for one-command install.
+
+## Install
+
+**Requires:** Rust stable, pnpm, Tauri prerequisites.
+
+```sh
+git clone https://github.com/lacs-foundation/lacs
+cd lacs
+make build
+sudo make install
+sudo systemctl enable --now lacs-daemon
+```
+
+Then launch the shell:
+
+```sh
+cd apps/lacs-shell && pnpm install && pnpm tauri dev
+```
+
+**Ollama (no API key):**
+
+```sh
+ollama pull llama3.2
+# The shell auto-detects Ollama when ANTHROPIC_API_KEY is not set.
+```
+
+**Optional config file** (`~/.config/lacs/config.toml`):
+
+```toml
+[llm]
+provider = "ollama"
+model    = "llama3.2"
+```
 
 ## Architecture
 
