@@ -13,6 +13,7 @@
 //! socket must either make the trait async (via `async_trait`) or dispatch
 //! via `tokio::task::spawn_blocking` to avoid stalling the runtime thread.
 
+use crate::audit::SafetyAuditLog;
 use crate::config::{BrainConfig, ProviderConfig};
 use crate::planning_tools::get_state::get_state_tool_def;
 use crate::planning_tools::propose_plan::{parse_proposed_plan, propose_plan_tool_def};
@@ -214,6 +215,7 @@ pub struct LlmPlanner {
     max_turns: usize,
     system_prompt: String,
     tools: Vec<ToolDefinition>,
+    audit_log: Option<SafetyAuditLog>,
 }
 
 impl LlmPlanner {
@@ -233,7 +235,16 @@ impl LlmPlanner {
             max_turns,
             system_prompt: build_system_prompt(),
             tools: vec![get_state_tool_def(), propose_plan_tool_def()],
+            audit_log: None,
         }
+    }
+
+    /// Attach an optional [`SafetyAuditLog`] for persistent logging of
+    /// safety fence activations. When set, every `propose_plan` rejection
+    /// is appended to the log file in addition to being printed to stderr.
+    pub fn with_audit_log(mut self, log: SafetyAuditLog) -> Self {
+        self.audit_log = Some(log);
+        self
     }
 
     /// Construct a planner from a [`BrainConfig`].
@@ -345,16 +356,21 @@ impl LlmPlanner {
                                 match parse_proposed_plan(intent, input) {
                                     Ok(plan) => return Ok(plan),
                                     Err(e) => {
+                                        let reason = e.to_string();
+                                        let raw_plan = input.to_string();
                                         eprintln!(
                                             "[LACS SAFETY] propose_plan rejected \
-                                             (turn {}/{max}): {e}. Input: {input}",
+                                             (turn {}/{max}): {reason}. Input: {raw_plan}",
                                             turn + 1,
                                             max = self.max_turns
                                         );
+                                        if let Some(audit) = &self.audit_log {
+                                            audit.log_rejection(intent, &reason, &raw_plan);
+                                        }
                                         tool_results.push(ToolResultBlock {
                                             tool_use_id: id.clone(),
                                             content: format!(
-                                                "Plan rejected: {e}. \
+                                                "Plan rejected: {reason}. \
                                                  Correct the plan and call propose_plan again."
                                             ),
                                             is_error: true,

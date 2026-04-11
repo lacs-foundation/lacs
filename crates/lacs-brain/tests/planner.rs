@@ -6,6 +6,7 @@
 //! do not require a runtime.
 
 use async_trait::async_trait;
+use lacs_brain::audit::SafetyAuditLog;
 use lacs_brain::planner::{LlmPlanner, PlanningError};
 use lacs_brain::provider::{
     Completion, ContentBlock, LlmProvider, Message, ProviderError, StopReason, ToolDefinition,
@@ -556,6 +557,112 @@ async fn max_turns_one_with_state_call_returns_planner_stuck() {
         planner.plan_intent("show state").await.unwrap_err(),
         PlanningError::PlannerStuck
     );
+}
+
+// ---------------------------------------------------------------------------
+// Safety audit log — structured persistent logging of fence activations
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn rejected_plan_is_written_to_safety_audit_log() {
+    let dir = tempfile::tempdir().unwrap();
+    let log_path = dir.path().join("safety-audit.jsonl");
+    let audit_log = SafetyAuditLog::new(&log_path);
+
+    // LLM proposes a plan with an unknown action on turn 1 (rejected),
+    // then corrects it on turn 2 (accepted). The rejection should be logged.
+    let planner = LlmPlanner::new(
+        Box::new(MockProvider::new([
+            Ok(Completion {
+                content: vec![ContentBlock::ToolUse {
+                    id: "tu_bad".into(),
+                    name: "propose_plan".into(),
+                    input: serde_json::json!({
+                        "summary": "bad plan",
+                        "explanation": "using a fake action",
+                        "steps": [{
+                            "action_name": "RunShellCommand",
+                            "summary": "run arbitrary shell",
+                            "risk_level": "low",
+                            "params": {}
+                        }]
+                    }),
+                }],
+                stop_reason: StopReason::ToolUse,
+            }),
+            propose_plan(
+                "Inspect system",
+                &[("GetSystemState", "Read current deployment", "low")],
+            ),
+        ])),
+        Box::new(MockStateClient::default()),
+        3,
+    )
+    .with_audit_log(audit_log);
+
+    let plan = planner.plan_intent("inspect the system").await.unwrap();
+    assert_eq!(plan.steps()[0].action_name(), "GetSystemState");
+
+    // Verify the audit log file was written.
+    let content = std::fs::read_to_string(&log_path).unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+    assert_eq!(lines.len(), 1, "expected one rejection logged, got: {content}");
+
+    let entry: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+    assert_eq!(entry["event"], "safety_fence_rejection");
+    assert_eq!(entry["intent"], "inspect the system");
+    assert!(
+        entry["reason"]
+            .as_str()
+            .unwrap()
+            .contains("unknown action_name"),
+        "reason should mention the unknown action: {}",
+        entry["reason"]
+    );
+    assert!(
+        entry["raw_plan"]
+            .as_str()
+            .unwrap()
+            .contains("RunShellCommand"),
+        "raw_plan should contain the offending input: {}",
+        entry["raw_plan"]
+    );
+}
+
+#[tokio::test]
+async fn planner_without_audit_log_does_not_panic_on_rejection() {
+    // Verify that the planner works correctly even without an audit log.
+    let planner = LlmPlanner::new(
+        Box::new(MockProvider::new([
+            Ok(Completion {
+                content: vec![ContentBlock::ToolUse {
+                    id: "tu_bad".into(),
+                    name: "propose_plan".into(),
+                    input: serde_json::json!({
+                        "summary": "bad plan",
+                        "explanation": "using a fake action",
+                        "steps": [{
+                            "action_name": "RunShellCommand",
+                            "summary": "run stuff",
+                            "risk_level": "low",
+                            "params": {}
+                        }]
+                    }),
+                }],
+                stop_reason: StopReason::ToolUse,
+            }),
+            propose_plan(
+                "Inspect system",
+                &[("GetSystemState", "Read deployment", "low")],
+            ),
+        ])),
+        Box::new(MockStateClient::default()),
+        3,
+    );
+
+    // No audit log attached, should still work.
+    let plan = planner.plan_intent("inspect").await.unwrap();
+    assert_eq!(plan.steps()[0].action_name(), "GetSystemState");
 }
 
 // ---------------------------------------------------------------------------
