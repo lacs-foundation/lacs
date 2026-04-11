@@ -33,7 +33,7 @@ pub fn list_groups() -> ActionSpec {
 }
 
 pub fn create_user(username: &str, shell: Option<&str>, home: Option<&str>) -> ActionSpec {
-    let mut args = vec!["--create-home".to_string()];
+    let mut args = vec!["useradd".to_string(), "--create-home".to_string()];
     if let Some(home) = home {
         args.push("--home-dir".to_string());
         args.push(home.to_string());
@@ -47,7 +47,7 @@ pub fn create_user(username: &str, shell: Option<&str>, home: Option<&str>) -> A
     ActionSpec {
         action_name: "CreateUser",
         mechanism: super::ActionMechanism::Command {
-            program: "useradd",
+            program: "sudo",
             args,
         },
         risk_level: RiskLevel::Medium,
@@ -59,7 +59,7 @@ pub fn create_user(username: &str, shell: Option<&str>, home: Option<&str>) -> A
 pub fn delete_user(username: &str) -> ActionSpec {
     ActionSpec {
         action_name: "DeleteUser",
-        mechanism: command_mechanism("userdel", [username]),
+        mechanism: command_mechanism("sudo", ["userdel", username]),
         risk_level: RiskLevel::Medium,
         reboot_required: false,
         rollback_available: false,
@@ -69,7 +69,7 @@ pub fn delete_user(username: &str) -> ActionSpec {
 pub fn add_user_to_group(username: &str, group: &str) -> ActionSpec {
     ActionSpec {
         action_name: "AddUserToGroup",
-        mechanism: command_mechanism("usermod", ["--append", "--groups", group, username]),
+        mechanism: command_mechanism("sudo", ["usermod", "--append", "--groups", group, username]),
         // High risk: adding a user to a privileged group (e.g. `wheel`) grants
         // sudo / lacs-admin rights, constituting a privilege escalation if
         // performed at lower than Admin level.
@@ -82,7 +82,7 @@ pub fn add_user_to_group(username: &str, group: &str) -> ActionSpec {
 pub fn remove_user_from_group(username: &str, group: &str) -> ActionSpec {
     ActionSpec {
         action_name: "RemoveUserFromGroup",
-        mechanism: command_mechanism("gpasswd", ["--delete", username, group]),
+        mechanism: command_mechanism("sudo", ["gpasswd", "--delete", username, group]),
         // High risk: mirrors AddUserToGroup — removing from a privileged group
         // is equally impactful and should require the same Admin authorization.
         risk_level: RiskLevel::High,

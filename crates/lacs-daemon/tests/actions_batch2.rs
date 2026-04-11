@@ -248,7 +248,7 @@ fn users_family_covers_listing_and_account_management() {
 }
 
 #[test]
-fn user_creation_and_group_changes_use_shadow_tools() {
+fn user_creation_and_group_changes_use_sudo_prefixed_shadow_tools() {
     let create = users::create_user("alice", Some("/bin/bash"), Some("/home/alice"));
     let delete = users::delete_user("alice");
     let add_group = users::add_user_to_group("alice", "wheel");
@@ -258,8 +258,9 @@ fn user_creation_and_group_changes_use_shadow_tools() {
     assert_eq!(
         create.mechanism,
         ActionMechanism::Command {
-            program: "useradd",
+            program: "sudo",
             args: vec![
+                "useradd".to_string(),
                 "--create-home".to_string(),
                 "--home-dir".to_string(),
                 "/home/alice".to_string(),
@@ -272,15 +273,16 @@ fn user_creation_and_group_changes_use_shadow_tools() {
     assert_eq!(
         delete.mechanism,
         ActionMechanism::Command {
-            program: "userdel",
-            args: vec!["alice".to_string()],
+            program: "sudo",
+            args: vec!["userdel".to_string(), "alice".to_string()],
         }
     );
     assert_eq!(
         add_group.mechanism,
         ActionMechanism::Command {
-            program: "usermod",
+            program: "sudo",
             args: vec![
+                "usermod".to_string(),
                 "--append".to_string(),
                 "--groups".to_string(),
                 "wheel".to_string(),
@@ -291,8 +293,9 @@ fn user_creation_and_group_changes_use_shadow_tools() {
     assert_eq!(
         remove_group.mechanism,
         ActionMechanism::Command {
-            program: "gpasswd",
+            program: "sudo",
             args: vec![
+                "gpasswd".to_string(),
                 "--delete".to_string(),
                 "alice".to_string(),
                 "wheel".to_string()
