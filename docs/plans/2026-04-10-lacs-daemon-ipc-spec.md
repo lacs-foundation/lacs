@@ -1,6 +1,6 @@
 # LACS Daemon IPC Specification
 
-**Status:** In progress — 2026-04-10 (steps 1–7 complete; step 8 remaining)
+**Status:** Complete — all 8 steps implemented (main branch, PRs #14 and #15)
 
 ## Scope
 
@@ -612,7 +612,7 @@ connection open.
 | `crates/lacs-daemon/src/executor.rs` | **done** | `build_action_spec` + `execute_spec`; 15 tests |
 | `crates/lacs-daemon/src/state_collector.rs` | **done** | `collect_state()` via `CommandRunner` trait; 8 tests (rpm-ostree best-effort) |
 | `crates/lacs-daemon/src/dispatcher.rs` | **done** | `connection_handler` + per-request handlers; 14 unit tests |
-| `apps/lacs-shell/src-tauri/src/daemon_client.rs` | **done (partial)** | Synchronous `DaemonIpcClient` (per-call connect); 3 tests. Persistent connection (ss1.3) is follow-on work. |
+| `apps/lacs-shell/src-tauri/src/daemon_client.rs` | **done** | `DaemonIpcClient` with `StateClient` impl, 600s execute timeout, live `JobProgress` streaming; 4 tests |
 
 ### Modified files
 
@@ -622,7 +622,7 @@ connection open.
 | `crates/lacs-daemon/src/actions/deployment.rs` | **done** | Parameterized `pin_deployment`, `unpin_deployment`, `rebase_system`, `set_kernel_arguments` |
 | `crates/lacs-daemon/src/auth.rs` | **done** | 10 unit tests added |
 | `crates/lacs-daemon/src/main.rs` | **done** | Tokio accept loop with Ctrl-C signal handling |
-| `apps/lacs-shell/src-tauri/src/commands.rs` | **partial** | `DemoStateClient` replaced with `DaemonIpcClient` for `plan_intent`. `approve_preview` still emits a Tauri event only (see ss8.3 remaining work). |
+| `apps/lacs-shell/src-tauri/src/commands.rs` | **done** | `approve_preview` calls daemon `execute` via IPC; `DemoStateClient` feature-gated for tests only; 7 tests |
 
 ---
 
@@ -638,8 +638,8 @@ Work in this order so each step leaves a testable system:
 5. ✅ `dispatcher.rs` — `connection_handler` with 14 unit tests and 2 integration tests
 6. ✅ `daemon main.rs` — Tokio accept loop; 2 integration tests (query_state, multi-client)
 7. ✅ `daemon_client.rs` — synchronous `DaemonIpcClient` with 10s timeout; 3 unit tests
-8. ⬜ `commands.rs` — rewrite `approve_preview` to call daemon `execute` via IPC;
-   wire `ShellCommandState` with a persistent `DaemonIpcClient` (see §8.1–8.4)
+8. ✅ `commands.rs` — `approve_preview` calls daemon `execute` via IPC;
+   `DaemonIpcClient` wired end-to-end with streaming and timeout
 
 ---
 
@@ -654,6 +654,6 @@ Work in this order so each step leaves a testable system:
 | `auth.rs` | ✅ 10 tests | all role mappings; wheel=Admin; Boot beats Admin; mixed known/unknown groups |
 | `dispatcher.rs` | ✅ 14 unit + 2 integration | full preview → execute → job_completed; stale approval; insufficient role; canonical_json array recursion; replay protection |
 | `daemon_client.rs` | ✅ 3 unit tests | state_response parsing; error_response mapping; unreachable daemon |
-| `commands.rs` | ⬜ | `approve_preview` must call daemon `execute` (currently emits event only) |
+| `commands.rs` | ✅ 7 tests | `approve_preview` calls daemon `execute`; plan step execution loop; job outcome emission |
 
-Current: 208 tests passing (`cargo test --workspace`). All must remain green.
+Current: 227 tests passing (`cargo test --workspace`). All must remain green.

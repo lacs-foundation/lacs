@@ -87,16 +87,5 @@ function isTauriRuntime(): boolean {
   return typeof window !== "undefined" && "__TAURI__" in window;
 }
 
-export async function withDaemonStatus<T>(
-  fn: () => Promise<T>,
-): Promise<{ result: T; status: DaemonStatus }> {
-  try {
-    const result = await fn();
-    return { result, status: "connected" };
-  } catch {
-    return { result: undefined as never, status: "unreachable" };
-  }
-}
-
 // Re-export ShellError for callers that want it from one place
 export type { ShellError };
