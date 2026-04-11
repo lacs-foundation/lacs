@@ -71,7 +71,7 @@ pub fn set_service_enabled(unit: &str, enabled: bool) -> ActionSpec {
         mechanism: command_mechanism("systemctl", [verb, unit]),
         risk_level: RiskLevel::Medium,
         reboot_required: false,
-        rollback_available: true,
+        rollback_available: false,
     }
 }
 
@@ -81,7 +81,7 @@ pub fn mask_service(unit: &str) -> ActionSpec {
         mechanism: command_mechanism("systemctl", ["mask", unit]),
         risk_level: RiskLevel::Medium,
         reboot_required: false,
-        rollback_available: true,
+        rollback_available: false,
     }
 }
 
@@ -91,7 +91,7 @@ pub fn unmask_service(unit: &str) -> ActionSpec {
         mechanism: command_mechanism("systemctl", ["unmask", unit]),
         risk_level: RiskLevel::Medium,
         reboot_required: false,
-        rollback_available: true,
+        rollback_available: false,
     }
 }
 

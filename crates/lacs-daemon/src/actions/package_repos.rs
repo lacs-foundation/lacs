@@ -33,7 +33,7 @@ pub fn add_package_repository(repo_id: &str, repo_url: &str) -> ActionSpec {
         ),
         risk_level: RiskLevel::Medium,
         reboot_required: false,
-        rollback_available: true,
+        rollback_available: false,
     }
 }
 
@@ -43,7 +43,7 @@ pub fn remove_package_repository(repo_id: &str) -> ActionSpec {
         mechanism: file_delete_mechanism(format!("/etc/yum.repos.d/{repo_id}.repo")),
         risk_level: RiskLevel::Medium,
         reboot_required: false,
-        rollback_available: true,
+        rollback_available: false,
     }
 }
 
@@ -57,7 +57,7 @@ pub fn enable_package_repository(repo_id: &str) -> ActionSpec {
         ),
         risk_level: RiskLevel::Medium,
         reboot_required: false,
-        rollback_available: true,
+        rollback_available: false,
     }
 }
 
@@ -71,6 +71,6 @@ pub fn disable_package_repository(repo_id: &str) -> ActionSpec {
         ),
         risk_level: RiskLevel::Medium,
         reboot_required: false,
-        rollback_available: true,
+        rollback_available: false,
     }
 }

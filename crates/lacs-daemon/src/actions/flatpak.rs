@@ -19,7 +19,7 @@ pub fn install_flatpak(app_id: &str, remote: &str) -> ActionSpec {
         mechanism: command_mechanism("flatpak", ["install", "-y", remote, app_id]),
         risk_level: RiskLevel::Medium,
         reboot_required: false,
-        rollback_available: true,
+        rollback_available: false,
     }
 }
 
@@ -29,7 +29,7 @@ pub fn remove_flatpak(app_id: &str) -> ActionSpec {
         mechanism: command_mechanism("flatpak", ["uninstall", "-y", app_id]),
         risk_level: RiskLevel::Medium,
         reboot_required: false,
-        rollback_available: true,
+        rollback_available: false,
     }
 }
 
@@ -59,7 +59,7 @@ pub fn add_flatpak_remote(remote: &str, url: &str) -> ActionSpec {
         mechanism: command_mechanism("flatpak", ["remote-add", "--if-not-exists", remote, url]),
         risk_level: RiskLevel::Medium,
         reboot_required: false,
-        rollback_available: true,
+        rollback_available: false,
     }
 }
 
@@ -69,7 +69,7 @@ pub fn remove_flatpak_remote(remote: &str) -> ActionSpec {
         mechanism: command_mechanism("flatpak", ["remote-delete", remote]),
         risk_level: RiskLevel::Medium,
         reboot_required: false,
-        rollback_available: true,
+        rollback_available: false,
     }
 }
 

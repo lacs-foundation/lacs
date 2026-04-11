@@ -51,7 +51,7 @@ pub fn configure_firewall(zone: &str, service: &str, enabled: bool) -> ActionSpe
         },
         risk_level: RiskLevel::Medium,
         reboot_required: false,
-        rollback_available: true,
+        rollback_available: false,
     }
 }
 

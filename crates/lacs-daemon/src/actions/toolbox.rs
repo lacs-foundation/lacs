@@ -43,7 +43,7 @@ pub fn create_toolbox(name: &str, release: Option<&str>, image: Option<&str>) ->
         },
         risk_level: RiskLevel::Medium,
         reboot_required: false,
-        rollback_available: true,
+        rollback_available: false,
     }
 }
 
@@ -63,6 +63,6 @@ pub fn remove_toolbox(name: &str) -> ActionSpec {
         mechanism: command_mechanism("toolbox", ["rm", name]),
         risk_level: RiskLevel::Medium,
         reboot_required: false,
-        rollback_available: true,
+        rollback_available: false,
     }
 }

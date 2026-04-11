@@ -28,7 +28,7 @@ pub fn create_container(name: &str, image: &str) -> ActionSpec {
         mechanism: command_mechanism("podman", ["create", "--name", name, image]),
         risk_level: RiskLevel::Medium,
         reboot_required: false,
-        rollback_available: true,
+        rollback_available: false,
     }
 }
 
@@ -58,7 +58,7 @@ pub fn remove_container(name: &str) -> ActionSpec {
         mechanism: command_mechanism("podman", ["rm", name]),
         risk_level: RiskLevel::Medium,
         reboot_required: false,
-        rollback_available: true,
+        rollback_available: false,
     }
 }
 

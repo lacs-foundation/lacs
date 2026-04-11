@@ -48,7 +48,8 @@ fn preview_profile(action_name: &str) -> PreviewProfile {
         | "ListGroups"
         | "ListPackageRepositories"
         | "ListContainers"
-        | "GetContainerInfo" => PreviewProfile {
+        | "GetContainerInfo"
+        | "GetLayeredPackages" => PreviewProfile {
             risk_level: RiskLevel::Low,
             expected_side_effects: Vec::new(),
             reboot_required: false,
@@ -114,8 +115,15 @@ fn preview_profile(action_name: &str) -> PreviewProfile {
                 warnings: vec!["approval required".to_string()],
             }
         }
-        "UpdateSystem" | "InstallPackages" | "RemovePackages" | "RebaseSystem"
-        | "RollbackDeployment" => PreviewProfile {
+        "UpdateSystem"
+        | "InstallPackages"
+        | "RemovePackages"
+        | "RebaseSystem"
+        | "RollbackDeployment"
+        | "AddLayeredPackage"
+        | "RemoveLayeredPackage"
+        | "ReplaceLayeredPackage"
+        | "ResetLayeredPackageOverride" => PreviewProfile {
             risk_level: RiskLevel::High,
             expected_side_effects: vec![
                 "system deployment will change".to_string(),
