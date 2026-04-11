@@ -40,6 +40,9 @@ pub enum TransactionStoreError {
 
     #[error("transaction not found: {0}")]
     NotFound(String),
+
+    #[error("invalid transition from {from:?} to {to:?}")]
+    InvalidTransition { from: JobState, to: JobState },
 }
 
 impl TransactionStore {
@@ -193,13 +196,33 @@ impl TransactionStore {
         new_status: JobState,
     ) -> Result<(), TransactionStoreError> {
         let conn = self.connection()?;
-        let rows_affected = conn.execute(
+
+        // Read the current status so we can validate the transition.
+        let current_status: String = conn
+            .query_row(
+                "SELECT status FROM transactions WHERE transaction_id = ?1",
+                params![transaction_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => {
+                    TransactionStoreError::NotFound(transaction_id.to_string())
+                }
+                other => TransactionStoreError::Sqlite(other),
+            })?;
+
+        let current: JobState = deserialize_field(&current_status)?;
+        if !crate::jobs::allowed_transition(&current, &new_status) {
+            return Err(TransactionStoreError::InvalidTransition {
+                from: current,
+                to: new_status,
+            });
+        }
+
+        conn.execute(
             "UPDATE transactions SET status = ?1 WHERE transaction_id = ?2",
             params![serialize_field(&new_status)?, transaction_id],
         )?;
-        if rows_affected == 0 {
-            return Err(TransactionStoreError::NotFound(transaction_id.to_string()));
-        }
         Ok(())
     }
 
@@ -415,6 +438,9 @@ mod tests {
         let tx = store.record(queued_transaction()).unwrap();
 
         store
+            .update_status(&tx.transaction_id, JobState::Running)
+            .unwrap();
+        store
             .update_status(&tx.transaction_id, JobState::Failed)
             .unwrap();
 
@@ -453,7 +479,10 @@ mod tests {
         let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
         let tx = store.record(queued_transaction()).unwrap();
 
-        // Simulate completed execution.
+        // Simulate completed execution (must go through Running first).
+        store
+            .update_status(&tx.transaction_id, JobState::Running)
+            .unwrap();
         store
             .update_status(&tx.transaction_id, JobState::Succeeded)
             .unwrap();
@@ -618,5 +647,86 @@ mod tests {
         // The fresh record should still be Queued.
         let fresh_record = store.get(&fresh.transaction_id).unwrap().unwrap();
         assert_eq!(fresh_record.status, JobState::Queued);
+    }
+
+    // ── State-machine validation tests (issue #56) ──────────────────────────
+
+    #[test]
+    fn update_status_rejects_queued_to_succeeded() {
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let tx = store.record(queued_transaction()).unwrap();
+
+        let result = store.update_status(&tx.transaction_id, JobState::Succeeded);
+        assert!(
+            matches!(
+                result,
+                Err(TransactionStoreError::InvalidTransition {
+                    from: JobState::Queued,
+                    to: JobState::Succeeded,
+                })
+            ),
+            "Queued -> Succeeded must be rejected (must go through Running first): {result:?}"
+        );
+    }
+
+    #[test]
+    fn update_status_rejects_succeeded_to_running() {
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let tx = store.record(queued_transaction()).unwrap();
+
+        store
+            .update_status(&tx.transaction_id, JobState::Running)
+            .unwrap();
+        store
+            .update_status(&tx.transaction_id, JobState::Succeeded)
+            .unwrap();
+
+        let result = store.update_status(&tx.transaction_id, JobState::Running);
+        assert!(
+            matches!(
+                result,
+                Err(TransactionStoreError::InvalidTransition {
+                    from: JobState::Succeeded,
+                    to: JobState::Running,
+                })
+            ),
+            "Succeeded -> Running must be rejected (terminal state): {result:?}"
+        );
+    }
+
+    #[test]
+    fn update_status_accepts_running_to_failed() {
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let tx = store.record(queued_transaction()).unwrap();
+
+        store
+            .update_status(&tx.transaction_id, JobState::Running)
+            .unwrap();
+        store
+            .update_status(&tx.transaction_id, JobState::Failed)
+            .unwrap();
+
+        let updated = store.get(&tx.transaction_id).unwrap().unwrap();
+        assert_eq!(updated.status, JobState::Failed);
+    }
+
+    #[test]
+    fn update_status_accepts_running_to_rolled_back() {
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let tx = store.record(queued_transaction()).unwrap();
+
+        store
+            .update_status(&tx.transaction_id, JobState::Running)
+            .unwrap();
+        store
+            .update_status(&tx.transaction_id, JobState::RolledBack)
+            .unwrap();
+
+        let updated = store.get(&tx.transaction_id).unwrap().unwrap();
+        assert_eq!(updated.status, JobState::RolledBack);
     }
 }
