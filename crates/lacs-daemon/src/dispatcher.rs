@@ -137,7 +137,10 @@ pub fn resolve_caller_role(stream: &UnixStream) -> CallerRole {
             };
             (pid, cred.gid())
         }
-        Err(_) => return CallerRole::Observer,
+        Err(e) => {
+            eprintln!("[lacs-daemon] WARNING: peer_cred() failed: {e}; defaulting to Observer");
+            return CallerRole::Observer;
+        }
     };
     // Read /etc/group once and build a lookup map — avoids N+1 file reads when
     // a process has many supplementary groups (one read per GID in the old code).
@@ -149,6 +152,11 @@ pub fn resolve_caller_role(stream: &UnixStream) -> CallerRole {
         if !groups.contains(name) {
             groups.push(name.clone());
         }
+    }
+    if groups.is_empty() {
+        eprintln!(
+            "[lacs-daemon] WARNING: could not resolve groups for PID {pid}; defaulting to Observer"
+        );
     }
     highest_role_from_groups(groups)
 }
