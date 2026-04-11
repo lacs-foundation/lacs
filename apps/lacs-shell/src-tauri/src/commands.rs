@@ -111,6 +111,14 @@ impl StateClient for DemoStateClient {
 // Shell command state
 // ---------------------------------------------------------------------------
 
+/// Read the daemon socket path from the environment (set by config.toml
+/// via `apply_defaults_to_env()`), falling back to the compile-time default.
+fn resolve_socket_path() -> String {
+    let uri = std::env::var("LACS_LISTEN_URI")
+        .unwrap_or_else(|_| lacs_core::DEFAULT_LISTEN_URI.to_string());
+    uri.strip_prefix("unix://").unwrap_or(&uri).to_string()
+}
+
 /// Returns the `StateClient` for the current build.
 ///
 /// In `demo` or test builds, returns `DemoStateClient` (hardcoded Silverblue
@@ -123,10 +131,7 @@ fn build_state_client() -> Box<dyn StateClient> {
 
 #[cfg(not(any(test, feature = "demo")))]
 fn build_state_client() -> Box<dyn lacs_brain::state_client::StateClient> {
-    // Strip the "unix://" URI scheme to get the filesystem path.
-    let socket_path = lacs_core::DEFAULT_LISTEN_URI
-        .strip_prefix("unix://")
-        .unwrap_or(lacs_core::DEFAULT_LISTEN_URI);
+    let socket_path = resolve_socket_path();
     Box::new(crate::daemon_client::DaemonIpcClient::new(socket_path))
 }
 
@@ -216,10 +221,7 @@ pub async fn plan_intent(
 /// the "executing" state.
 #[tauri::command]
 pub async fn approve_preview(app: AppHandle, steps: Vec<PlanStepRequest>) -> Result<(), String> {
-    let socket_path = lacs_core::DEFAULT_LISTEN_URI
-        .strip_prefix("unix://")
-        .unwrap_or(lacs_core::DEFAULT_LISTEN_URI)
-        .to_string();
+    let socket_path = resolve_socket_path();
 
     let mut final_status = "succeeded".to_string();
 

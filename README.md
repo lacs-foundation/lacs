@@ -35,7 +35,7 @@ lacs-brain  →  lacs-shell  →  lacs-daemon
 
 1. You type a natural-language request in the shell
 2. The brain proposes a plan — each step is a typed action with a risk
-   level (`Low`, `Medium`, `High`, `Critical`)
+   level (`Low`, `Medium`, `High`)
 3. The shell shows the plan with previews and rollback metadata
 4. You approve each step explicitly
 5. The daemon executes, streams live output, and rolls back automatically
