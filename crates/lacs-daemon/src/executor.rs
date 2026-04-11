@@ -2,6 +2,7 @@ use crate::actions::{
     containers, deployment, flatpak, identity, layering, network, package_repos, services, toolbox,
     users, ActionMechanism, ActionSpec,
 };
+use async_trait::async_trait;
 use serde_json::Value;
 use std::io;
 
@@ -25,6 +26,28 @@ pub struct ExecutionOutput {
     pub stdout: String,
     pub stderr: String,
     pub exit_code: i32,
+}
+
+/// Abstraction over action execution, making the execute + rollback path
+/// testable without spawning real OS commands.
+///
+/// The production implementation (`RealActionExecutor`) delegates to
+/// `tokio::process::Command`. Tests can inject a mock that controls exit
+/// codes and output per program.
+#[async_trait]
+pub trait ActionExecutor: Send + Sync {
+    /// Execute an [`ActionSpec`] and return its output.
+    async fn execute(&self, spec: &ActionSpec) -> Result<ExecutionOutput, ExecutorError>;
+}
+
+/// Production executor that delegates to real OS processes and filesystem ops.
+pub struct RealActionExecutor;
+
+#[async_trait]
+impl ActionExecutor for RealActionExecutor {
+    async fn execute(&self, spec: &ActionSpec) -> Result<ExecutionOutput, ExecutorError> {
+        execute_spec(spec).await
+    }
 }
 
 /// Map an action name and JSON params to an [`ActionSpec`].
