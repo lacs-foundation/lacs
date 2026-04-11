@@ -254,7 +254,10 @@ mod tests {
 
         let state = collect_state(&NoRpmOstreeRunner).unwrap();
         assert_eq!(state.host_name, "non-silverblue-host");
-        assert_eq!(state.deployment, "", "deployment must be empty, not an error");
+        assert_eq!(
+            state.deployment, "",
+            "deployment must be empty, not an error"
+        );
         assert!(state.services.is_empty());
         assert!(state.flatpaks.is_empty());
         assert!(state.toolboxes.is_empty());

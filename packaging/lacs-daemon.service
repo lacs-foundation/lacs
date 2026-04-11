@@ -1,0 +1,31 @@
+[Unit]
+Description=LACS privileged daemon
+Documentation=https://github.com/vladimirrotariu/lacs
+After=network.target
+
+[Service]
+Type=simple
+User=lacs
+Group=lacs
+
+# Production socket and database paths (overridable via drop-in).
+Environment="LACS_LISTEN_URI=unix:///run/lacs/daemon.sock"
+Environment="LACS_DATABASE_PATH=/var/lib/lacs/daemon.sqlite"
+
+ExecStart=/usr/local/bin/lacs-daemon
+Restart=on-failure
+RestartSec=5s
+
+# Harden the service:
+# - NoNewPrivileges prevents the daemon itself from gaining additional
+#   privileges after launch; polkit rules grant per-action elevation.
+# - ProtectHome and ProtectSystem prevent reads outside /var/lib/lacs.
+NoNewPrivileges=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/lacs /run/lacs
+RuntimeDirectory=lacs
+StateDirectory=lacs
+
+[Install]
+WantedBy=multi-user.target

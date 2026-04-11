@@ -41,4 +41,4 @@ body:
     id: environment
     attributes:
       label: Environment
-      placeholder: "Distro + version, LACS build (git hash or release), hardware notes"
+      placeholder: "Distro + version, LACS build (git hash or release)"

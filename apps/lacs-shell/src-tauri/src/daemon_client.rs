@@ -3,8 +3,9 @@
 //! Two client modes co-exist in this module:
 //!
 //! - **Synchronous** (`DaemonIpcClient`): implements [`StateClient`] for the
-//!   brain planner, which calls `curated_state()` synchronously while planning.
-//!   Uses `std::os::unix::net::UnixStream` with a 10-second timeout.
+//!   brain planner. Currently only used in tests; will be promoted to production
+//!   once the shell runs the brain in-process. Uses `std::os::unix::net::UnixStream`
+//!   with a 10-second timeout.
 //!
 //! - **Async** (`execute_action`): drives the approve-and-execute flow from an
 //!   async Tauri command. Uses `tokio::net::UnixStream`. Opens one connection
@@ -17,12 +18,20 @@
 //! prefix followed by a UTF-8 JSON body. This mirrors the daemon's
 //! `FramedStream` exactly.
 
-use std::io::{self, Read, Write};
+use std::io;
+
+#[cfg(test)]
+use std::io::{Read, Write};
+#[cfg(test)]
 use std::os::unix::net::UnixStream;
+#[cfg(test)]
 use std::time::Duration;
 
+#[cfg(test)]
 use lacs_brain::planner::PlanningError;
+#[cfg(test)]
 use lacs_brain::state_client::{CuratedState, StateClient};
+#[cfg(test)]
 use serde_json::Value;
 
 /// Maximum response size accepted from the daemon (4 MiB — mirrors daemon limit).
@@ -32,6 +41,7 @@ const MAX_RESPONSE_BYTES: u32 = 4 * 1024 * 1024;
 ///
 /// Prevents the shell from hanging indefinitely if the daemon is unresponsive.
 /// 10 seconds matches the timeout specified in the IPC spec for state collection.
+#[cfg(test)]
 const SOCKET_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Per-step timeout for the execute read loop (seconds).
@@ -46,10 +56,12 @@ const EXECUTE_STEP_TIMEOUT_SECS: u64 = 600;
 /// Opens a fresh connection per call. Suitable for the LLM planning loop where
 /// calls are infrequent and persistent connection management would add
 /// unnecessary complexity.
+#[cfg(test)]
 pub struct DaemonIpcClient {
     socket_path: String,
 }
 
+#[cfg(test)]
 impl DaemonIpcClient {
     /// Create a client that connects to `socket_path`.
     ///
@@ -75,21 +87,20 @@ impl DaemonIpcClient {
             .set_write_timeout(Some(SOCKET_TIMEOUT))
             .map_err(|e| format!("failed to set write timeout: {e}"))?;
 
-        let request =
-            serde_json::to_vec(&serde_json::json!({
-                "type": "query_state",
-                "request_id": "shell-state-query"
-            }))
-            .expect("static JSON is always serialisable");
+        let request = serde_json::to_vec(&serde_json::json!({
+            "type": "query_state",
+            "request_id": "shell-state-query"
+        }))
+        .expect("static JSON is always serialisable");
 
         write_framed(&mut stream, &request)
             .map_err(|e| format!("failed to send query_state: {e}"))?;
 
-        let msg = read_framed(&mut stream)
-            .map_err(|e| format!("failed to read daemon response: {e}"))?;
+        let msg =
+            read_framed(&mut stream).map_err(|e| format!("failed to read daemon response: {e}"))?;
 
-        let resp: Value = serde_json::from_slice(&msg)
-            .map_err(|e| format!("invalid JSON from daemon: {e}"))?;
+        let resp: Value =
+            serde_json::from_slice(&msg).map_err(|e| format!("invalid JSON from daemon: {e}"))?;
 
         match resp["type"].as_str() {
             Some("state_response") => {
@@ -115,6 +126,7 @@ impl DaemonIpcClient {
     }
 }
 
+#[cfg(test)]
 impl StateClient for DaemonIpcClient {
     fn curated_state(&self) -> Result<CuratedState, PlanningError> {
         self.query_state_inner()
@@ -126,14 +138,15 @@ impl StateClient for DaemonIpcClient {
 // Framing helpers (mirrors lacs-daemon's FramedStream protocol)
 // ---------------------------------------------------------------------------
 
+#[cfg(test)]
 fn write_framed(stream: &mut UnixStream, msg: &[u8]) -> io::Result<()> {
-    let len = u32::try_from(msg.len()).map_err(|_| {
-        io::Error::new(io::ErrorKind::InvalidInput, "message exceeds 4 GiB limit")
-    })?;
+    let len = u32::try_from(msg.len())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "message exceeds 4 GiB limit"))?;
     stream.write_all(&len.to_le_bytes())?;
     stream.write_all(msg)
 }
 
+#[cfg(test)]
 fn read_framed(stream: &mut UnixStream) -> io::Result<Vec<u8>> {
     let mut len_buf = [0u8; 4];
     stream.read_exact(&mut len_buf)?;
@@ -149,6 +162,7 @@ fn read_framed(stream: &mut UnixStream) -> io::Result<Vec<u8>> {
     Ok(msg)
 }
 
+#[cfg(test)]
 fn string_array(v: &Value) -> Vec<String> {
     v.as_array()
         .map(|a| {
@@ -179,28 +193,23 @@ pub async fn execute_action(
     action_name: &str,
     params: &serde_json::Value,
 ) -> Result<String, String> {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::UnixStream as TokioStream;
     use tokio::time::{timeout, Duration as TDuration};
 
     // ── Connect ──────────────────────────────────────────────────────────────
-    let mut stream = timeout(
-        TDuration::from_secs(10),
-        TokioStream::connect(socket_path),
-    )
-    .await
-    .map_err(|_| "connection to daemon timed out".to_string())?
-    .map_err(|e| format!("cannot connect to daemon at {socket_path}: {e}"))?;
+    let mut stream = timeout(TDuration::from_secs(10), TokioStream::connect(socket_path))
+        .await
+        .map_err(|_| "connection to daemon timed out".to_string())?
+        .map_err(|e| format!("cannot connect to daemon at {socket_path}: {e}"))?;
 
     // ── Preview ───────────────────────────────────────────────────────────────
-    let preview_req =
-        serde_json::to_vec(&serde_json::json!({
-            "type": "preview",
-            "request_id": "shell-preview",
-            "action_name": action_name,
-            "params": params
-        }))
-        .expect("static JSON is always serialisable");
+    let preview_req = serde_json::to_vec(&serde_json::json!({
+        "type": "preview",
+        "request_id": "shell-preview",
+        "action_name": action_name,
+        "params": params
+    }))
+    .expect("static JSON is always serialisable");
 
     async_write_framed(&mut stream, &preview_req)
         .await
@@ -237,15 +246,14 @@ pub async fn execute_action(
     emit_timeline(app, format!("Preview ready for {action_name}"));
 
     // ── Execute ───────────────────────────────────────────────────────────────
-    let execute_req =
-        serde_json::to_vec(&serde_json::json!({
-            "type": "execute",
-            "request_id": "shell-execute",
-            "action_name": action_name,
-            "params": params,
-            "approval_hash": request_hash
-        }))
-        .expect("static JSON is always serialisable");
+    let execute_req = serde_json::to_vec(&serde_json::json!({
+        "type": "execute",
+        "request_id": "shell-execute",
+        "action_name": action_name,
+        "params": params,
+        "approval_hash": request_hash
+    }))
+    .expect("static JSON is always serialisable");
 
     async_write_framed(&mut stream, &execute_req)
         .await
@@ -309,6 +317,21 @@ pub async fn execute_action(
     }
 }
 
+/// Attempt a single connection to the daemon socket and return whether it is
+/// reachable.
+///
+/// Used by the background health poller to determine daemon availability.
+/// A successful `connect()` immediately closes the socket — this is a
+/// connectivity probe, not a full handshake.
+pub async fn check_daemon_health(socket_path: &str) -> bool {
+    use tokio::net::UnixStream as TokioStream;
+    use tokio::time::{timeout, Duration as TDuration};
+    timeout(TDuration::from_secs(3), TokioStream::connect(socket_path))
+        .await
+        .map(|r| r.is_ok())
+        .unwrap_or(false)
+}
+
 fn emit_timeline(app: &tauri::AppHandle, text: String) {
     use crate::events::TimelineEvent;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -323,14 +346,10 @@ fn emit_timeline(app: &tauri::AppHandle, text: String) {
     let _ = app.emit("lacs:timeline-entry", TimelineEvent { id, text });
 }
 
-async fn async_write_framed(
-    stream: &mut tokio::net::UnixStream,
-    msg: &[u8],
-) -> io::Result<()> {
+async fn async_write_framed(stream: &mut tokio::net::UnixStream, msg: &[u8]) -> io::Result<()> {
     use tokio::io::AsyncWriteExt;
-    let len = u32::try_from(msg.len()).map_err(|_| {
-        io::Error::new(io::ErrorKind::InvalidInput, "message exceeds 4 GiB limit")
-    })?;
+    let len = u32::try_from(msg.len())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "message exceeds 4 GiB limit"))?;
     stream.write_all(&len.to_le_bytes()).await?;
     stream.write_all(msg).await
 }

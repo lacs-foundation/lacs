@@ -99,7 +99,10 @@ mod tests {
 
     #[test]
     fn boot_role_beats_admin_and_wheel() {
-        assert_eq!(role(&[BOOT_GROUP, ADMIN_GROUP, WHEEL_GROUP]), CallerRole::Boot);
+        assert_eq!(
+            role(&[BOOT_GROUP, ADMIN_GROUP, WHEEL_GROUP]),
+            CallerRole::Boot
+        );
     }
 
     #[test]

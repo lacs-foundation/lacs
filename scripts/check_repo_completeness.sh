@@ -29,4 +29,3 @@ if (( ${#missing[@]} > 0 )); then
   printf ' - %s\n' "${missing[@]}" >&2
   exit 1
 fi
-

@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use lacs_core::{DEFAULT_DATABASE_PATH, DEFAULT_LISTEN_URI};
+use lacs_core::{
+    config::LacsConfig,
+    {DEFAULT_DATABASE_PATH, DEFAULT_LISTEN_URI},
+};
 use lacs_daemon::dispatcher::{connection_handler, resolve_caller_role};
 use lacs_daemon::state::{DaemonConfig, DaemonState};
 use lacs_daemon::state_collector::RealCommandRunner;
@@ -17,6 +20,10 @@ const MAX_CONNECTIONS: usize = 16;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Apply config-file values as env var defaults before reading any config.
+    // Must run before the tokio runtime starts worker threads.
+    LacsConfig::load().apply_defaults_to_env();
+
     let listen_uri =
         std::env::var("LACS_LISTEN_URI").unwrap_or_else(|_| DEFAULT_LISTEN_URI.to_string());
     let database_path =

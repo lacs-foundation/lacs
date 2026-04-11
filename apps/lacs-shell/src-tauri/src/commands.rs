@@ -3,9 +3,9 @@ use lacs_brain::config::BrainConfig;
 #[cfg(any(test, feature = "demo"))]
 use lacs_brain::planner::PlanningError;
 use lacs_brain::planner::{LlmPlanner, Plan};
+use lacs_brain::state_client::CuratedState;
 #[cfg(any(test, feature = "demo"))]
 use lacs_brain::state_client::StateClient;
-use lacs_brain::state_client::CuratedState;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
@@ -49,7 +49,11 @@ pub struct ShellError {
 
 impl ShellError {
     fn pre_flight(code: &str, message: impl Into<String>) -> Self {
-        Self { code: code.into(), message: message.into(), system_changed: false }
+        Self {
+            code: code.into(),
+            message: message.into(),
+            system_changed: false,
+        }
     }
 }
 
@@ -154,7 +158,10 @@ impl ShellCommandState {
             LlmPlanner::from_config(BrainConfig::ollama_defaults(), build_state_client())
                 .expect("Ollama defaults must always produce a valid planner")
         });
-        Self { planner, brain_config }
+        Self {
+            planner,
+            brain_config,
+        }
     }
 
     pub fn brain_config_response(&self) -> BrainConfigResponse {
@@ -164,7 +171,10 @@ impl ShellCommandState {
     /// Inject a pre-built planner and brain config — used in unit tests.
     #[cfg(test)]
     pub fn with_planner(planner: LlmPlanner, brain_config: BrainConfigResponse) -> Self {
-        Self { planner, brain_config }
+        Self {
+            planner,
+            brain_config,
+        }
     }
 }
 
@@ -198,10 +208,7 @@ pub async fn plan_intent(
 /// a `DaemonJobOutcome::Failed` event so the frontend is never left stuck in
 /// the "executing" state.
 #[tauri::command]
-pub async fn approve_preview(
-    app: AppHandle,
-    steps: Vec<PlanStepRequest>,
-) -> Result<(), String> {
+pub async fn approve_preview(app: AppHandle, steps: Vec<PlanStepRequest>) -> Result<(), String> {
     let socket_path = lacs_core::DEFAULT_LISTEN_URI
         .strip_prefix("unix://")
         .unwrap_or(lacs_core::DEFAULT_LISTEN_URI)
@@ -225,7 +232,10 @@ pub async fn approve_preview(
                 }
             }
             Err(e) => {
-                eprintln!("[lacs-shell] execute_action failed for '{}': {e}", step.action_name);
+                eprintln!(
+                    "[lacs-shell] execute_action failed for '{}': {e}",
+                    step.action_name
+                );
                 final_status = "failed".to_string();
                 break 'steps;
             }
@@ -233,10 +243,10 @@ pub async fn approve_preview(
     }
 
     let outcome = match final_status.as_str() {
-        "succeeded"    => DaemonJobOutcome::Succeeded,
+        "succeeded" => DaemonJobOutcome::Succeeded,
         "needs_reboot" => DaemonJobOutcome::NeedsReboot,
-        "rolled_back"  => DaemonJobOutcome::RolledBack,
-        _              => DaemonJobOutcome::Failed,
+        "rolled_back" => DaemonJobOutcome::RolledBack,
+        _ => DaemonJobOutcome::Failed,
     };
 
     app.emit("lacs:job-completed", outcome)
@@ -246,9 +256,7 @@ pub async fn approve_preview(
 }
 
 #[tauri::command]
-pub fn get_brain_config(
-    state: tauri::State<'_, ShellCommandState>,
-) -> BrainConfigResponse {
+pub fn get_brain_config(state: tauri::State<'_, ShellCommandState>) -> BrainConfigResponse {
     state.brain_config_response()
 }
 
@@ -420,7 +428,9 @@ mod tests {
     #[tokio::test]
     async fn empty_intent_returns_intent_empty_error() {
         let planner = LlmPlanner::new(
-            Box::new(MockProvider::once(Err(ProviderError::Parse("unused".into())))),
+            Box::new(MockProvider::once(Err(ProviderError::Parse(
+                "unused".into(),
+            )))),
             Box::new(DemoStateClient),
             5,
         );
