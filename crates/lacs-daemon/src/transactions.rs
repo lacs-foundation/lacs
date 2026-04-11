@@ -214,10 +214,7 @@ impl TransactionStore {
     /// execute requests that both pass `find_by_request_hash` cannot both
     /// proceed — only the first `claim_for_execution` wins; the loser must
     /// return `stale_approval`.
-    pub fn claim_for_execution(
-        &self,
-        transaction_id: &str,
-    ) -> Result<bool, TransactionStoreError> {
+    pub fn claim_for_execution(&self, transaction_id: &str) -> Result<bool, TransactionStoreError> {
         let conn = self.connection()?;
         let queued_json = serialize_field(&JobState::Queued)?;
         let running_json = serialize_field(&JobState::Running)?;
@@ -461,7 +458,11 @@ mod tests {
         assert!(claimed, "should claim Queued transaction");
 
         let updated = store.get(&tx.transaction_id).unwrap().unwrap();
-        assert_eq!(updated.status, JobState::Running, "status must be Running after claim");
+        assert_eq!(
+            updated.status,
+            JobState::Running,
+            "status must be Running after claim"
+        );
     }
 
     #[test]
@@ -470,7 +471,10 @@ mod tests {
         let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
         let tx = store.record(queued_transaction()).unwrap();
 
-        assert!(store.claim_for_execution(&tx.transaction_id).unwrap(), "first claim must succeed");
+        assert!(
+            store.claim_for_execution(&tx.transaction_id).unwrap(),
+            "first claim must succeed"
+        );
         assert!(
             !store.claim_for_execution(&tx.transaction_id).unwrap(),
             "second claim must return false — simulates concurrent execute request"

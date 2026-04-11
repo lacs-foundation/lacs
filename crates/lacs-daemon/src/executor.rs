@@ -119,15 +119,15 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
             validated_repo_id(params)?,
             validated_no_newline(params, "repo_url")?,
         )),
-        "RemovePackageRepository" => {
-            Ok(package_repos::remove_package_repository(validated_repo_id(params)?))
-        }
-        "EnablePackageRepository" => {
-            Ok(package_repos::enable_package_repository(validated_repo_id(params)?))
-        }
-        "DisablePackageRepository" => {
-            Ok(package_repos::disable_package_repository(validated_repo_id(params)?))
-        }
+        "RemovePackageRepository" => Ok(package_repos::remove_package_repository(
+            validated_repo_id(params)?,
+        )),
+        "EnablePackageRepository" => Ok(package_repos::enable_package_repository(
+            validated_repo_id(params)?,
+        )),
+        "DisablePackageRepository" => Ok(package_repos::disable_package_repository(
+            validated_repo_id(params)?,
+        )),
 
         // ── Services ─────────────────────────────────────────────────────
         "ListServices" => Ok(services::list_services()),

@@ -43,8 +43,7 @@ async fn start_daemon(dir: &tempfile::TempDir) -> std::path::PathBuf {
     let socket_path = dir.path().join("daemon.sock");
     let db_path = dir.path().join("daemon.sqlite");
 
-    let target =
-        ListenTarget::try_from_uri(&format!("unix://{}", socket_path.display())).unwrap();
+    let target = ListenTarget::try_from_uri(&format!("unix://{}", socket_path.display())).unwrap();
     let config = DaemonConfig::new(target, &db_path);
     let runtime = DaemonState::bootstrap(config).unwrap();
 

@@ -75,21 +75,20 @@ impl DaemonIpcClient {
             .set_write_timeout(Some(SOCKET_TIMEOUT))
             .map_err(|e| format!("failed to set write timeout: {e}"))?;
 
-        let request =
-            serde_json::to_vec(&serde_json::json!({
-                "type": "query_state",
-                "request_id": "shell-state-query"
-            }))
-            .expect("static JSON is always serialisable");
+        let request = serde_json::to_vec(&serde_json::json!({
+            "type": "query_state",
+            "request_id": "shell-state-query"
+        }))
+        .expect("static JSON is always serialisable");
 
         write_framed(&mut stream, &request)
             .map_err(|e| format!("failed to send query_state: {e}"))?;
 
-        let msg = read_framed(&mut stream)
-            .map_err(|e| format!("failed to read daemon response: {e}"))?;
+        let msg =
+            read_framed(&mut stream).map_err(|e| format!("failed to read daemon response: {e}"))?;
 
-        let resp: Value = serde_json::from_slice(&msg)
-            .map_err(|e| format!("invalid JSON from daemon: {e}"))?;
+        let resp: Value =
+            serde_json::from_slice(&msg).map_err(|e| format!("invalid JSON from daemon: {e}"))?;
 
         match resp["type"].as_str() {
             Some("state_response") => {
@@ -127,9 +126,8 @@ impl StateClient for DaemonIpcClient {
 // ---------------------------------------------------------------------------
 
 fn write_framed(stream: &mut UnixStream, msg: &[u8]) -> io::Result<()> {
-    let len = u32::try_from(msg.len()).map_err(|_| {
-        io::Error::new(io::ErrorKind::InvalidInput, "message exceeds 4 GiB limit")
-    })?;
+    let len = u32::try_from(msg.len())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "message exceeds 4 GiB limit"))?;
     stream.write_all(&len.to_le_bytes())?;
     stream.write_all(msg)
 }
@@ -184,23 +182,19 @@ pub async fn execute_action(
     use tokio::time::{timeout, Duration as TDuration};
 
     // ── Connect ──────────────────────────────────────────────────────────────
-    let mut stream = timeout(
-        TDuration::from_secs(10),
-        TokioStream::connect(socket_path),
-    )
-    .await
-    .map_err(|_| "connection to daemon timed out".to_string())?
-    .map_err(|e| format!("cannot connect to daemon at {socket_path}: {e}"))?;
+    let mut stream = timeout(TDuration::from_secs(10), TokioStream::connect(socket_path))
+        .await
+        .map_err(|_| "connection to daemon timed out".to_string())?
+        .map_err(|e| format!("cannot connect to daemon at {socket_path}: {e}"))?;
 
     // ── Preview ───────────────────────────────────────────────────────────────
-    let preview_req =
-        serde_json::to_vec(&serde_json::json!({
-            "type": "preview",
-            "request_id": "shell-preview",
-            "action_name": action_name,
-            "params": params
-        }))
-        .expect("static JSON is always serialisable");
+    let preview_req = serde_json::to_vec(&serde_json::json!({
+        "type": "preview",
+        "request_id": "shell-preview",
+        "action_name": action_name,
+        "params": params
+    }))
+    .expect("static JSON is always serialisable");
 
     async_write_framed(&mut stream, &preview_req)
         .await
@@ -237,15 +231,14 @@ pub async fn execute_action(
     emit_timeline(app, format!("Preview ready for {action_name}"));
 
     // ── Execute ───────────────────────────────────────────────────────────────
-    let execute_req =
-        serde_json::to_vec(&serde_json::json!({
-            "type": "execute",
-            "request_id": "shell-execute",
-            "action_name": action_name,
-            "params": params,
-            "approval_hash": request_hash
-        }))
-        .expect("static JSON is always serialisable");
+    let execute_req = serde_json::to_vec(&serde_json::json!({
+        "type": "execute",
+        "request_id": "shell-execute",
+        "action_name": action_name,
+        "params": params,
+        "approval_hash": request_hash
+    }))
+    .expect("static JSON is always serialisable");
 
     async_write_framed(&mut stream, &execute_req)
         .await
@@ -323,14 +316,10 @@ fn emit_timeline(app: &tauri::AppHandle, text: String) {
     let _ = app.emit("lacs:timeline-entry", TimelineEvent { id, text });
 }
 
-async fn async_write_framed(
-    stream: &mut tokio::net::UnixStream,
-    msg: &[u8],
-) -> io::Result<()> {
+async fn async_write_framed(stream: &mut tokio::net::UnixStream, msg: &[u8]) -> io::Result<()> {
     use tokio::io::AsyncWriteExt;
-    let len = u32::try_from(msg.len()).map_err(|_| {
-        io::Error::new(io::ErrorKind::InvalidInput, "message exceeds 4 GiB limit")
-    })?;
+    let len = u32::try_from(msg.len())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "message exceeds 4 GiB limit"))?;
     stream.write_all(&len.to_le_bytes()).await?;
     stream.write_all(msg).await
 }

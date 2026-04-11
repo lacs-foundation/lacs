@@ -31,7 +31,9 @@ use lacs_types::{CallerRole, JobState, PreviewEnvelope, RequestEnvelope, RiskLev
 
 use crate::{
     auth::highest_role_from_groups,
-    executor::{build_action_spec, execute_spec, rollback_spec_for, ExecutionOutput, ExecutorError},
+    executor::{
+        build_action_spec, execute_spec, rollback_spec_for, ExecutionOutput, ExecutorError,
+    },
     preview::preview_action,
     state::DaemonState,
     state_collector::{collect_state, CollectedState, CommandRunner},
@@ -165,9 +167,15 @@ fn read_gid_map() -> std::collections::HashMap<u32, String> {
     let mut map = std::collections::HashMap::new();
     for line in content.lines() {
         let mut parts = line.splitn(4, ':');
-        let name = match parts.next() { Some(n) => n, None => continue };
+        let name = match parts.next() {
+            Some(n) => n,
+            None => continue,
+        };
         let _ = parts.next(); // password field
-        let gid_str = match parts.next() { Some(g) => g, None => continue };
+        let gid_str = match parts.next() {
+            Some(g) => g,
+            None => continue,
+        };
         if let Ok(gid) = gid_str.parse::<u32>() {
             map.insert(gid, name.to_string());
         }
@@ -179,7 +187,9 @@ fn groups_for_pid(pid: u32, gid_map: &std::collections::HashMap<u32, String>) ->
     let status = match std::fs::read_to_string(format!("/proc/{pid}/status")) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("[lacs-daemon] could not read /proc/{pid}/status: {e}; treating as no groups");
+            eprintln!(
+                "[lacs-daemon] could not read /proc/{pid}/status: {e}; treating as no groups"
+            );
             return vec![];
         }
     };
@@ -257,11 +267,7 @@ fn canonical_json(v: &Value) -> String {
         // Arrays preserve element order (ordering is meaningful) but recurse
         // into each element so nested objects get their keys sorted.
         Value::Array(arr) => {
-            let items = arr
-                .iter()
-                .map(canonical_json)
-                .collect::<Vec<_>>()
-                .join(",");
+            let items = arr.iter().map(canonical_json).collect::<Vec<_>>().join(",");
             format!("[{items}]")
         }
         _ => serde_json::to_string(v).unwrap(),
@@ -291,7 +297,7 @@ pub async fn connection_handler(
     loop {
         let raw = match framed.recv().await {
             Ok(bytes) => bytes,
-            Err(FramingError::Io(_)) => break,            // peer closed
+            Err(FramingError::Io(_)) => break, // peer closed
             Err(FramingError::MessageTooLarge(_)) => break, // framing violation
         };
 
@@ -392,24 +398,23 @@ async fn handle_query_state(
 ) -> Result<(), HandlerError> {
     // collect_state uses std::process::Command (blocking). Offload to the
     // blocking thread pool so the async executor is not stalled.
-    let collected =
-        match tokio::task::spawn_blocking(move || collect_state(&*runner))
-            .await
-            .expect("collect_state task should not panic")
-        {
-            Ok(s) => s,
-            Err(e) => {
-                return send_response(
-                    framed,
-                    &DaemonResponse::ErrorResponse {
-                        request_id: request_id.to_string(),
-                        category: "state_collection_failed".into(),
-                        message: e.to_string(),
-                    },
-                )
-                .await;
-            }
-        };
+    let collected = match tokio::task::spawn_blocking(move || collect_state(&*runner))
+        .await
+        .expect("collect_state task should not panic")
+    {
+        Ok(s) => s,
+        Err(e) => {
+            return send_response(
+                framed,
+                &DaemonResponse::ErrorResponse {
+                    request_id: request_id.to_string(),
+                    category: "state_collection_failed".into(),
+                    message: e.to_string(),
+                },
+            )
+            .await;
+        }
+    };
     send_response(
         framed,
         &DaemonResponse::StateResponse {
@@ -503,10 +508,7 @@ async fn handle_preview(
         warnings: preview.warnings.clone(),
     };
 
-    let recorded = match state
-        .transactions
-        .record_previewed(new_tx, preview.clone())
-    {
+    let recorded = match state.transactions.record_previewed(new_tx, preview.clone()) {
         Ok(r) => r,
         Err(e) => {
             return send_response(
@@ -761,7 +763,10 @@ async fn stream_command_with_progress(
     // while we wait for stdout EOF: deadlock.
     let stderr_task = tokio::spawn(async move {
         let mut buf = Vec::new();
-        BufReader::new(stderr).read_to_end(&mut buf).await.map(|_| buf)
+        BufReader::new(stderr)
+            .read_to_end(&mut buf)
+            .await
+            .map(|_| buf)
     });
 
     let mut lines = BufReader::new(stdout).lines();
@@ -1027,7 +1032,11 @@ mod tests {
         assert_eq!(resps[0]["type"], "preview_response");
         assert_eq!(resps[0]["request_id"], "r1");
         let hash = resps[0]["preview"]["request_hash"].as_str().unwrap();
-        assert_eq!(hash.len(), 64, "request_hash should be a 64-char hex SHA-256");
+        assert_eq!(
+            hash.len(),
+            64,
+            "request_hash should be a 64-char hex SHA-256"
+        );
         assert!(
             !resps[0]["transaction_id"].as_str().unwrap().is_empty(),
             "transaction_id must be set"
@@ -1037,8 +1046,14 @@ mod tests {
     #[tokio::test]
     async fn preview_hash_is_deterministic() {
         // The same action + params must always produce the same hash.
-        let hash1 = compute_request_hash("InstallFlatpak", &json!({"app_id": "org.gnome.Builder", "remote": "flathub"}));
-        let hash2 = compute_request_hash("InstallFlatpak", &json!({"remote": "flathub", "app_id": "org.gnome.Builder"}));
+        let hash1 = compute_request_hash(
+            "InstallFlatpak",
+            &json!({"app_id": "org.gnome.Builder", "remote": "flathub"}),
+        );
+        let hash2 = compute_request_hash(
+            "InstallFlatpak",
+            &json!({"remote": "flathub", "app_id": "org.gnome.Builder"}),
+        );
         assert_eq!(hash1, hash2, "canonical JSON must sort keys");
     }
 
@@ -1047,14 +1062,10 @@ mod tests {
         // Objects nested inside arrays must also have sorted keys so that
         // {"packages": [{"b": 1, "a": 2}]} and {"packages": [{"a": 2, "b": 1}]}
         // produce the same hash.
-        let hash1 = compute_request_hash(
-            "InstallPackages",
-            &json!({"packages": [{"b": 1, "a": 2}]}),
-        );
-        let hash2 = compute_request_hash(
-            "InstallPackages",
-            &json!({"packages": [{"a": 2, "b": 1}]}),
-        );
+        let hash1 =
+            compute_request_hash("InstallPackages", &json!({"packages": [{"b": 1, "a": 2}]}));
+        let hash2 =
+            compute_request_hash("InstallPackages", &json!({"packages": [{"a": 2, "b": 1}]}));
         assert_eq!(hash1, hash2, "nested object keys in arrays must be sorted");
     }
 
@@ -1315,7 +1326,10 @@ mod tests {
         let raw = framed_client.recv().await.unwrap();
         let msg: serde_json::Value = serde_json::from_slice(&raw).unwrap();
 
-        assert_eq!(msg["type"], "job_progress", "expected job_progress, got: {msg}");
+        assert_eq!(
+            msg["type"], "job_progress",
+            "expected job_progress, got: {msg}"
+        );
         assert_eq!(msg["job_id"], "job-test-123");
         assert_eq!(msg["line"], "hello from stream");
 
