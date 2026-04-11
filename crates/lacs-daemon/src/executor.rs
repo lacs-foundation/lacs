@@ -1,6 +1,11 @@
 use crate::actions::{
     containers, deployment, flatpak, identity, layering, network, package_repos, services, toolbox,
-    users, ActionMechanism, ActionSpec,
+    users,
+    validate::{
+        validated_group, validated_hostname, validated_locale, validated_safe_arg,
+        validated_timezone, validated_unit_name, validated_username,
+    },
+    ActionMechanism, ActionSpec,
 };
 use async_trait::async_trait;
 use serde_json::Value;
@@ -70,10 +75,11 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
         // ── Deployment: parameterized ─────────────────────────────────────
         "PinDeployment" => Ok(deployment::pin_deployment(require_u32(params, "index")?)),
         "UnpinDeployment" => Ok(deployment::unpin_deployment(require_u32(params, "index")?)),
-        "RebaseSystem" => Ok(deployment::rebase_system(require_str(
-            params,
-            "target_ref",
-        )?)),
+        "RebaseSystem" => {
+            let target_ref = require_str(params, "target_ref")?;
+            let target_ref = validated_safe_arg(target_ref, "target_ref")?;
+            Ok(deployment::rebase_system(&target_ref))
+        }
         "SetKernelArguments" => {
             let add = str_array_or_empty(params, "add")?;
             let remove = str_array_or_empty(params, "remove")?;
@@ -84,57 +90,90 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
 
         // ── Flatpak ───────────────────────────────────────────────────────
         "ListFlatpakRemotes" => Ok(flatpak::list_flatpak_remotes()),
-        "InstallFlatpak" => Ok(flatpak::install_flatpak(
-            require_str(params, "app_id")?,
-            require_str(params, "remote")?,
-        )),
-        "RemoveFlatpak" => Ok(flatpak::remove_flatpak(require_str(params, "app_id")?)),
+        "InstallFlatpak" => {
+            let app_id = validated_safe_arg(require_str(params, "app_id")?, "app_id")?;
+            let remote = validated_safe_arg(require_str(params, "remote")?, "remote")?;
+            Ok(flatpak::install_flatpak(&app_id, &remote))
+        }
+        "RemoveFlatpak" => {
+            let app_id = validated_safe_arg(require_str(params, "app_id")?, "app_id")?;
+            Ok(flatpak::remove_flatpak(&app_id))
+        }
         "SearchFlatpakApps" => Ok(flatpak::search_flatpak_apps(require_str(params, "term")?)),
-        "AddFlatpakRemote" => Ok(flatpak::add_flatpak_remote(
-            require_str(params, "remote")?,
-            require_str(params, "url")?,
-        )),
-        "RemoveFlatpakRemote" => Ok(flatpak::remove_flatpak_remote(require_str(
-            params, "remote",
-        )?)),
-        "GetFlatpakAppInfo" => Ok(flatpak::get_flatpak_app_info(require_str(
-            params, "app_id",
-        )?)),
+        "AddFlatpakRemote" => {
+            let remote = validated_safe_arg(require_str(params, "remote")?, "remote")?;
+            Ok(flatpak::add_flatpak_remote(
+                &remote,
+                require_str(params, "url")?,
+            ))
+        }
+        "RemoveFlatpakRemote" => {
+            let remote = validated_safe_arg(require_str(params, "remote")?, "remote")?;
+            Ok(flatpak::remove_flatpak_remote(&remote))
+        }
+        "GetFlatpakAppInfo" => {
+            let app_id = validated_safe_arg(require_str(params, "app_id")?, "app_id")?;
+            Ok(flatpak::get_flatpak_app_info(&app_id))
+        }
 
         // ── Containers ────────────────────────────────────────────────────
         "ListContainers" => Ok(containers::list_containers()),
-        "CreateContainer" => Ok(containers::create_container(
-            require_str(params, "name")?,
-            require_str(params, "image")?,
-        )),
-        "StartContainer" => Ok(containers::start_container(require_str(params, "name")?)),
-        "StopContainer" => Ok(containers::stop_container(require_str(params, "name")?)),
-        "RemoveContainer" => Ok(containers::remove_container(require_str(params, "name")?)),
-        "GetContainerInfo" => Ok(containers::get_container_info(require_str(params, "name")?)),
+        "CreateContainer" => {
+            let name = validated_safe_arg(require_str(params, "name")?, "name")?;
+            let image = validated_safe_arg(require_str(params, "image")?, "image")?;
+            Ok(containers::create_container(&name, &image))
+        }
+        "StartContainer" => {
+            let name = validated_safe_arg(require_str(params, "name")?, "name")?;
+            Ok(containers::start_container(&name))
+        }
+        "StopContainer" => {
+            let name = validated_safe_arg(require_str(params, "name")?, "name")?;
+            Ok(containers::stop_container(&name))
+        }
+        "RemoveContainer" => {
+            let name = validated_safe_arg(require_str(params, "name")?, "name")?;
+            Ok(containers::remove_container(&name))
+        }
+        "GetContainerInfo" => {
+            let name = validated_safe_arg(require_str(params, "name")?, "name")?;
+            Ok(containers::get_container_info(&name))
+        }
 
         // ── Layering ──────────────────────────────────────────────────────
         "GetLayeredPackages" => Ok(layering::get_layered_packages()),
         "ResetLayeredPackageOverride" => Ok(layering::reset_layered_package_override()),
         "InstallPackages" => {
             let pkgs = str_array_or_empty(params, "packages")?;
-            let refs: Vec<&str> = pkgs.iter().map(String::as_str).collect();
+            let validated: Vec<String> = pkgs
+                .iter()
+                .map(|p| validated_safe_arg(p, "packages"))
+                .collect::<Result<_, _>>()?;
+            let refs: Vec<&str> = validated.iter().map(String::as_str).collect();
             Ok(layering::install_packages(&refs))
         }
         "RemovePackages" => {
             let pkgs = str_array_or_empty(params, "packages")?;
-            let refs: Vec<&str> = pkgs.iter().map(String::as_str).collect();
+            let validated: Vec<String> = pkgs
+                .iter()
+                .map(|p| validated_safe_arg(p, "packages"))
+                .collect::<Result<_, _>>()?;
+            let refs: Vec<&str> = validated.iter().map(String::as_str).collect();
             Ok(layering::remove_packages(&refs))
         }
-        "AddLayeredPackage" => Ok(layering::add_layered_package(require_str(
-            params, "package",
-        )?)),
-        "RemoveLayeredPackage" => Ok(layering::remove_layered_package(require_str(
-            params, "package",
-        )?)),
-        "ReplaceLayeredPackage" => Ok(layering::replace_layered_package(
-            require_str(params, "old")?,
-            require_str(params, "new")?,
-        )),
+        "AddLayeredPackage" => {
+            let package = validated_safe_arg(require_str(params, "package")?, "package")?;
+            Ok(layering::add_layered_package(&package))
+        }
+        "RemoveLayeredPackage" => {
+            let package = validated_safe_arg(require_str(params, "package")?, "package")?;
+            Ok(layering::remove_layered_package(&package))
+        }
+        "ReplaceLayeredPackage" => {
+            let old = validated_safe_arg(require_str(params, "old")?, "old")?;
+            let new = validated_safe_arg(require_str(params, "new")?, "new")?;
+            Ok(layering::replace_layered_package(&old, &new))
+        }
 
         // ── Package repositories ──────────────────────────────────────────
         "ListPackageRepositories" => Ok(package_repos::list_package_repositories()),
@@ -154,67 +193,123 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
 
         // ── Services ─────────────────────────────────────────────────────
         "ListServices" => Ok(services::list_services()),
-        "StartService" => Ok(services::start_service(require_str(params, "unit")?)),
-        "StopService" => Ok(services::stop_service(require_str(params, "unit")?)),
-        "RestartService" => Ok(services::restart_service(require_str(params, "unit")?)),
-        "SetServiceEnabled" => Ok(services::set_service_enabled(
-            require_str(params, "unit")?,
-            require_bool(params, "enabled")?,
-        )),
-        "MaskService" => Ok(services::mask_service(require_str(params, "unit")?)),
-        "UnmaskService" => Ok(services::unmask_service(require_str(params, "unit")?)),
-        "GetServiceLogs" => Ok(services::get_service_logs(require_str(params, "unit")?)),
+        "StartService" => {
+            let unit = validated_unit_name(require_str(params, "unit")?, "unit")?;
+            Ok(services::start_service(&unit))
+        }
+        "StopService" => {
+            let unit = validated_unit_name(require_str(params, "unit")?, "unit")?;
+            Ok(services::stop_service(&unit))
+        }
+        "RestartService" => {
+            let unit = validated_unit_name(require_str(params, "unit")?, "unit")?;
+            Ok(services::restart_service(&unit))
+        }
+        "SetServiceEnabled" => {
+            let unit = validated_unit_name(require_str(params, "unit")?, "unit")?;
+            Ok(services::set_service_enabled(
+                &unit,
+                require_bool(params, "enabled")?,
+            ))
+        }
+        "MaskService" => {
+            let unit = validated_unit_name(require_str(params, "unit")?, "unit")?;
+            Ok(services::mask_service(&unit))
+        }
+        "UnmaskService" => {
+            let unit = validated_unit_name(require_str(params, "unit")?, "unit")?;
+            Ok(services::unmask_service(&unit))
+        }
+        "GetServiceLogs" => {
+            let unit = validated_unit_name(require_str(params, "unit")?, "unit")?;
+            Ok(services::get_service_logs(&unit))
+        }
 
         // ── Toolbox ───────────────────────────────────────────────────────
         "ListToolboxes" => Ok(toolbox::list_toolboxes()),
-        "CreateToolbox" => Ok(toolbox::create_toolbox(
-            require_str(params, "name")?,
-            params.get("release").and_then(|v| v.as_str()),
-            params.get("image").and_then(|v| v.as_str()),
-        )),
-        "EnterToolbox" => Ok(toolbox::enter_toolbox(require_str(params, "name")?)),
-        "RemoveToolbox" => Ok(toolbox::remove_toolbox(require_str(params, "name")?)),
+        "CreateToolbox" => {
+            let name = validated_safe_arg(require_str(params, "name")?, "name")?;
+            let image = match params.get("image").and_then(|v| v.as_str()) {
+                Some(img) => Some(validated_safe_arg(img, "image")?),
+                None => None,
+            };
+            Ok(toolbox::create_toolbox(
+                &name,
+                params.get("release").and_then(|v| v.as_str()),
+                image.as_deref(),
+            ))
+        }
+        "EnterToolbox" => {
+            let name = validated_safe_arg(require_str(params, "name")?, "name")?;
+            Ok(toolbox::enter_toolbox(&name))
+        }
+        "RemoveToolbox" => {
+            let name = validated_safe_arg(require_str(params, "name")?, "name")?;
+            Ok(toolbox::remove_toolbox(&name))
+        }
 
         // ── Identity ─────────────────────────────────────────────────────
-        "SetHostname" => Ok(identity::set_hostname(require_str(params, "hostname")?)),
-        "SetTimezone" => Ok(identity::set_timezone(require_str(params, "timezone")?)),
-        "SetLocale" => Ok(identity::set_locale(require_str(params, "locale")?)),
+        "SetHostname" => {
+            let hostname = validated_hostname(require_str(params, "hostname")?, "hostname")?;
+            Ok(identity::set_hostname(&hostname))
+        }
+        "SetTimezone" => {
+            let timezone = validated_timezone(require_str(params, "timezone")?, "timezone")?;
+            Ok(identity::set_timezone(&timezone))
+        }
+        "SetLocale" => {
+            let locale = validated_locale(require_str(params, "locale")?, "locale")?;
+            Ok(identity::set_locale(&locale))
+        }
         "SetNtp" => Ok(identity::set_ntp(require_bool(params, "enabled")?)),
 
         // ── Network ───────────────────────────────────────────────────────
         "GetFirewallState" => Ok(network::get_firewall_state()),
-        "ConfigureWifi" => Ok(network::configure_wifi(require_str(params, "ssid")?)),
+        "ConfigureWifi" => {
+            let ssid = validated_safe_arg(require_str(params, "ssid")?, "ssid")?;
+            Ok(network::configure_wifi(&ssid))
+        }
         "SetDnsServers" => {
+            let interface = validated_safe_arg(require_str(params, "interface")?, "interface")?;
             let servers = str_array_or_empty(params, "servers")?;
             let refs: Vec<&str> = servers.iter().map(String::as_str).collect();
-            Ok(network::set_dns_servers(
-                require_str(params, "interface")?,
-                &refs,
+            Ok(network::set_dns_servers(&interface, &refs))
+        }
+        "ConfigureFirewall" => {
+            let zone = validated_safe_arg(require_str(params, "zone")?, "zone")?;
+            let service = validated_safe_arg(require_str(params, "service")?, "service")?;
+            Ok(network::configure_firewall(
+                &zone,
+                &service,
+                require_bool(params, "enabled")?,
             ))
         }
-        "ConfigureFirewall" => Ok(network::configure_firewall(
-            require_str(params, "zone")?,
-            require_str(params, "service")?,
-            require_bool(params, "enabled")?,
-        )),
 
         // ── Users ─────────────────────────────────────────────────────────
         "ListUsers" => Ok(users::list_users()),
         "ListGroups" => Ok(users::list_groups()),
-        "CreateUser" => Ok(users::create_user(
-            require_str(params, "username")?,
-            params.get("shell").and_then(|v| v.as_str()),
-            params.get("home").and_then(|v| v.as_str()),
-        )),
-        "DeleteUser" => Ok(users::delete_user(require_str(params, "username")?)),
-        "AddUserToGroup" => Ok(users::add_user_to_group(
-            require_str(params, "username")?,
-            require_str(params, "group")?,
-        )),
-        "RemoveUserFromGroup" => Ok(users::remove_user_from_group(
-            require_str(params, "username")?,
-            require_str(params, "group")?,
-        )),
+        "CreateUser" => {
+            let username = validated_username(require_str(params, "username")?, "username")?;
+            Ok(users::create_user(
+                &username,
+                params.get("shell").and_then(|v| v.as_str()),
+                params.get("home").and_then(|v| v.as_str()),
+            ))
+        }
+        "DeleteUser" => {
+            let username = validated_username(require_str(params, "username")?, "username")?;
+            Ok(users::delete_user(&username))
+        }
+        "AddUserToGroup" => {
+            let username = validated_username(require_str(params, "username")?, "username")?;
+            let group = validated_group(require_str(params, "group")?, "group")?;
+            Ok(users::add_user_to_group(&username, &group))
+        }
+        "RemoveUserFromGroup" => {
+            let username = validated_username(require_str(params, "username")?, "username")?;
+            let group = validated_group(require_str(params, "group")?, "group")?;
+            Ok(users::remove_user_from_group(&username, &group))
+        }
 
         _ => Err(ExecutorError::UnknownAction(action_name.to_string())),
     }
