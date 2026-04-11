@@ -5,6 +5,9 @@ mod events;
 use commands::{approve_preview, cancel_job, get_brain_config, plan_intent, ShellCommandState};
 
 fn main() {
+    // Apply config-file defaults before the Tauri runtime spawns worker threads.
+    lacs_core::config::LacsConfig::load().apply_defaults_to_env();
+
     tauri::Builder::default()
         .setup(|_app| {
             #[cfg(any(test, feature = "demo"))]

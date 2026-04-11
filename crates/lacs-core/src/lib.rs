@@ -1,4 +1,6 @@
-//! Shared defaults and low-level constants for the LACS workspace.
+//! Shared defaults, low-level constants, and configuration loading for the LACS workspace.
+
+pub mod config;
 
 /// Default Unix socket URI used by the daemon in local development.
 pub const DEFAULT_LISTEN_URI: &str = "unix:///tmp/lacs-daemon.sock";
