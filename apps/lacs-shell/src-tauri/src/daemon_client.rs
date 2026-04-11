@@ -177,7 +177,6 @@ pub async fn execute_action(
     action_name: &str,
     params: &serde_json::Value,
 ) -> Result<String, String> {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::UnixStream as TokioStream;
     use tokio::time::{timeout, Duration as TDuration};
 
@@ -300,6 +299,21 @@ pub async fn execute_action(
             }
         }
     }
+}
+
+/// Attempt a single connection to the daemon socket and return whether it is
+/// reachable.
+///
+/// Used by the background health poller to determine daemon availability.
+/// A successful `connect()` immediately closes the socket — this is a
+/// connectivity probe, not a full handshake.
+pub async fn check_daemon_health(socket_path: &str) -> bool {
+    use tokio::net::UnixStream as TokioStream;
+    use tokio::time::{timeout, Duration as TDuration};
+    timeout(TDuration::from_secs(3), TokioStream::connect(socket_path))
+        .await
+        .map(|r| r.is_ok())
+        .unwrap_or(false)
 }
 
 fn emit_timeline(app: &tauri::AppHandle, text: String) {
