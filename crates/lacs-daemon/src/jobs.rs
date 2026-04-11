@@ -60,7 +60,7 @@ impl JobStateMachine {
     }
 }
 
-fn allowed_transition(current: &JobState, next: &JobState) -> bool {
+pub fn allowed_transition(current: &JobState, next: &JobState) -> bool {
     matches!(
         (current, next),
         (JobState::Queued, JobState::Running)

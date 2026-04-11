@@ -40,6 +40,9 @@ pub enum TransactionStoreError {
 
     #[error("transaction not found: {0}")]
     NotFound(String),
+
+    #[error("invalid transition from {from:?} to {to:?}")]
+    InvalidTransition { from: JobState, to: JobState },
 }
 
 impl TransactionStore {
@@ -146,6 +149,7 @@ impl TransactionStore {
              FROM transactions
              WHERE request_hash = ?1
                AND status = ?2
+               AND created_at > datetime('now', '-15 minutes')
              ORDER BY rowid DESC
              LIMIT 1",
         )?;
@@ -192,13 +196,33 @@ impl TransactionStore {
         new_status: JobState,
     ) -> Result<(), TransactionStoreError> {
         let conn = self.connection()?;
-        let rows_affected = conn.execute(
+
+        // Read the current status so we can validate the transition.
+        let current_status: String = conn
+            .query_row(
+                "SELECT status FROM transactions WHERE transaction_id = ?1",
+                params![transaction_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => {
+                    TransactionStoreError::NotFound(transaction_id.to_string())
+                }
+                other => TransactionStoreError::Sqlite(other),
+            })?;
+
+        let current: JobState = deserialize_field(&current_status)?;
+        if !crate::jobs::allowed_transition(&current, &new_status) {
+            return Err(TransactionStoreError::InvalidTransition {
+                from: current,
+                to: new_status,
+            });
+        }
+
+        conn.execute(
             "UPDATE transactions SET status = ?1 WHERE transaction_id = ?2",
             params![serialize_field(&new_status)?, transaction_id],
         )?;
-        if rows_affected == 0 {
-            return Err(TransactionStoreError::NotFound(transaction_id.to_string()));
-        }
         Ok(())
     }
 
@@ -226,6 +250,21 @@ impl TransactionStore {
         Ok(rows_affected > 0)
     }
 
+    /// Cancel all `Queued` transactions whose `created_at` timestamp is older
+    /// than the 15-minute TTL window.  Returns the number of rows affected.
+    pub fn cleanup_stale_queued(&self) -> Result<u64, TransactionStoreError> {
+        let conn = self.connection()?;
+        let canceled_json = serialize_field(&JobState::Canceled)?;
+        let queued_json = serialize_field(&JobState::Queued)?;
+        let rows_affected = conn.execute(
+            "UPDATE transactions SET status = ?1 \
+             WHERE status = ?2 \
+               AND created_at <= datetime('now', '-15 minutes')",
+            params![canceled_json, queued_json],
+        )?;
+        Ok(rows_affected as u64)
+    }
+
     fn connection(&self) -> Result<Connection, TransactionStoreError> {
         Ok(Connection::open(&self.path)?)
     }
@@ -243,7 +282,8 @@ impl TransactionStore {
                 status TEXT NOT NULL,
                 approval_id TEXT,
                 summary TEXT NOT NULL,
-                warnings_json TEXT NOT NULL
+                warnings_json TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
             CREATE TABLE IF NOT EXISTS transaction_previews (
@@ -398,6 +438,9 @@ mod tests {
         let tx = store.record(queued_transaction()).unwrap();
 
         store
+            .update_status(&tx.transaction_id, JobState::Running)
+            .unwrap();
+        store
             .update_status(&tx.transaction_id, JobState::Failed)
             .unwrap();
 
@@ -436,7 +479,10 @@ mod tests {
         let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
         let tx = store.record(queued_transaction()).unwrap();
 
-        // Simulate completed execution.
+        // Simulate completed execution (must go through Running first).
+        store
+            .update_status(&tx.transaction_id, JobState::Running)
+            .unwrap();
         store
             .update_status(&tx.transaction_id, JobState::Succeeded)
             .unwrap();
@@ -518,6 +564,9 @@ mod tests {
         // First round: record → execute → succeed.
         let first_tx = store.record(queued_transaction()).unwrap();
         store
+            .update_status(&first_tx.transaction_id, JobState::Running)
+            .unwrap();
+        store
             .update_status(&first_tx.transaction_id, JobState::Succeeded)
             .unwrap();
 
@@ -531,5 +580,153 @@ mod tests {
             second_tx.transaction_id,
             "should return the most-recent Queued record, not the older Succeeded one"
         );
+    }
+
+    // ── TTL expiry tests (issue #46) ────────────────────────────────────────
+
+    #[test]
+    fn fresh_queued_transaction_is_found_by_request_hash() {
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        store.record(queued_transaction()).unwrap();
+
+        let found = store.find_by_request_hash("hash-abc").unwrap();
+        assert!(
+            found.is_some(),
+            "a freshly created Queued transaction must be found"
+        );
+    }
+
+    #[test]
+    fn stale_queued_transaction_is_not_found_by_request_hash() {
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let tx = store.record(queued_transaction()).unwrap();
+
+        // Backdate created_at to 20 minutes ago so it exceeds the 15-minute TTL.
+        let conn = store.connection().unwrap();
+        conn.execute(
+            "UPDATE transactions SET created_at = datetime('now', '-20 minutes') \
+             WHERE transaction_id = ?1",
+            params![tx.transaction_id],
+        )
+        .unwrap();
+
+        let found = store.find_by_request_hash("hash-abc").unwrap();
+        assert!(
+            found.is_none(),
+            "a Queued transaction older than 15 minutes must not be found"
+        );
+    }
+
+    #[test]
+    fn cleanup_stale_queued_cancels_old_records() {
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+
+        // Create two transactions: one fresh, one stale.
+        let fresh = store.record(queued_transaction()).unwrap();
+        let stale = store.record(queued_transaction()).unwrap();
+
+        // Backdate the stale one.
+        let conn = store.connection().unwrap();
+        conn.execute(
+            "UPDATE transactions SET created_at = datetime('now', '-20 minutes') \
+             WHERE transaction_id = ?1",
+            params![stale.transaction_id],
+        )
+        .unwrap();
+
+        let canceled = store.cleanup_stale_queued().unwrap();
+        assert_eq!(canceled, 1, "only the stale record should be canceled");
+
+        // The stale record should now be Canceled.
+        let stale_record = store.get(&stale.transaction_id).unwrap().unwrap();
+        assert_eq!(stale_record.status, JobState::Canceled);
+
+        // The fresh record should still be Queued.
+        let fresh_record = store.get(&fresh.transaction_id).unwrap().unwrap();
+        assert_eq!(fresh_record.status, JobState::Queued);
+    }
+
+    // ── State-machine validation tests (issue #56) ──────────────────────────
+
+    #[test]
+    fn update_status_rejects_queued_to_succeeded() {
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let tx = store.record(queued_transaction()).unwrap();
+
+        let result = store.update_status(&tx.transaction_id, JobState::Succeeded);
+        assert!(
+            matches!(
+                result,
+                Err(TransactionStoreError::InvalidTransition {
+                    from: JobState::Queued,
+                    to: JobState::Succeeded,
+                })
+            ),
+            "Queued -> Succeeded must be rejected (must go through Running first): {result:?}"
+        );
+    }
+
+    #[test]
+    fn update_status_rejects_succeeded_to_running() {
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let tx = store.record(queued_transaction()).unwrap();
+
+        store
+            .update_status(&tx.transaction_id, JobState::Running)
+            .unwrap();
+        store
+            .update_status(&tx.transaction_id, JobState::Succeeded)
+            .unwrap();
+
+        let result = store.update_status(&tx.transaction_id, JobState::Running);
+        assert!(
+            matches!(
+                result,
+                Err(TransactionStoreError::InvalidTransition {
+                    from: JobState::Succeeded,
+                    to: JobState::Running,
+                })
+            ),
+            "Succeeded -> Running must be rejected (terminal state): {result:?}"
+        );
+    }
+
+    #[test]
+    fn update_status_accepts_running_to_failed() {
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let tx = store.record(queued_transaction()).unwrap();
+
+        store
+            .update_status(&tx.transaction_id, JobState::Running)
+            .unwrap();
+        store
+            .update_status(&tx.transaction_id, JobState::Failed)
+            .unwrap();
+
+        let updated = store.get(&tx.transaction_id).unwrap().unwrap();
+        assert_eq!(updated.status, JobState::Failed);
+    }
+
+    #[test]
+    fn update_status_accepts_running_to_rolled_back() {
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let tx = store.record(queued_transaction()).unwrap();
+
+        store
+            .update_status(&tx.transaction_id, JobState::Running)
+            .unwrap();
+        store
+            .update_status(&tx.transaction_id, JobState::RolledBack)
+            .unwrap();
+
+        let updated = store.get(&tx.transaction_id).unwrap().unwrap();
+        assert_eq!(updated.status, JobState::RolledBack);
     }
 }
