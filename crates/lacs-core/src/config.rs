@@ -81,6 +81,11 @@ pub struct LlmSection {
 // ---------------------------------------------------------------------------
 
 impl LacsConfig {
+    /// Returns the path to the config file (`~/.config/lacs/config.toml`).
+    pub fn config_path() -> PathBuf {
+        config_path()
+    }
+
     /// Load `~/.config/lacs/config.toml`.
     ///
     /// Returns `LacsConfig::default()` (all `None`) if the file is absent,
@@ -153,7 +158,7 @@ impl LacsConfig {
 
 /// Returns the path to `~/.config/lacs/config.toml`, respecting
 /// `XDG_CONFIG_HOME` if set.
-fn config_path() -> PathBuf {
+pub fn config_path() -> PathBuf {
     let config_dir = std::env::var("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
