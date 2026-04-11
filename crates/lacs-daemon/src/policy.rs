@@ -21,7 +21,7 @@ use crate::auth::role_rank;
 /// The mapping is intentionally exhaustive over every action known to the
 /// executor. Unknown actions return `None` so the caller can emit a
 /// validation-failure error rather than silently denying or allowing.
-fn min_role_for_action(action_name: &str) -> Option<CallerRole> {
+pub fn min_role_for_action(action_name: &str) -> Option<CallerRole> {
     let role = match action_name {
         // ── Read-only / informational (Observer) ─────────────────────────
         "GetSystemState"

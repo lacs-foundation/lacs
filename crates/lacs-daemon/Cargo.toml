@@ -20,4 +20,6 @@ uuid = { version = "1", features = ["serde", "v4"] }
 sha2 = "0.10"
 
 [dev-dependencies]
+lacs-brain = { path = "../lacs-brain" }
+serde_json = { workspace = true }
 tempfile = "3"
