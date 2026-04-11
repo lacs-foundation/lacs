@@ -42,10 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = runtime.state;
     let semaphore = Arc::new(Semaphore::new(MAX_CONNECTIONS));
 
-    eprintln!(
-        "[lacs-daemon] listening on {}",
-        std::env::var("LACS_LISTEN_URI").unwrap_or_else(|_| DEFAULT_LISTEN_URI.to_string())
-    );
+    eprintln!("[lacs-daemon] listening on {listen_uri}");
 
     loop {
         tokio::select! {
