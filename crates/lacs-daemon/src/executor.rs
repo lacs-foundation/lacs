@@ -269,6 +269,13 @@ pub async fn execute_spec(spec: &ActionSpec) -> Result<ExecutionOutput, Executor
         } => {
             let content = tokio::fs::read_to_string(path).await?;
             let patched = content.replacen(search.as_str(), replace.as_str(), 1);
+            if patched == content && !search.is_empty() {
+                return Ok(ExecutionOutput {
+                    stdout: String::new(),
+                    stderr: format!("search string not found in file: {}", path),
+                    exit_code: 1,
+                });
+            }
             tokio::fs::write(path, patched).await?;
             Ok(ExecutionOutput {
                 stdout: String::new(),
@@ -642,6 +649,59 @@ mod tests {
             std::fs::read_to_string(&path).unwrap(),
             "[myrepo]\nenabled=1\n"
         );
+    }
+
+    #[tokio::test]
+    async fn execute_spec_file_patch_returns_error_when_search_not_found() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("repo.conf").to_string_lossy().into_owned();
+        std::fs::write(&path, "[myrepo]\nenabled=1\n").unwrap();
+        let spec = ActionSpec {
+            action_name: "EnablePackageRepository",
+            mechanism: ActionMechanism::FilePatch {
+                path: path.clone(),
+                search: "enabled=0".to_string(),
+                replace: "enabled=1".to_string(),
+            },
+            risk_level: RiskLevel::Medium,
+            reboot_required: false,
+            rollback_available: true,
+        };
+        let out = execute_spec(&spec).await.unwrap();
+        assert_eq!(out.exit_code, 1, "should fail when search string is absent");
+        assert!(
+            out.stderr.contains("search string not found in file"),
+            "stderr should explain the failure: {}",
+            out.stderr
+        );
+        // File should remain unchanged.
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "[myrepo]\nenabled=1\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_spec_file_patch_allows_empty_search_string() {
+        // An empty search string triggers replacen's prepend behavior and should
+        // not be rejected — the caller explicitly asked for a no-op search.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("file.txt").to_string_lossy().into_owned();
+        std::fs::write(&path, "hello").unwrap();
+        let spec = ActionSpec {
+            action_name: "Test",
+            mechanism: ActionMechanism::FilePatch {
+                path: path.clone(),
+                search: String::new(),
+                replace: "prefix-".to_string(),
+            },
+            risk_level: RiskLevel::Low,
+            reboot_required: false,
+            rollback_available: false,
+        };
+        let out = execute_spec(&spec).await.unwrap();
+        assert_eq!(out.exit_code, 0);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "prefix-hello");
     }
 
     #[tokio::test]
