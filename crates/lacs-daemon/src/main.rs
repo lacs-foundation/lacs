@@ -6,6 +6,14 @@ use lacs_daemon::state::{DaemonConfig, DaemonState};
 use lacs_daemon::state_collector::RealCommandRunner;
 use lacs_daemon::transport::grpc::ListenTarget;
 use tokio::net::UnixListener;
+use tokio::sync::Semaphore;
+
+/// Maximum number of concurrent IPC connections the daemon accepts.
+///
+/// Each shell instance opens one connection per plan step. 16 slots allow
+/// 16 concurrent shell sessions before excess connections are dropped.
+/// Raising this too high risks file descriptor exhaustion (EMFILE) under load.
+const MAX_CONNECTIONS: usize = 16;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -25,6 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let runner = Arc::new(RealCommandRunner);
     let state = runtime.state;
+    let semaphore = Arc::new(Semaphore::new(MAX_CONNECTIONS));
 
     eprintln!(
         "[lacs-daemon] listening on {}",
@@ -36,12 +45,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             accept = listener.accept() => {
                 match accept {
                     Ok((stream, _addr)) => {
-                        let role = resolve_caller_role(&stream);
-                        let state = state.clone();
-                        let runner = Arc::clone(&runner);
-                        tokio::spawn(async move {
-                            connection_handler(stream, state, runner, role).await;
-                        });
+                        match Arc::clone(&semaphore).try_acquire_owned() {
+                            Ok(permit) => {
+                                let role = resolve_caller_role(&stream);
+                                let state = state.clone();
+                                let runner = Arc::clone(&runner);
+                                tokio::spawn(async move {
+                                    connection_handler(stream, state, runner, role).await;
+                                    drop(permit); // release slot when handler finishes
+                                });
+                            }
+                            Err(_) => {
+                                eprintln!(
+                                    "[lacs-daemon] connection limit ({MAX_CONNECTIONS}) reached; \
+                                     dropping new connection"
+                                );
+                                // Dropping stream closes the connection immediately.
+                            }
+                        }
                     }
                     Err(e) => {
                         use std::io::ErrorKind;
@@ -68,4 +89,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn max_connections_is_reasonable() {
+        assert!(
+            super::MAX_CONNECTIONS >= 4,
+            "MAX_CONNECTIONS {} too low; need at least one connection per shell + headroom",
+            super::MAX_CONNECTIONS
+        );
+        assert!(
+            super::MAX_CONNECTIONS <= 64,
+            "MAX_CONNECTIONS {} too high; each connection holds DB state",
+            super::MAX_CONNECTIONS
+        );
+    }
 }

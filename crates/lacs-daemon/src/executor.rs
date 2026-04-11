@@ -334,6 +334,31 @@ fn str_array_or_empty(params: &Value, key: &'static str) -> Result<Vec<String>, 
     }
 }
 
+/// Return the rollback [`ActionSpec`] for `action_name`, or `None` if no
+/// automatic rollback is defined.
+///
+/// Only the five rpm-ostree deployment actions support rollback — they all
+/// revert via `rpm-ostree rollback`. All other actions either have no sensible
+/// rollback or are low-risk enough that a rollback would be net-harmful.
+///
+/// `RollbackDeployment` itself is excluded to prevent infinite recursion.
+pub fn rollback_spec_for(action_name: &str) -> Option<ActionSpec> {
+    match action_name {
+        "UpdateSystem" | "InstallPackages" | "RemovePackages" | "RebaseSystem"
+        | "SetKernelArguments" => Some(ActionSpec {
+            action_name: "RollbackDeployment",
+            mechanism: ActionMechanism::Command {
+                program: "rpm-ostree",
+                args: vec!["rollback".to_string()],
+            },
+            risk_level: lacs_types::RiskLevel::High,
+            reboot_required: true,
+            rollback_available: false,
+        }),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -638,5 +663,59 @@ mod tests {
             out.stdout
         );
         assert_eq!(out.exit_code, 0);
+    }
+
+    // ── rollback_spec_for ─────────────────────────────────────────────────────
+
+    #[test]
+    fn rollback_spec_for_update_system_is_rpm_ostree_rollback() {
+        let spec = rollback_spec_for("UpdateSystem").unwrap();
+        assert_eq!(spec.action_name, "RollbackDeployment");
+        assert!(
+            matches!(
+                &spec.mechanism,
+                ActionMechanism::Command { program: "rpm-ostree", args }
+                if args == &["rollback".to_string()]
+            ),
+            "expected rpm-ostree rollback, got: {:?}",
+            spec.mechanism
+        );
+        assert!(!spec.rollback_available, "rollback spec must not recurse");
+    }
+
+    #[test]
+    fn rollback_spec_for_install_packages_is_rpm_ostree_rollback() {
+        assert!(rollback_spec_for("InstallPackages").is_some());
+    }
+
+    #[test]
+    fn rollback_spec_for_remove_packages_is_rpm_ostree_rollback() {
+        assert!(rollback_spec_for("RemovePackages").is_some());
+    }
+
+    #[test]
+    fn rollback_spec_for_rebase_system_is_rpm_ostree_rollback() {
+        assert!(rollback_spec_for("RebaseSystem").is_some());
+    }
+
+    #[test]
+    fn rollback_spec_for_set_kernel_arguments_is_rpm_ostree_rollback() {
+        assert!(rollback_spec_for("SetKernelArguments").is_some());
+    }
+
+    #[test]
+    fn rollback_spec_for_read_only_action_returns_none() {
+        assert!(rollback_spec_for("GetSystemState").is_none());
+        assert!(rollback_spec_for("ListUsers").is_none());
+        assert!(rollback_spec_for("GetFirewallState").is_none());
+    }
+
+    #[test]
+    fn rollback_spec_for_non_rollbackable_actions_return_none() {
+        assert!(rollback_spec_for("AddUserToGroup").is_none());
+        assert!(rollback_spec_for("DeleteUser").is_none());
+        assert!(rollback_spec_for("CleanupDeployments").is_none());
+        // No infinite recursion — RollbackDeployment has no rollback of its own
+        assert!(rollback_spec_for("RollbackDeployment").is_none());
     }
 }
