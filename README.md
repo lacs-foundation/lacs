@@ -156,12 +156,8 @@ development setup including pre-commit hooks.
 
 ## Contributing
 
-Issues tagged [`good first issue`][good-first] are well-scoped with
-clear acceptance criteria. Issues tagged [`security`][security-label]
-take priority.
-
-[good-first]: https://github.com/lacs-foundation/lacs/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22
-[security-label]: https://github.com/lacs-foundation/lacs/issues?q=is%3Aissue+is%3Aopen+label%3Asecurity
+Issues tagged `good first issue` are well-scoped with clear acceptance
+criteria. Issues tagged `security` take priority.
 
 **Areas where contributions have high impact:**
 
