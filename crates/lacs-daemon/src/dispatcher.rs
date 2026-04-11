@@ -672,6 +672,26 @@ async fn handle_execute(
     )
     .await?;
 
+    // Lifecycle event: authorization check passed.
+    let _ = send_response(
+        framed,
+        &DaemonResponse::JobProgress {
+            job_id: job_id.clone(),
+            line: format!("Authorization passed for {action_name}"),
+        },
+    )
+    .await;
+
+    // Lifecycle event: execution starting.
+    let _ = send_response(
+        framed,
+        &DaemonResponse::JobProgress {
+            job_id: job_id.clone(),
+            line: format!("Executing {action_name}..."),
+        },
+    )
+    .await;
+
     // Execute the action. Command actions stream stdout live as JobProgress
     // frames; file-operation actions complete instantly with no output.
     let output = match &spec.mechanism {
@@ -701,6 +721,20 @@ async fn handle_execute(
         ),
         Err(e) => (JobState::Failed, format!("{action_name} failed: {e}")),
     };
+
+    // Lifecycle event: action completed with exit code or error.
+    let completion_line = match &output {
+        Ok(out) => format!("{action_name} completed with exit code {}", out.exit_code),
+        Err(e) => format!("{action_name} completed with error: {e}"),
+    };
+    let _ = send_response(
+        framed,
+        &DaemonResponse::JobProgress {
+            job_id: job_id.clone(),
+            line: completion_line,
+        },
+    )
+    .await;
 
     // Attempt automatic rollback if the action failed and rollback is available.
     let (final_status, summary, rollback_ref) = attempt_rollback_if_needed(
