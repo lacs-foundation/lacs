@@ -78,3 +78,50 @@ describe("PlanPane — approval gate", () => {
     expect(onApprove).toHaveBeenCalledOnce();
   });
 });
+
+describe("PlanPane — expandable step details", () => {
+  const PLAN_WITH_PARAMS: PlanResponse = {
+    summary: "Install vim",
+    explanation: "Layers vim via rpm-ostree.",
+    approvalRequired: true,
+    steps: [
+      { actionName: "GetSystemState", summary: "Read state", riskLevel: "low", approvalRequired: false, params: {} },
+      { actionName: "InstallPackages", summary: "Layer vim", riskLevel: "high", approvalRequired: true, params: { packages: ["vim"] } },
+    ],
+    hostName: "silverblue", deployment: "fedora/41", toolboxCount: 0, flatpakCount: 0,
+  };
+
+  it("step detail is collapsed by default", () => {
+    render(<PlanPane plan={PLAN_WITH_PARAMS} mode="previewing" onApprove={() => {}} error={null} />);
+    // The params JSON should not be visible initially
+    expect(screen.queryByText(/"packages"/)).toBeNull();
+  });
+
+  it("clicking a step expands its detail section", () => {
+    render(<PlanPane plan={PLAN_WITH_PARAMS} mode="previewing" onApprove={() => {}} error={null} />);
+    // Click the second step (InstallPackages) to expand
+    fireEvent.click(screen.getByText("InstallPackages"));
+    expect(screen.getByText(/"packages"/)).toBeInTheDocument();
+    expect(screen.getByText(/Required/)).toBeInTheDocument();
+  });
+
+  it("clicking an expanded step collapses it", () => {
+    render(<PlanPane plan={PLAN_WITH_PARAMS} mode="previewing" onApprove={() => {}} error={null} />);
+    // Expand
+    fireEvent.click(screen.getByText("InstallPackages"));
+    expect(screen.getByText(/"packages"/)).toBeInTheDocument();
+    // Collapse
+    fireEvent.click(screen.getByText("InstallPackages"));
+    expect(screen.queryByText(/"packages"/)).toBeNull();
+  });
+
+  it("does not show params section for empty params", () => {
+    render(<PlanPane plan={PLAN_WITH_PARAMS} mode="previewing" onApprove={() => {}} error={null} />);
+    // Expand the first step (GetSystemState with empty params)
+    fireEvent.click(screen.getByText("GetSystemState"));
+    // Should show detail props but no params pre block
+    expect(screen.getByText("Not required")).toBeInTheDocument();
+    // The params block for the first step should not exist
+    expect(screen.queryByText(/"packages"/)).toBeNull();
+  });
+});
