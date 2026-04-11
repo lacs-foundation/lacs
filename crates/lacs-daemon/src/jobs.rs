@@ -25,7 +25,7 @@ impl JobStateMachine {
     }
 
     pub fn state(&self) -> JobState {
-        self.state.clone()
+        self.state
     }
 
     pub fn transition_to(&mut self, next: JobState) -> Result<(), JobError> {
@@ -34,7 +34,7 @@ impl JobStateMachine {
             Ok(())
         } else {
             Err(JobError::InvalidTransition {
-                from: self.state.clone(),
+                from: self.state,
                 to: next,
             })
         }

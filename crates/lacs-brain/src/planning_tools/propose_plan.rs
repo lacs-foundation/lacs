@@ -242,7 +242,7 @@ pub fn parse_proposed_plan(intent: &str, input: &serde_json::Value) -> Result<Pl
             step_summary.to_string(),
             risk_level,
             params,
-        ));
+        )?);
     }
 
     Ok(Plan::new(
@@ -250,7 +250,7 @@ pub fn parse_proposed_plan(intent: &str, input: &serde_json::Value) -> Result<Pl
         summary.to_string(),
         explanation.to_string(),
         steps,
-    ))
+    )?)
 }
 
 // ---------------------------------------------------------------------------

@@ -540,13 +540,15 @@ mod tests {
             "Rebase to f42".into(),
             PlanRiskLevel::High,
             serde_json::json!({}),
-        );
+        )
+        .unwrap();
         let plan = Plan::new(
             "rebase intent".into(),
             "Rebase the system".into(),
             "This rebases Fedora Silverblue to f42 and requires a reboot.".into(),
             vec![step],
-        );
+        )
+        .unwrap();
         let curated = DemoStateClient.curated_state().unwrap();
         let resp = plan_to_response(plan, &curated);
 
@@ -594,20 +596,23 @@ mod tests {
                 "Read current state".into(),
                 PlanRiskLevel::Low,
                 serde_json::json!({}),
-            ),
+            )
+            .unwrap(),
             PlanStep::new(
                 "InstallPackages".into(),
                 "Layer vim via rpm-ostree".into(),
                 PlanRiskLevel::High,
                 serde_json::json!({}),
-            ),
+            )
+            .unwrap(),
         ];
         let plan = Plan::new(
             "install vim intent".into(),
             "Install vim on the system".into(),
             "Reads state then layers vim. Requires reboot.".into(),
             steps,
-        );
+        )
+        .unwrap();
         let curated = DemoStateClient.curated_state().unwrap();
         let resp = plan_to_response(plan, &curated);
 

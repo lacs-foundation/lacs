@@ -38,7 +38,7 @@ use crate::{
     preview::preview_action,
     state::DaemonState,
     state_collector::{collect_state, CollectedState, CommandRunner},
-    transactions::{NewTransaction, TransactionStoreError},
+    transactions::NewTransaction,
     transport::framing::{FramedStream, FramingError},
 };
 
@@ -329,13 +329,11 @@ pub async fn connection_handler_with_executor(
         let request: DaemonRequest = match serde_json::from_value(msg) {
             Ok(r) => r,
             Err(e) => {
-                if let Err(send_err) = send_response(
+                if let Err(send_err) = send_error(
                     &mut framed,
-                    &DaemonResponse::ErrorResponse {
-                        request_id: String::new(),
-                        category: "validation_failure".into(),
-                        message: format!("unknown message type: {e}"),
-                    },
+                    "",
+                    "validation_failure",
+                    format!("unknown message type: {e}"),
                 )
                 .await
                 {
@@ -385,13 +383,11 @@ pub async fn connection_handler_with_executor(
             }
             DaemonRequest::Cancel { job_id } => {
                 // MVP: cancel acknowledgement only. Active-job signaling is a follow-up.
-                send_response(
+                send_error(
                     &mut framed,
-                    &DaemonResponse::ErrorResponse {
-                        request_id: job_id.clone(),
-                        category: "not_implemented".into(),
-                        message: "cancel not yet implemented".into(),
-                    },
+                    job_id,
+                    "not_implemented",
+                    "cancel not yet implemented",
                 )
                 .await
             }
@@ -422,15 +418,7 @@ async fn handle_query_state(
     {
         Ok(s) => s,
         Err(e) => {
-            return send_response(
-                framed,
-                &DaemonResponse::ErrorResponse {
-                    request_id: request_id.to_string(),
-                    category: "state_collection_failed".into(),
-                    message: e.to_string(),
-                },
-            )
-            .await;
+            return send_error(framed, request_id, "state_collection_failed", e.to_string()).await;
         }
     };
     send_response(
@@ -456,27 +444,17 @@ async fn handle_preview(
     let spec = match build_action_spec(action_name, params) {
         Ok(s) => s,
         Err(e) => {
-            return send_response(
-                framed,
-                &DaemonResponse::ErrorResponse {
-                    request_id: request_id.to_string(),
-                    category: "validation_failure".into(),
-                    message: e.to_string(),
-                },
-            )
-            .await;
+            return send_error(framed, request_id, "validation_failure", e.to_string()).await;
         }
     };
 
     // Authorize caller against the per-action allowlist.
     if !authorize_action(caller_role, action_name) {
-        return send_response(
+        return send_error(
             framed,
-            &DaemonResponse::ErrorResponse {
-                request_id: request_id.to_string(),
-                category: "authorization_failure".into(),
-                message: format!("action '{action_name}' is not allowed for {caller_role:?} role"),
-            },
+            request_id,
+            "authorization_failure",
+            format!("action '{action_name}' is not allowed for {caller_role:?} role"),
         )
         .await;
     }
@@ -505,7 +483,7 @@ async fn handle_preview(
         action_name: action_name.to_string(),
         request_id: request_id.to_string(),
         params: params.clone(),
-        caller_role: caller_role.clone(),
+        caller_role: *caller_role,
         request_hash: request_hash.clone(),
     };
 
@@ -526,13 +504,11 @@ async fn handle_preview(
     let recorded = match state.transactions.record_previewed(new_tx, preview.clone()) {
         Ok(r) => r,
         Err(e) => {
-            return send_response(
+            return send_error(
                 framed,
-                &DaemonResponse::ErrorResponse {
-                    request_id: request_id.to_string(),
-                    category: "transient_infrastructure_failure".into(),
-                    message: format!("failed to record preview transaction: {e}"),
-                },
+                request_id,
+                "transient_infrastructure_failure",
+                format!("failed to record preview transaction: {e}"),
             )
             .await;
         }
@@ -564,27 +540,17 @@ async fn handle_execute(
     let spec = match build_action_spec(action_name, params) {
         Ok(s) => s,
         Err(e) => {
-            return send_response(
-                framed,
-                &DaemonResponse::ErrorResponse {
-                    request_id: request_id.to_string(),
-                    category: "validation_failure".into(),
-                    message: e.to_string(),
-                },
-            )
-            .await;
+            return send_error(framed, request_id, "validation_failure", e.to_string()).await;
         }
     };
 
     // Authorize against the per-action allowlist.
     if !authorize_action(caller_role, action_name) {
-        return send_response(
+        return send_error(
             framed,
-            &DaemonResponse::ErrorResponse {
-                request_id: request_id.to_string(),
-                category: "authorization_failure".into(),
-                message: format!("action '{action_name}' is not allowed for {caller_role:?} role"),
-            },
+            request_id,
+            "authorization_failure",
+            format!("action '{action_name}' is not allowed for {caller_role:?} role"),
         )
         .await;
     }
@@ -592,15 +558,7 @@ async fn handle_execute(
     // Compute the canonical hash and check it matches the approval.
     let stored_hash = compute_request_hash(action_name, params);
     if let Err(e) = crate::policy::require_fresh_approval(&stored_hash, approval_hash) {
-        return send_response(
-            framed,
-            &DaemonResponse::ErrorResponse {
-                request_id: request_id.to_string(),
-                category: "stale_approval".into(),
-                message: e.to_string(),
-            },
-        )
-        .await;
+        return send_error(framed, request_id, "stale_approval", e.to_string()).await;
     }
 
     // Verify a prior preview exists (enforce preview-before-execute).
@@ -609,13 +567,11 @@ async fn handle_execute(
     let prior_tx = match state.transactions.find_by_request_hash(&stored_hash) {
         Ok(tx) => tx,
         Err(e) => {
-            return send_response(
+            return send_error(
                 framed,
-                &DaemonResponse::ErrorResponse {
-                    request_id: request_id.to_string(),
-                    category: "transient_infrastructure_failure".into(),
-                    message: format!("transaction lookup failed: {e}"),
-                },
+                request_id,
+                "transient_infrastructure_failure",
+                format!("transaction lookup failed: {e}"),
             )
             .await;
         }
@@ -624,14 +580,11 @@ async fn handle_execute(
     let transaction_id = match prior_tx {
         Some(tx) => tx.transaction_id,
         None => {
-            return send_response(
+            return send_error(
                 framed,
-                &DaemonResponse::ErrorResponse {
-                    request_id: request_id.to_string(),
-                    category: "stale_approval".into(),
-                    message: "no prior preview found for this action; preview before executing"
-                        .into(),
-                },
+                request_id,
+                "stale_approval",
+                "no prior preview found for this action; preview before executing",
             )
             .await;
         }
@@ -644,25 +597,21 @@ async fn handle_execute(
     let claimed = match state.transactions.claim_for_execution(&transaction_id) {
         Ok(c) => c,
         Err(e) => {
-            return send_response(
+            return send_error(
                 framed,
-                &DaemonResponse::ErrorResponse {
-                    request_id: request_id.to_string(),
-                    category: "transient_infrastructure_failure".into(),
-                    message: format!("failed to claim transaction: {e}"),
-                },
+                request_id,
+                "transient_infrastructure_failure",
+                format!("failed to claim transaction: {e}"),
             )
             .await;
         }
     };
     if !claimed {
-        return send_response(
+        return send_error(
             framed,
-            &DaemonResponse::ErrorResponse {
-                request_id: request_id.to_string(),
-                category: "stale_approval".into(),
-                message: "transaction already claimed by a concurrent request".into(),
-            },
+            request_id,
+            "stale_approval",
+            "transaction already claimed by a concurrent request",
         )
         .await;
     }
@@ -762,7 +711,7 @@ async fn handle_execute(
     let mut warnings = Vec::new();
     if let Err(e) = state
         .transactions
-        .update_status(&transaction_id, final_status.clone())
+        .update_status(&transaction_id, final_status)
     {
         eprintln!(
             "[lacs-daemon] failed to update transaction {transaction_id} to \
@@ -951,12 +900,6 @@ fn job_state_str(state: &JobState) -> &'static str {
 enum HandlerError {
     #[error("framing error: {0}")]
     Framing(#[from] FramingError),
-
-    #[error("state collection failed: {0}")]
-    StateCollection(#[from] crate::state_collector::CollectorError),
-
-    #[error("transaction store error: {0}")]
-    Transaction(#[from] TransactionStoreError),
 }
 
 async fn send_response(
@@ -965,6 +908,23 @@ async fn send_response(
 ) -> Result<(), HandlerError> {
     let json = serde_json::to_vec(response).expect("DaemonResponse is always serialisable");
     framed.send(&json).await.map_err(HandlerError::Framing)
+}
+
+async fn send_error(
+    framed: &mut FramedStream<UnixStream>,
+    request_id: &str,
+    category: &str,
+    message: impl Into<String>,
+) -> Result<(), HandlerError> {
+    send_response(
+        framed,
+        &DaemonResponse::ErrorResponse {
+            request_id: request_id.to_string(),
+            category: category.to_string(),
+            message: message.into(),
+        },
+    )
+    .await
 }
 
 // ---------------------------------------------------------------------------
