@@ -11,10 +11,19 @@
 
 Defaults:lacs !requiretty
 
-# User and group management (no D-Bus API available on most distros).
+# User management — create and delete system/human accounts.
+# useradd: called by CreateUser  (sudo useradd --create-home ...)
+# userdel: called by DeleteUser  (sudo userdel <username>)
 lacs ALL=(root) NOPASSWD: /usr/sbin/useradd
 lacs ALL=(root) NOPASSWD: /usr/sbin/userdel
+
+# Group membership — add/remove users to/from groups.
+# usermod: called by AddUserToGroup  (sudo usermod --append --groups <grp> <user>)
+# gpasswd: called by RemoveUserFromGroup  (sudo gpasswd --delete <user> <grp>)
 lacs ALL=(root) NOPASSWD: /usr/sbin/usermod
+lacs ALL=(root) NOPASSWD: /usr/bin/gpasswd
+
+# Group management — create, delete, and modify groups.
 lacs ALL=(root) NOPASSWD: /usr/sbin/groupadd
 lacs ALL=(root) NOPASSWD: /usr/sbin/groupdel
 lacs ALL=(root) NOPASSWD: /usr/sbin/groupmod
