@@ -3,8 +3,9 @@
 //! Two client modes co-exist in this module:
 //!
 //! - **Synchronous** (`DaemonIpcClient`): implements [`StateClient`] for the
-//!   brain planner, which calls `curated_state()` synchronously while planning.
-//!   Uses `std::os::unix::net::UnixStream` with a 10-second timeout.
+//!   brain planner. Currently only used in tests; will be promoted to production
+//!   once the shell runs the brain in-process. Uses `std::os::unix::net::UnixStream`
+//!   with a 10-second timeout.
 //!
 //! - **Async** (`execute_action`): drives the approve-and-execute flow from an
 //!   async Tauri command. Uses `tokio::net::UnixStream`. Opens one connection
