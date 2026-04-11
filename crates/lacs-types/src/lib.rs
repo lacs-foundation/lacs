@@ -33,6 +33,12 @@ pub enum JobState {
     NeedsReboot,
 }
 
+/// Structured failure categories for the IPC error protocol.
+///
+/// Currently used only in the proto bridge layer (lacs-types <-> lacs-proto
+/// conversions) and their tests. The daemon dispatcher uses string category
+/// names on the wire today; these variants will replace those strings when the
+/// daemon adopts the proto layer end-to-end.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FailureCategory {

@@ -38,7 +38,7 @@ use crate::{
     preview::preview_action,
     state::DaemonState,
     state_collector::{collect_state, CollectedState, CommandRunner},
-    transactions::{NewTransaction, TransactionStoreError},
+    transactions::NewTransaction,
     transport::framing::{FramedStream, FramingError},
 };
 
@@ -900,12 +900,6 @@ fn job_state_str(state: &JobState) -> &'static str {
 enum HandlerError {
     #[error("framing error: {0}")]
     Framing(#[from] FramingError),
-
-    #[error("state collection failed: {0}")]
-    StateCollection(#[from] crate::state_collector::CollectorError),
-
-    #[error("transaction store error: {0}")]
-    Transaction(#[from] TransactionStoreError),
 }
 
 async fn send_response(
