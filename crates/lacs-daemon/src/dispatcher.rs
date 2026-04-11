@@ -32,7 +32,8 @@ use lacs_types::{CallerRole, JobState, PreviewEnvelope, RequestEnvelope};
 use crate::{
     auth::highest_role_from_groups,
     executor::{
-        build_action_spec, execute_spec, rollback_spec_for, ExecutionOutput, ExecutorError,
+        build_action_spec, execute_spec, rollback_spec_for, ActionExecutor, ExecutionOutput,
+        ExecutorError,
     },
     preview::preview_action,
     state::DaemonState,
@@ -285,6 +286,22 @@ pub async fn connection_handler(
     runner: Arc<dyn CommandRunner + Send + Sync>,
     caller_role: CallerRole,
 ) {
+    let executor: Arc<dyn ActionExecutor> = Arc::new(crate::executor::RealActionExecutor);
+    connection_handler_with_executor(stream, state, runner, executor, caller_role).await;
+}
+
+/// Inner handler that accepts an explicit [`ActionExecutor`].
+///
+/// Production code enters via [`connection_handler`], which injects a
+/// [`RealActionExecutor`](crate::executor::RealActionExecutor). Integration
+/// tests call this directly with a mock executor to control command outcomes.
+pub async fn connection_handler_with_executor(
+    stream: UnixStream,
+    state: DaemonState,
+    runner: Arc<dyn CommandRunner + Send + Sync>,
+    executor: Arc<dyn ActionExecutor>,
+    caller_role: CallerRole,
+) {
     let mut framed = FramedStream::new(stream);
     loop {
         let raw = match framed.recv().await {
@@ -349,6 +366,7 @@ pub async fn connection_handler(
                 handle_execute(
                     &mut framed,
                     &state,
+                    Arc::clone(&executor),
                     &caller_role,
                     request_id,
                     action_name,
@@ -523,9 +541,11 @@ async fn handle_preview(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_execute(
     framed: &mut FramedStream<UnixStream>,
     state: &DaemonState,
+    executor: Arc<dyn ActionExecutor>,
     caller_role: &CallerRole,
     request_id: &str,
     action_name: &str,
@@ -685,6 +705,7 @@ async fn handle_execute(
     // Attempt automatic rollback if the action failed and rollback is available.
     let (final_status, summary, rollback_ref) = attempt_rollback_if_needed(
         framed,
+        &executor,
         &job_id,
         action_name,
         &spec,
@@ -799,6 +820,7 @@ async fn stream_command_with_progress(
 /// Send failures are logged but do not abort the rollback.
 async fn attempt_rollback_if_needed(
     framed: &mut FramedStream<UnixStream>,
+    executor: &Arc<dyn ActionExecutor>,
     job_id: &str,
     action_name: &str,
     spec: &crate::actions::ActionSpec,
@@ -825,7 +847,7 @@ async fn attempt_rollback_if_needed(
     )
     .await;
 
-    match execute_spec(&rb_spec).await {
+    match executor.execute(&rb_spec).await {
         Ok(rb_out) if rb_out.exit_code == 0 => {
             let _ = send_response(
                 framed,
