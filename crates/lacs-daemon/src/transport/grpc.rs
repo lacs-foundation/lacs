@@ -61,7 +61,15 @@ pub fn bind_unix_listener(target: &ListenTarget) -> Result<UnixListener, ListenT
                 fs::remove_file(path).map_err(|err| ListenTargetError::Io(err.to_string()))?;
             }
 
-            UnixListener::bind(path).map_err(|err| ListenTargetError::Io(err.to_string()))
+            let listener =
+                UnixListener::bind(path).map_err(|err| ListenTargetError::Io(err.to_string()))?;
+
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o660)).map_err(
+                |e| ListenTargetError::Io(format!("failed to set socket permissions: {e}")),
+            )?;
+
+            Ok(listener)
         }
     }
 }
