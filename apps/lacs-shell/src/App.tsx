@@ -42,6 +42,7 @@ export default function App() {
       })
       .catch((err: unknown) => {
         console.warn("[LACS] checkSetupStatus failed:", err);
+        dispatch({ type: "timeline_event", text: `Setup check failed: ${String(err)}`, kind: "warning" });
         // If the check fails (e.g. not running in Tauri), skip the wizard
         setNeedsSetup(false);
       });
@@ -62,7 +63,7 @@ export default function App() {
       })
       .catch((err: unknown) => {
         console.warn("[LACS] getBrainConfig failed:", err);
-        // Non-fatal — UI degrades gracefully without the provider label
+        dispatch({ type: "timeline_event", text: `Config load failed: ${String(err)}`, kind: "warning" });
       });
   }, []);
 
@@ -138,10 +139,12 @@ export default function App() {
     try {
       await requestApproval(steps);
       dispatch({ type: "daemon_status_changed", status: "connected" });
-    } catch (_err) {
+    } catch (err) {
       // The state is now "executing" — policy_errored is only handled in
       // awaiting-approval/previewing mode and would be silently dropped here.
       // Use job_completed("failed") instead so the reducer transitions correctly.
+      const message = err instanceof Error ? err.message : String(err);
+      dispatch({ type: "timeline_event", text: `Approval failed: ${message}`, kind: "error" });
       dispatch({ type: "daemon_status_changed", status: "unreachable" });
       dispatch({ type: "job_completed", outcome: "failed" });
     }
@@ -263,6 +266,7 @@ export default function App() {
             activeJobId={state.activeJobId}
             onCancel={handleCancel}
             onReset={handleReset}
+            timeline={state.timeline}
           />
         )}
         <TimelinePane entries={state.timeline} />

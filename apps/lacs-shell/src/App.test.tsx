@@ -119,6 +119,27 @@ describe("App", () => {
     });
   });
 
+  it("logs error details to timeline when requestApproval rejects (#53)", async () => {
+    mockedRequestPlan.mockResolvedValueOnce(LOW_RISK_APPROVAL_PLAN);
+    mockedRequestApproval.mockRejectedValueOnce(new Error("IPC connection lost"));
+
+    render(<App />);
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "check state" } });
+    fireEvent.click(screen.getByRole("button", { name: /generate plan/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent("Awaiting your approval");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /approve/i }));
+
+    await waitFor(() => {
+      // The error appears in both the execution log and the timeline pane
+      const matches = screen.getAllByText(/Approval failed: IPC connection lost/);
+      expect(matches.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
   it("shows reconnect banner when daemon status changes to unreachable", async () => {
     // Capture the daemon status callback from subscribeDaemonEvents
     let daemonStatusCb: ((status: "connected" | "unreachable") => void) | undefined;
@@ -147,6 +168,26 @@ describe("App", () => {
 
     await waitFor(() => {
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+  });
+
+  it("logs config load failure to timeline (#13)", async () => {
+    vi.mocked(bridge.getBrainConfig).mockRejectedValueOnce(new Error("Config not found"));
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Config load failed:.*Config not found/)).toBeInTheDocument();
+    });
+  });
+
+  it("logs setup check failure to timeline (#13)", async () => {
+    vi.mocked(bridge.checkSetupStatus).mockRejectedValueOnce(new Error("Tauri unavailable"));
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Setup check failed:.*Tauri unavailable/)).toBeInTheDocument();
     });
   });
 
