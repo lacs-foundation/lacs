@@ -73,26 +73,30 @@ pub struct PlanStep {
 }
 
 impl PlanStep {
-    /// Construct a step. Panics if `action_name` or `summary` is empty —
-    /// these are programmer errors; callers must validate first.
-    /// The intended caller is `parse_proposed_plan` which validates all fields.
+    /// Construct a step. Returns an error if `action_name` or `summary` is
+    /// empty.
     pub fn new(
         action_name: String,
         summary: String,
         risk_level: PlanRiskLevel,
         params: serde_json::Value,
-    ) -> Self {
-        assert!(
-            !action_name.is_empty(),
-            "PlanStep action_name must not be empty"
-        );
-        assert!(!summary.is_empty(), "PlanStep summary must not be empty");
-        Self {
+    ) -> Result<Self, PlanValidationError> {
+        if action_name.is_empty() {
+            return Err(PlanValidationError(
+                "PlanStep action_name must not be empty".into(),
+            ));
+        }
+        if summary.is_empty() {
+            return Err(PlanValidationError(
+                "PlanStep summary must not be empty".into(),
+            ));
+        }
+        Ok(Self {
             action_name,
             summary,
             risk_level,
             params,
-        }
+        })
     }
 
     pub fn action_name(&self) -> &str {
@@ -134,22 +138,36 @@ pub struct Plan {
 }
 
 impl Plan {
-    /// Construct a plan. Panics if `steps` is empty or any string field is
-    /// empty — these are programmer errors; callers must validate first.
-    pub fn new(intent: String, summary: String, explanation: String, steps: Vec<PlanStep>) -> Self {
-        assert!(!intent.is_empty(), "Plan intent must not be empty");
-        assert!(!summary.is_empty(), "Plan summary must not be empty");
-        assert!(
-            !explanation.is_empty(),
-            "Plan explanation must not be empty"
-        );
-        assert!(!steps.is_empty(), "Plan must have at least one step");
-        Self {
+    /// Construct a plan. Returns an error if `steps` is empty or any string
+    /// field is empty.
+    pub fn new(
+        intent: String,
+        summary: String,
+        explanation: String,
+        steps: Vec<PlanStep>,
+    ) -> Result<Self, PlanValidationError> {
+        if intent.is_empty() {
+            return Err(PlanValidationError("Plan intent must not be empty".into()));
+        }
+        if summary.is_empty() {
+            return Err(PlanValidationError("Plan summary must not be empty".into()));
+        }
+        if explanation.is_empty() {
+            return Err(PlanValidationError(
+                "Plan explanation must not be empty".into(),
+            ));
+        }
+        if steps.is_empty() {
+            return Err(PlanValidationError(
+                "Plan must have at least one step".into(),
+            ));
+        }
+        Ok(Self {
             intent,
             summary,
             explanation,
             steps,
-        }
+        })
     }
 
     pub fn intent(&self) -> &str {
@@ -168,6 +186,15 @@ impl Plan {
         &self.steps
     }
 }
+
+// ---------------------------------------------------------------------------
+// PlanValidationError
+// ---------------------------------------------------------------------------
+
+/// Returned when `Plan::new` or `PlanStep::new` receives invalid arguments.
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[error("{0}")]
+pub struct PlanValidationError(pub String);
 
 // ---------------------------------------------------------------------------
 // PlanningError
@@ -198,6 +225,12 @@ pub enum PlanningError {
 impl From<ProviderError> for PlanningError {
     fn from(e: ProviderError) -> Self {
         Self::Provider(e.to_string())
+    }
+}
+
+impl From<PlanValidationError> for PlanningError {
+    fn from(e: PlanValidationError) -> Self {
+        Self::InvalidPlanOutput(e.0)
     }
 }
 
