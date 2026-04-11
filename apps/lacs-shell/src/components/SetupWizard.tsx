@@ -26,6 +26,7 @@ export function SetupWizard({ onDismiss }: Props) {
   const [provider, setProvider] = useState<Provider | null>(null);
   const [apiKey, setApiKey] = useState("");
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
 
   const handleSelectProvider = (p: Provider) => {
     setProvider(p);
@@ -50,7 +51,8 @@ export function SetupWizard({ onDismiss }: Props) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Clipboard API may not be available in all contexts
+      setCopyFailed(true);
+      setTimeout(() => setCopyFailed(false), 2000);
     }
   };
 
@@ -155,7 +157,7 @@ export function SetupWizard({ onDismiss }: Props) {
             className="intent-reset"
             onClick={() => handleCopy(configContent)}
           >
-            {copied ? "Copied" : "Copy to clipboard"}
+            {copyFailed ? "Copy failed" : copied ? "Copied" : "Copy to clipboard"}
           </button>
           <button type="button" onClick={handleContinueToDone}>
             Continue
