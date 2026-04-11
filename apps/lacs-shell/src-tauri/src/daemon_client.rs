@@ -17,12 +17,20 @@
 //! prefix followed by a UTF-8 JSON body. This mirrors the daemon's
 //! `FramedStream` exactly.
 
-use std::io::{self, Read, Write};
+use std::io;
+
+#[cfg(test)]
+use std::io::{Read, Write};
+#[cfg(test)]
 use std::os::unix::net::UnixStream;
+#[cfg(test)]
 use std::time::Duration;
 
+#[cfg(test)]
 use lacs_brain::planner::PlanningError;
+#[cfg(test)]
 use lacs_brain::state_client::{CuratedState, StateClient};
+#[cfg(test)]
 use serde_json::Value;
 
 /// Maximum response size accepted from the daemon (4 MiB — mirrors daemon limit).
@@ -32,6 +40,7 @@ const MAX_RESPONSE_BYTES: u32 = 4 * 1024 * 1024;
 ///
 /// Prevents the shell from hanging indefinitely if the daemon is unresponsive.
 /// 10 seconds matches the timeout specified in the IPC spec for state collection.
+#[cfg(test)]
 const SOCKET_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Per-step timeout for the execute read loop (seconds).
@@ -46,10 +55,12 @@ const EXECUTE_STEP_TIMEOUT_SECS: u64 = 600;
 /// Opens a fresh connection per call. Suitable for the LLM planning loop where
 /// calls are infrequent and persistent connection management would add
 /// unnecessary complexity.
+#[cfg(test)]
 pub struct DaemonIpcClient {
     socket_path: String,
 }
 
+#[cfg(test)]
 impl DaemonIpcClient {
     /// Create a client that connects to `socket_path`.
     ///
@@ -114,6 +125,7 @@ impl DaemonIpcClient {
     }
 }
 
+#[cfg(test)]
 impl StateClient for DaemonIpcClient {
     fn curated_state(&self) -> Result<CuratedState, PlanningError> {
         self.query_state_inner()
@@ -125,6 +137,7 @@ impl StateClient for DaemonIpcClient {
 // Framing helpers (mirrors lacs-daemon's FramedStream protocol)
 // ---------------------------------------------------------------------------
 
+#[cfg(test)]
 fn write_framed(stream: &mut UnixStream, msg: &[u8]) -> io::Result<()> {
     let len = u32::try_from(msg.len())
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "message exceeds 4 GiB limit"))?;
@@ -132,6 +145,7 @@ fn write_framed(stream: &mut UnixStream, msg: &[u8]) -> io::Result<()> {
     stream.write_all(msg)
 }
 
+#[cfg(test)]
 fn read_framed(stream: &mut UnixStream) -> io::Result<Vec<u8>> {
     let mut len_buf = [0u8; 4];
     stream.read_exact(&mut len_buf)?;
@@ -147,6 +161,7 @@ fn read_framed(stream: &mut UnixStream) -> io::Result<Vec<u8>> {
     Ok(msg)
 }
 
+#[cfg(test)]
 fn string_array(v: &Value) -> Vec<String> {
     v.as_array()
         .map(|a| {
