@@ -14,8 +14,8 @@
 //! - Every `execute` request must carry an `approval_hash` that exactly matches
 //!   the `request_hash` returned in the preceding `preview` response. A hash
 //!   mismatch or missing prior preview returns `stale_approval`.
-//! - Role is checked against the action's risk level before preview and again
-//!   before execute.
+//! - Role is checked against the per-action allowlist (see `policy.rs`) before
+//!   preview and again before execute.
 
 use std::process::Stdio;
 use std::sync::Arc;
@@ -27,7 +27,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::net::UnixStream;
 use uuid::Uuid;
 
-use lacs_types::{CallerRole, JobState, PreviewEnvelope, RequestEnvelope, RiskLevel};
+use lacs_types::{CallerRole, JobState, PreviewEnvelope, RequestEnvelope};
 
 use crate::{
     auth::highest_role_from_groups,
@@ -210,16 +210,8 @@ fn groups_for_pid(pid: u32, gid_map: &std::collections::HashMap<u32, String>) ->
 // Authorization helpers
 // ---------------------------------------------------------------------------
 
-fn min_role_for_risk(risk: &RiskLevel) -> CallerRole {
-    match risk {
-        RiskLevel::Low => CallerRole::Observer,
-        RiskLevel::Medium => CallerRole::Dev,
-        RiskLevel::High => CallerRole::Admin,
-    }
-}
-
-fn role_satisfies(caller: &CallerRole, required: &CallerRole) -> bool {
-    crate::auth::role_rank(caller) >= crate::auth::role_rank(required)
+fn authorize_action(caller: &CallerRole, action_name: &str) -> bool {
+    crate::policy::action_allowed(caller, action_name)
 }
 
 // ---------------------------------------------------------------------------
@@ -450,17 +442,14 @@ async fn handle_preview(
         }
     };
 
-    // Authorize caller against action risk level.
-    let required = min_role_for_risk(&spec.risk_level);
-    if !role_satisfies(caller_role, &required) {
+    // Authorize caller against the per-action allowlist.
+    if !authorize_action(caller_role, action_name) {
         return send_response(
             framed,
             &DaemonResponse::ErrorResponse {
                 request_id: request_id.to_string(),
                 category: "authorization_failure".into(),
-                message: format!(
-                    "action '{action_name}' requires {required:?} role; caller has {caller_role:?}"
-                ),
+                message: format!("action '{action_name}' is not allowed for {caller_role:?} role"),
             },
         )
         .await;
@@ -559,17 +548,14 @@ async fn handle_execute(
         }
     };
 
-    // Authorize.
-    let required = min_role_for_risk(&spec.risk_level);
-    if !role_satisfies(caller_role, &required) {
+    // Authorize against the per-action allowlist.
+    if !authorize_action(caller_role, action_name) {
         return send_response(
             framed,
             &DaemonResponse::ErrorResponse {
                 request_id: request_id.to_string(),
                 category: "authorization_failure".into(),
-                message: format!(
-                    "action '{action_name}' requires {required:?} role; caller has {caller_role:?}"
-                ),
+                message: format!("action '{action_name}' is not allowed for {caller_role:?} role"),
             },
         )
         .await;
