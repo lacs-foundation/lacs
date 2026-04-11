@@ -105,17 +105,7 @@ impl TransactionStore {
         )?;
         let mut rows = stmt.query(params![transaction_id])?;
         if let Some(row) = rows.next()? {
-            Ok(Some(TransactionRecord {
-                transaction_id: row.get(0)?,
-                request_id: row.get(1)?,
-                request_hash: row.get(2)?,
-                action_name: row.get(3)?,
-                risk_level: deserialize_field(&row.get::<_, String>(4)?)?,
-                status: deserialize_field(&row.get::<_, String>(5)?)?,
-                approval_id: row.get(6)?,
-                summary: row.get(7)?,
-                warnings: serde_json::from_str(&row.get::<_, String>(8)?)?,
-            }))
+            Ok(Some(row_to_record(row)?))
         } else {
             Ok(None)
         }
@@ -155,17 +145,7 @@ impl TransactionStore {
         )?;
         let mut rows = stmt.query(params![request_hash, queued_json])?;
         if let Some(row) = rows.next()? {
-            Ok(Some(TransactionRecord {
-                transaction_id: row.get(0)?,
-                request_id: row.get(1)?,
-                request_hash: row.get(2)?,
-                action_name: row.get(3)?,
-                risk_level: deserialize_field(&row.get::<_, String>(4)?)?,
-                status: deserialize_field(&row.get::<_, String>(5)?)?,
-                approval_id: row.get(6)?,
-                summary: row.get(7)?,
-                warnings: serde_json::from_str(&row.get::<_, String>(8)?)?,
-            }))
+            Ok(Some(row_to_record(row)?))
         } else {
             Ok(None)
         }
@@ -360,6 +340,20 @@ impl TransactionStore {
         )?;
         Ok(())
     }
+}
+
+fn row_to_record(row: &rusqlite::Row) -> Result<TransactionRecord, TransactionStoreError> {
+    Ok(TransactionRecord {
+        transaction_id: row.get(0)?,
+        request_id: row.get(1)?,
+        request_hash: row.get(2)?,
+        action_name: row.get(3)?,
+        risk_level: deserialize_field(&row.get::<_, String>(4)?)?,
+        status: deserialize_field(&row.get::<_, String>(5)?)?,
+        approval_id: row.get(6)?,
+        summary: row.get(7)?,
+        warnings: serde_json::from_str(&row.get::<_, String>(8)?)?,
+    })
 }
 
 fn serialize_field<T: Serialize>(value: &T) -> Result<String, serde_json::Error> {
