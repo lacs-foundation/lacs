@@ -505,7 +505,7 @@ async fn handle_preview(
         action_name: action_name.to_string(),
         request_id: request_id.to_string(),
         params: params.clone(),
-        caller_role: caller_role.clone(),
+        caller_role: *caller_role,
         request_hash: request_hash.clone(),
     };
 
@@ -762,7 +762,7 @@ async fn handle_execute(
     let mut warnings = Vec::new();
     if let Err(e) = state
         .transactions
-        .update_status(&transaction_id, final_status.clone())
+        .update_status(&transaction_id, final_status)
     {
         eprintln!(
             "[lacs-daemon] failed to update transaction {transaction_id} to \
