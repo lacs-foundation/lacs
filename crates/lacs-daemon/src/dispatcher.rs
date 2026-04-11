@@ -673,7 +673,7 @@ async fn handle_execute(
         _ => execute_spec(&spec).await,
     };
 
-    let (final_status, summary) = match &output {
+    let (initial_status, initial_summary) = match &output {
         Ok(out) if out.exit_code == 0 => {
             if spec.reboot_required {
                 (
@@ -693,6 +693,17 @@ async fn handle_execute(
         ),
         Err(e) => (JobState::Failed, format!("{action_name} failed: {e}")),
     };
+
+    // Attempt automatic rollback if the action failed and rollback is available.
+    let (final_status, summary, rollback_ref) = attempt_rollback_if_needed(
+        framed,
+        &job_id,
+        action_name,
+        &spec,
+        initial_status,
+        initial_summary,
+    )
+    .await;
 
     // Update the transaction record. A failure here is an audit-trail loss —
     // log it. The job result is still sent to the client.
@@ -716,7 +727,7 @@ async fn handle_execute(
                 warnings: vec![],
                 job_id: job_id.clone(),
                 needs_reboot: matches!(final_status, JobState::NeedsReboot),
-                rollback_ref: None,
+                rollback_ref,
                 transaction_id,
             },
         },
