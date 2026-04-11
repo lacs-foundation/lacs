@@ -10,6 +10,7 @@ pub mod package_repos;
 pub mod services;
 pub mod toolbox;
 pub mod users;
+pub(crate) mod validate;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ActionMechanism {
