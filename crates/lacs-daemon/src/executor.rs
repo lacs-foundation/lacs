@@ -116,18 +116,18 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
         // ── Package repositories ──────────────────────────────────────────
         "ListPackageRepositories" => Ok(package_repos::list_package_repositories()),
         "AddPackageRepository" => Ok(package_repos::add_package_repository(
-            require_str(params, "repo_id")?,
-            require_str(params, "repo_url")?,
+            validated_repo_id(params)?,
+            validated_no_newline(params, "repo_url")?,
         )),
-        "RemovePackageRepository" => Ok(package_repos::remove_package_repository(require_str(
-            params, "repo_id",
-        )?)),
-        "EnablePackageRepository" => Ok(package_repos::enable_package_repository(require_str(
-            params, "repo_id",
-        )?)),
-        "DisablePackageRepository" => Ok(package_repos::disable_package_repository(require_str(
-            params, "repo_id",
-        )?)),
+        "RemovePackageRepository" => {
+            Ok(package_repos::remove_package_repository(validated_repo_id(params)?))
+        }
+        "EnablePackageRepository" => {
+            Ok(package_repos::enable_package_repository(validated_repo_id(params)?))
+        }
+        "DisablePackageRepository" => {
+            Ok(package_repos::disable_package_repository(validated_repo_id(params)?))
+        }
 
         // ── Services ─────────────────────────────────────────────────────
         "ListServices" => Ok(services::list_services()),
@@ -269,6 +269,36 @@ fn require_str<'a>(params: &'a Value, key: &'static str) -> Result<&'a str, Exec
         .get(key)
         .and_then(|v| v.as_str())
         .ok_or(ExecutorError::MissingParam(key))
+}
+
+/// Validate a repo_id: must be non-empty and contain only ASCII letters,
+/// digits, hyphens, and underscores. Rejects `/`, `.`, and whitespace to
+/// prevent path traversal (e.g. `../cron.d/evil`) and shell injection.
+fn validated_repo_id(params: &Value) -> Result<&str, ExecutorError> {
+    let id = require_str(params, "repo_id")?;
+    let valid = !id.is_empty()
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    if valid {
+        Ok(id)
+    } else {
+        Err(ExecutorError::InvalidParam("repo_id"))
+    }
+}
+
+/// Validate that a string contains no newlines. Used for repo_url to prevent
+/// INI-section injection into `.repo` file content.
+fn validated_no_newline<'a>(
+    params: &'a Value,
+    key: &'static str,
+) -> Result<&'a str, ExecutorError> {
+    let val = require_str(params, key)?;
+    if val.contains('\n') || val.contains('\r') {
+        Err(ExecutorError::InvalidParam(key))
+    } else {
+        Ok(val)
+    }
 }
 
 fn require_bool(params: &Value, key: &'static str) -> Result<bool, ExecutorError> {
@@ -454,6 +484,55 @@ mod tests {
     }
 
     // ── execute_spec ──────────────────────────────────────────────────────
+
+    #[test]
+    fn build_spec_add_package_repository_rejects_path_traversal() {
+        let err = build_action_spec(
+            "AddPackageRepository",
+            &json!({ "repo_id": "../cron.d/evil", "repo_url": "https://evil.example/repo" }),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, ExecutorError::InvalidParam("repo_id")),
+            "expected InvalidParam(repo_id), got: {err}"
+        );
+    }
+
+    #[test]
+    fn build_spec_add_package_repository_rejects_newline_in_url() {
+        let err = build_action_spec(
+            "AddPackageRepository",
+            &json!({ "repo_id": "myrepo", "repo_url": "https://ok.example/\nbaseurl=evil" }),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, ExecutorError::InvalidParam("repo_url")),
+            "expected InvalidParam(repo_url), got: {err}"
+        );
+    }
+
+    #[test]
+    fn build_spec_add_package_repository_accepts_valid_repo_id() {
+        let spec = build_action_spec(
+            "AddPackageRepository",
+            &json!({ "repo_id": "my-repo_123", "repo_url": "https://ok.example/repo" }),
+        )
+        .unwrap();
+        assert_eq!(spec.action_name, "AddPackageRepository");
+    }
+
+    #[test]
+    fn build_spec_remove_package_repository_rejects_path_traversal() {
+        let err = build_action_spec(
+            "RemovePackageRepository",
+            &json!({ "repo_id": "../../etc/passwd" }),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, ExecutorError::InvalidParam("repo_id")),
+            "expected InvalidParam(repo_id), got: {err}"
+        );
+    }
 
     #[tokio::test]
     async fn execute_spec_command_captures_stdout() {

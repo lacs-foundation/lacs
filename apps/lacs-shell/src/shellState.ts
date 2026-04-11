@@ -226,7 +226,8 @@ export function shellReducer(state: ShellState, action: ShellAction): ShellState
       }
 
       if (outcome === "needs_reboot") {
-        const plan = (state as ExecutingState).plan;
+        if (state.mode !== "executing") return state;
+        const { plan } = state;
         const next: NeedsRebootState = {
           mode: "needs-reboot",
           intent: state.intent,
@@ -239,7 +240,8 @@ export function shellReducer(state: ShellState, action: ShellAction): ShellState
       }
 
       if (outcome === "rolled_back") {
-        const plan = (state as ExecutingState).plan;
+        if (state.mode !== "executing") return state;
+        const { plan } = state;
         const next: RolledBackState = {
           mode: "rolled-back",
           intent: state.intent,
@@ -265,7 +267,8 @@ export function shellReducer(state: ShellState, action: ShellAction): ShellState
       }
 
       // "failed" — execution failure; plan must be present
-      const plan = (state as ExecutingState).plan;
+      if (state.mode !== "executing") return state;
+      const { plan } = state;
       const next: FailedState = {
         mode: "failed",
         intent: state.intent,

@@ -44,7 +44,8 @@ export default function App() {
           });
         }
       })
-      .catch(() => {
+      .catch((err: unknown) => {
+        console.warn("[LACS] getBrainConfig failed:", err);
         // Non-fatal — UI degrades gracefully without the provider label
       });
   }, []);
@@ -70,10 +71,11 @@ export default function App() {
         if (cancelled) unsub();
         else unsubscribeFn = unsub;
       })
-      .catch(() => {
-        if (!cancelled) {
-          dispatch({ type: "daemon_status_changed", status: "unreachable" });
-        }
+      .catch((err: unknown) => {
+        // Tauri event listener registration failed — log but don't mark the
+        // daemon as unreachable; this is a local IPC setup error, not a sign
+        // that the daemon process is down.
+        console.warn("[LACS] subscribeDaemonEvents setup failed:", err);
       });
 
     return () => {
@@ -129,8 +131,9 @@ export default function App() {
     if (state.activeJobId) {
       try {
         await cancelJob(state.activeJobId);
-      } catch {
-        // Cancel failed — daemon will resolve the job eventually
+      } catch (err: unknown) {
+        console.warn("[LACS] cancelJob failed:", err);
+        dispatch({ type: "timeline_event", text: "Cancellation request failed — daemon will resolve the job eventually", kind: "warning" });
       }
     }
   }, [state.activeJobId]);

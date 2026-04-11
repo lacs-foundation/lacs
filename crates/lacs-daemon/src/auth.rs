@@ -35,7 +35,7 @@ fn higher_role(current: CallerRole, candidate: CallerRole) -> CallerRole {
     }
 }
 
-fn role_rank(role: &CallerRole) -> u8 {
+pub(crate) fn role_rank(role: &CallerRole) -> u8 {
     match role {
         CallerRole::Observer => 0,
         CallerRole::Dev => 1,

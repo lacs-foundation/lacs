@@ -151,16 +151,23 @@ pub fn resolve_caller_role(stream: &UnixStream) -> CallerRole {
 /// Read `/etc/group` once and return a `HashMap<gid, group_name>`.
 /// Silently returns an empty map on I/O failure (falls back to Observer role).
 fn read_gid_map() -> std::collections::HashMap<u32, String> {
+    let content = match std::fs::read_to_string("/etc/group") {
+        Ok(c) => c,
+        Err(e) => {
+            // Without /etc/group all callers will be resolved to Observer.
+            // This is a misconfiguration or permission problem that must be visible.
+            eprintln!("[lacs-daemon] WARNING: cannot read /etc/group: {e}; all callers will be demoted to Observer");
+            return std::collections::HashMap::new();
+        }
+    };
     let mut map = std::collections::HashMap::new();
-    if let Ok(content) = std::fs::read_to_string("/etc/group") {
-        for line in content.lines() {
-            let mut parts = line.splitn(4, ':');
-            let name = match parts.next() { Some(n) => n, None => continue };
-            let _ = parts.next(); // password field
-            let gid_str = match parts.next() { Some(g) => g, None => continue };
-            if let Ok(gid) = gid_str.parse::<u32>() {
-                map.insert(gid, name.to_string());
-            }
+    for line in content.lines() {
+        let mut parts = line.splitn(4, ':');
+        let name = match parts.next() { Some(n) => n, None => continue };
+        let _ = parts.next(); // password field
+        let gid_str = match parts.next() { Some(g) => g, None => continue };
+        if let Ok(gid) = gid_str.parse::<u32>() {
+            map.insert(gid, name.to_string());
         }
     }
     map
@@ -200,16 +207,7 @@ fn min_role_for_risk(risk: &RiskLevel) -> CallerRole {
 }
 
 fn role_satisfies(caller: &CallerRole, required: &CallerRole) -> bool {
-    role_rank(caller) >= role_rank(required)
-}
-
-fn role_rank(role: &CallerRole) -> u8 {
-    match role {
-        CallerRole::Observer => 1,
-        CallerRole::Dev => 2,
-        CallerRole::Admin => 3,
-        CallerRole::Boot => 4,
-    }
+    crate::auth::role_rank(caller) >= crate::auth::role_rank(required)
 }
 
 // ---------------------------------------------------------------------------
@@ -297,13 +295,16 @@ pub async fn connection_handler(
 
         let msg: Value = match serde_json::from_slice(&raw) {
             Ok(v) => v,
-            Err(_) => break, // malformed JSON
+            Err(e) => {
+                eprintln!("[lacs-daemon] malformed JSON from client, closing connection: {e}");
+                break;
+            }
         };
 
         let request: DaemonRequest = match serde_json::from_value(msg) {
             Ok(r) => r,
             Err(e) => {
-                let _ = send_response(
+                if let Err(send_err) = send_response(
                     &mut framed,
                     &DaemonResponse::ErrorResponse {
                         request_id: String::new(),
@@ -311,7 +312,10 @@ pub async fn connection_handler(
                         message: format!("unknown message type: {e}"),
                     },
                 )
-                .await;
+                .await
+                {
+                    eprintln!("[lacs-daemon] failed to send validation error response: {send_err}");
+                }
                 continue;
             }
         };
@@ -686,14 +690,17 @@ async fn handle_execute(
     if let Ok(out) = &output {
         for line in out.stdout.lines() {
             if !line.is_empty() {
-                let _ = send_response(
+                if let Err(e) = send_response(
                     framed,
                     &DaemonResponse::JobProgress {
                         job_id: job_id.clone(),
                         line: line.to_string(),
                     },
                 )
-                .await;
+                .await
+                {
+                    eprintln!("[lacs-daemon] progress send failed (client disconnected?): {e}");
+                }
             }
         }
     }

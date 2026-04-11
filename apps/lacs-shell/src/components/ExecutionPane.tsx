@@ -57,7 +57,7 @@ export function ExecutionPane({ mode, plan, activeJobId, onCancel, onReset, exec
       {plan && (
         <ol className="execution-steps">
           {plan.steps.map((step, i) => (
-            <li key={step.actionName} className="execution-step">
+            <li key={`${i}-${step.actionName}`} className="execution-step">
               <span className="execution-step__icon" aria-hidden>○</span>
               <span className="execution-step__index">{i + 1}/{plan.steps.length}</span>
               <code className="execution-step__name">{step.actionName}</code>

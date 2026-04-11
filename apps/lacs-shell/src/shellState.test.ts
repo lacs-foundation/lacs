@@ -14,8 +14,8 @@ const MOCK_PLAN: PlanResponse = {
   explanation: "rpm-ostree will layer vim. A reboot will be required.",
   approvalRequired: true,
   steps: [
-    { actionName: "GetSystemState", summary: "Read current deployment", riskLevel: "low", approvalRequired: false },
-    { actionName: "InstallPackages", summary: "Layer vim via rpm-ostree", riskLevel: "high", approvalRequired: true },
+    { actionName: "GetSystemState", summary: "Read current deployment", riskLevel: "low", approvalRequired: false, params: {} },
+    { actionName: "InstallPackages", summary: "Layer vim via rpm-ostree", riskLevel: "high", approvalRequired: true, params: {} },
   ],
   hostName: "silverblue",
   deployment: "fedora/41",

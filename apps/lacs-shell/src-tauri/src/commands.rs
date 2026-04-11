@@ -239,9 +239,8 @@ pub async fn approve_preview(
         _              => DaemonJobOutcome::Failed,
     };
 
-    if let Err(e) = app.emit("lacs:job-completed", outcome) {
-        eprintln!("[lacs-shell] failed to emit lacs:job-completed: {e}");
-    }
+    app.emit("lacs:job-completed", outcome)
+        .map_err(|e| format!("failed to emit lacs:job-completed: {e}"))?;
 
     Ok(())
 }

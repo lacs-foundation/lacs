@@ -7,7 +7,7 @@ const LOW_PLAN: PlanResponse = {
   explanation: "Inspects the current deployment.",
   approvalRequired: false,
   steps: [
-    { actionName: "GetSystemState", summary: "Read state", riskLevel: "low", approvalRequired: false },
+    { actionName: "GetSystemState", summary: "Read state", riskLevel: "low", approvalRequired: false, params: {} },
   ],
   hostName: "silverblue", deployment: "fedora/41", toolboxCount: 1, flatpakCount: 2,
 };
@@ -17,8 +17,8 @@ const HIGH_PLAN: PlanResponse = {
   explanation: "Layers vim via rpm-ostree.",
   approvalRequired: true,
   steps: [
-    { actionName: "GetSystemState", summary: "Read state", riskLevel: "low", approvalRequired: false },
-    { actionName: "InstallPackages", summary: "Layer vim", riskLevel: "high", approvalRequired: true },
+    { actionName: "GetSystemState", summary: "Read state", riskLevel: "low", approvalRequired: false, params: {} },
+    { actionName: "InstallPackages", summary: "Layer vim", riskLevel: "high", approvalRequired: true, params: {} },
   ],
   hostName: "silverblue", deployment: "fedora/41", toolboxCount: 0, flatpakCount: 0,
 };

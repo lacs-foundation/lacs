@@ -54,13 +54,20 @@ export async function subscribeDaemonEvents(
     },
   );
 
-  const outcomeUnlisten = await listen<ShellOutcome>("lacs:job-completed", (event) => {
-    onOutcome(event.payload);
-  });
+  let outcomeUnlisten: (() => void) | null = null;
+  try {
+    outcomeUnlisten = await listen<ShellOutcome>("lacs:job-completed", (event) => {
+      onOutcome(event.payload);
+    });
+  } catch (err) {
+    timelineUnlisten();
+    throw err;
+  }
 
+  const captured = outcomeUnlisten;
   return () => {
     timelineUnlisten();
-    outcomeUnlisten();
+    captured();
   };
 }
 

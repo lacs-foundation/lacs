@@ -76,14 +76,24 @@ fn preview_profile(action_name: &str) -> PreviewProfile {
         | "SetNtp"
         | "CreateUser"
         | "DeleteUser"
-        | "AddUserToGroup"
-        | "RemoveUserFromGroup"
         | "EnterToolbox" => PreviewProfile {
             risk_level: RiskLevel::Medium,
             expected_side_effects: vec!["service interruption".to_string()],
             reboot_required: false,
             rollback_available: false,
             warnings: vec!["approval required".to_string()],
+        },
+        "AddUserToGroup" | "RemoveUserFromGroup" => PreviewProfile {
+            // High risk: group membership changes to privileged groups (e.g. `wheel`)
+            // constitute privilege escalation; Admin authorization is required.
+            risk_level: RiskLevel::High,
+            expected_side_effects: vec!["group membership will change".to_string()],
+            reboot_required: false,
+            rollback_available: false,
+            warnings: vec![
+                "privilege change".to_string(),
+                "exact approval required".to_string(),
+            ],
         },
         "AddPackageRepository"
         | "RemovePackageRepository"

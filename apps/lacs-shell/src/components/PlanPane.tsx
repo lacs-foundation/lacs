@@ -61,7 +61,7 @@ export function PlanPane({ plan, mode, onApprove, error }: Props) {
 
       <ol className="plan-steps">
         {visibleSteps.map((step, i) => (
-          <li key={step.actionName} className="plan-step">
+          <li key={`${i}-${step.actionName}`} className="plan-step">
             <span className="plan-step__index">{i + 1}</span>
             <code className="plan-step__name">{step.actionName}</code>
             <span className="plan-step__summary">{step.summary}</span>

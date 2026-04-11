@@ -44,7 +44,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         });
                     }
                     Err(e) => {
-                        eprintln!("[lacs-daemon] accept error: {e}");
+                        use std::io::ErrorKind;
+                        match e.kind() {
+                            // Transient: connection aborted before accept completed.
+                            ErrorKind::ConnectionAborted | ErrorKind::ConnectionReset => {
+                                eprintln!("[lacs-daemon] transient accept error: {e}");
+                            }
+                            // Permanent: file descriptor exhaustion or bad socket.
+                            // Continuing would spin at 100 % CPU; shut down instead.
+                            _ => {
+                                eprintln!("[lacs-daemon] fatal accept error, shutting down: {e}");
+                                break;
+                            }
+                        }
                     }
                 }
             }
