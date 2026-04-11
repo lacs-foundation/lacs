@@ -1,0 +1,20 @@
+# sudoers fragment for the LACS privileged daemon.
+#
+# Deploy to: /etc/sudoers.d/lacs
+# Permissions: 0440  (sudo refuses files that are world-writable)
+#
+# These commands are not controllable via D-Bus / polkit and therefore
+# require a direct sudo invocation by the daemon process.
+# Only the exact commands listed here are allowed — no shell or wildcard.
+#
+# IMPORTANT: test with `visudo -cf /etc/sudoers.d/lacs` before deploying.
+
+Defaults:lacs !requiretty
+
+# User and group management (no D-Bus API available on most distros).
+lacs ALL=(root) NOPASSWD: /usr/sbin/useradd
+lacs ALL=(root) NOPASSWD: /usr/sbin/userdel
+lacs ALL=(root) NOPASSWD: /usr/sbin/usermod
+lacs ALL=(root) NOPASSWD: /usr/sbin/groupadd
+lacs ALL=(root) NOPASSWD: /usr/sbin/groupdel
+lacs ALL=(root) NOPASSWD: /usr/sbin/groupmod
