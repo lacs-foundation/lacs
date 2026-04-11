@@ -796,9 +796,7 @@ async fn stream_command_with_progress(
     let exit_status = child.wait().await.map_err(ExecutorError::Io)?;
     let stderr_bytes = stderr_task
         .await
-        .map_err(|_| {
-            ExecutorError::Io(std::io::Error::other("stderr reader task panicked"))
-        })?
+        .map_err(|_| ExecutorError::Io(std::io::Error::other("stderr reader task panicked")))?
         .map_err(ExecutorError::Io)?;
 
     Ok(ExecutionOutput {
