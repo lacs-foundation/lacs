@@ -18,7 +18,7 @@ use crate::provider::ToolDefinition;
 /// Must be kept in sync with the action catalogue in `lacs-daemon` once that
 /// crate is implemented. Until then this list is the authoritative source of
 /// valid action names.
-const KNOWN_ACTIONS: &[&str] = &[
+pub const KNOWN_ACTIONS: &[&str] = &[
     // Deployment and boot
     "GetSystemState",
     "CollectDiagnostics",
