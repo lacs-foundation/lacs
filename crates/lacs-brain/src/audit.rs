@@ -117,8 +117,7 @@ impl SafetyAuditLog {
             .create(true)
             .append(true)
             .open(&self.path)?;
-        let line = serde_json::to_string(entry)
-            .map_err(std::io::Error::other)?;
+        let line = serde_json::to_string(entry).map_err(std::io::Error::other)?;
         writeln!(file, "{line}")
     }
 
@@ -139,7 +138,11 @@ mod tests {
         let log_path = dir.path().join("audit.jsonl");
         let log = SafetyAuditLog::new(&log_path);
 
-        log.log_rejection("install vim", "step 0: unknown action_name 'RunShell'", r#"{"steps":[]}"#);
+        log.log_rejection(
+            "install vim",
+            "step 0: unknown action_name 'RunShell'",
+            r#"{"steps":[]}"#,
+        );
 
         let content = fs::read_to_string(&log_path).unwrap();
         let lines: Vec<&str> = content.lines().collect();

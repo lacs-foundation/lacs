@@ -42,8 +42,7 @@ impl CommandRunner for MockRunner {
 async fn spawn_handler(state: DaemonState) -> FramedStream<UnixStream> {
     let (client, server) = UnixStream::pair().unwrap();
     let runner: Arc<dyn CommandRunner + Send + Sync> = Arc::new(MockRunner);
-    let executor: Arc<dyn ActionExecutor> =
-        Arc::new(lacs_daemon::executor::RealActionExecutor);
+    let executor: Arc<dyn ActionExecutor> = Arc::new(lacs_daemon::executor::RealActionExecutor);
     tokio::spawn(async move {
         connection_handler_with_executor(server, state, runner, executor, CallerRole::Admin).await;
     });
@@ -182,9 +181,7 @@ async fn command_action_streams_lifecycle_events() {
 
     // Verify executing event.
     assert!(
-        lines
-            .iter()
-            .any(|l| l.contains("Executing GetSystemState")),
+        lines.iter().any(|l| l.contains("Executing GetSystemState")),
         "should have executing event; got: {lines:?}"
     );
 
@@ -233,13 +230,7 @@ async fn file_action_streams_lifecycle_events() {
     let mut framed = spawn_handler(state).await;
 
     let hash = preview_action(&mut framed, "ListPackageRepositories", json!({})).await;
-    execute_action(
-        &mut framed,
-        "ListPackageRepositories",
-        json!({}),
-        &hash,
-    )
-    .await;
+    execute_action(&mut framed, "ListPackageRepositories", json!({}), &hash).await;
 
     let messages = drain_until_completed(&mut framed).await;
     let lines = progress_lines(&messages);
@@ -315,9 +306,7 @@ async fn rollback_execution_includes_lifecycle_events() {
         "should have authorization event; got: {lines:?}"
     );
     assert!(
-        lines
-            .iter()
-            .any(|l| l.contains("Executing UpdateSystem")),
+        lines.iter().any(|l| l.contains("Executing UpdateSystem")),
         "should have executing event; got: {lines:?}"
     );
 

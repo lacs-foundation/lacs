@@ -606,7 +606,11 @@ async fn rejected_plan_is_written_to_safety_audit_log() {
     // Verify the audit log file was written.
     let content = std::fs::read_to_string(&log_path).unwrap();
     let lines: Vec<&str> = content.lines().collect();
-    assert_eq!(lines.len(), 1, "expected one rejection logged, got: {content}");
+    assert_eq!(
+        lines.len(),
+        1,
+        "expected one rejection logged, got: {content}"
+    );
 
     let entry: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
     assert_eq!(entry["event"], "safety_fence_rejection");
