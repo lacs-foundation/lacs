@@ -28,11 +28,18 @@ use serde_json::Value;
 /// Maximum response size accepted from the daemon (4 MiB — mirrors daemon limit).
 const MAX_RESPONSE_BYTES: u32 = 4 * 1024 * 1024;
 
-/// Read/write timeout applied to each daemon connection.
+/// Read/write timeout applied to each daemon connection for state collection.
 ///
 /// Prevents the shell from hanging indefinitely if the daemon is unresponsive.
 /// 10 seconds matches the timeout specified in the IPC spec for state collection.
 const SOCKET_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Per-step timeout for the execute read loop (seconds).
+///
+/// `rpm-ostree update` on a slow mirror can take 5–10 minutes. We allow
+/// up to 10 minutes per step. A hung daemon will be detected within this
+/// window and reported to the user as a failure.
+const EXECUTE_STEP_TIMEOUT_SECS: u64 = 600;
 
 /// A [`StateClient`] that queries a running `lacs-daemon` over its Unix socket.
 ///
@@ -246,9 +253,18 @@ pub async fn execute_action(
 
     // ── Stream responses ──────────────────────────────────────────────────────
     loop {
-        let raw = async_read_framed(&mut stream)
-            .await
-            .map_err(|e| format!("failed to read execute response: {e}"))?;
+        let raw = timeout(
+            TDuration::from_secs(EXECUTE_STEP_TIMEOUT_SECS),
+            async_read_framed(&mut stream),
+        )
+        .await
+        .map_err(|_| {
+            format!(
+                "daemon execute timed out after {EXECUTE_STEP_TIMEOUT_SECS}s; \
+                 the job may still be running on the daemon side"
+            )
+        })?
+        .map_err(|e| format!("failed to read execute response: {e}"))?;
 
         let msg: serde_json::Value = serde_json::from_slice(&raw)
             .map_err(|e| format!("invalid JSON in execute response: {e}"))?;
@@ -436,6 +452,21 @@ mod tests {
         assert!(
             matches!(err, PlanningError::StateUnavailable(_)),
             "expected StateUnavailable on connection failure, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn execute_step_timeout_is_reasonable() {
+        // Must be long enough for slow package operations (rpm-ostree update on
+        // a slow mirror can take 5-10 minutes) but bounded enough that a stuck
+        // daemon surfaces within a predictable window.
+        assert!(
+            EXECUTE_STEP_TIMEOUT_SECS >= 300,
+            "timeout {EXECUTE_STEP_TIMEOUT_SECS}s too short; rpm-ostree can take 5+ minutes"
+        );
+        assert!(
+            EXECUTE_STEP_TIMEOUT_SECS <= 1800,
+            "timeout {EXECUTE_STEP_TIMEOUT_SECS}s too long; stuck jobs should surface sooner"
         );
     }
 }
