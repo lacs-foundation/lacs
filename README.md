@@ -11,7 +11,7 @@ Every execution is logged to a local SQLite audit trail.
 <!-- TODO: replace with actual demo GIF once recorded on real hardware -->
 <!-- ![LACS demo](docs/assets/demo.gif) -->
 
-## Why not just use...
+## Why not just use
 
 | Tool | The problem |
 | --- | --- |
