@@ -65,6 +65,13 @@ pub struct BrainConfigResponse {
     pub fallback: bool,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetupStatus {
+    pub config_exists: bool,
+    pub provider_configured: bool,
+}
+
 // ---------------------------------------------------------------------------
 // Request types (deserialised from the frontend)
 // ---------------------------------------------------------------------------
@@ -261,6 +268,14 @@ pub fn get_brain_config(state: tauri::State<'_, ShellCommandState>) -> BrainConf
 }
 
 #[tauri::command]
+pub fn check_setup_status() -> SetupStatus {
+    SetupStatus {
+        config_exists: config_path_exists(),
+        provider_configured: provider_is_configured(),
+    }
+}
+
+#[tauri::command]
 pub fn cancel_job(app: AppHandle, job_id: String) -> Result<(), ShellError> {
     // Forward cancellation to daemon when daemon IPC wires cancellation support.
     // For now emits a local event so the frontend can transition to idle.
@@ -340,6 +355,43 @@ pub(crate) fn plan_to_response(plan: Plan, curated: &CuratedState) -> PlanRespon
         toolbox_count: curated.toolboxes.len(),
         flatpak_count: curated.flatpaks.len(),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Setup-status helpers (no daemon connection required)
+// ---------------------------------------------------------------------------
+
+/// Returns `true` when `~/.config/lacs/config.toml` (or equivalent XDG path)
+/// exists on disk.
+fn config_path_exists() -> bool {
+    lacs_core::config::LacsConfig::config_path().is_file()
+}
+
+/// Returns `true` when any of these hold:
+///
+/// 1. `ANTHROPIC_API_KEY` env var is set (non-empty), OR
+/// 2. `LACS_LLM_PROVIDER` env var is set (non-empty), OR
+/// 3. `config.toml` has `[llm] provider = "..."` set.
+fn provider_is_configured() -> bool {
+    if std::env::var("ANTHROPIC_API_KEY")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .is_some()
+    {
+        return true;
+    }
+    if std::env::var("LACS_LLM_PROVIDER")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .is_some()
+    {
+        return true;
+    }
+    let cfg = lacs_core::config::LacsConfig::load();
+    cfg.llm
+        .as_ref()
+        .and_then(|llm| llm.provider.as_deref())
+        .is_some_and(|p| !p.is_empty())
 }
 
 // ---------------------------------------------------------------------------

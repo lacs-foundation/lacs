@@ -2,8 +2,10 @@ import { useEffect, useReducer, useCallback, useState } from "react";
 import { IntentPane } from "./components/IntentPane";
 import { ExecutionPane } from "./components/ExecutionPane";
 import { PlanPane } from "./components/PlanPane";
+import { SetupWizard } from "./components/SetupWizard";
 import { TimelinePane } from "./components/TimelinePane";
 import {
+  checkSetupStatus,
   getBrainConfig,
   requestPlan,
   requestApproval,
@@ -30,6 +32,20 @@ const STATUS_LABELS: Record<string, string> = {
 export default function App() {
   const [state, dispatch] = useReducer(shellReducer, initialShellState);
   const [brainConfig, setBrainConfig] = useState<BrainConfigResponse | null>(null);
+  const [needsSetup, setNeedsSetup] = useState<boolean | null>(null);
+
+  // Check setup status on mount
+  useEffect(() => {
+    checkSetupStatus()
+      .then((status) => {
+        setNeedsSetup(!status.providerConfigured);
+      })
+      .catch((err: unknown) => {
+        console.warn("[LACS] checkSetupStatus failed:", err);
+        // If the check fails (e.g. not running in Tauri), skip the wizard
+        setNeedsSetup(false);
+      });
+  }, []);
 
   // Load brain config once on mount
   useEffect(() => {
@@ -146,6 +162,21 @@ export default function App() {
   const handleReset = useCallback(() => {
     dispatch({ type: "reset" });
   }, []);
+
+  // Show the setup wizard when no provider is configured
+  if (needsSetup) {
+    return (
+      <main className="app-shell">
+        <header className="app-header">
+          <div>
+            <p className="eyebrow">LACS</p>
+            <h1>Linux Agent Control Standard</h1>
+          </div>
+        </header>
+        <SetupWizard onDismiss={() => setNeedsSetup(false)} />
+      </main>
+    );
+  }
 
   const plan =
     state.mode === "previewing" ||

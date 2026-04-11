@@ -48,3 +48,8 @@ export interface ShellError {
 }
 
 export type DaemonStatus = "unknown" | "connected" | "unreachable";
+
+export interface SetupStatus {
+  configExists: boolean;
+  providerConfigured: boolean;
+}

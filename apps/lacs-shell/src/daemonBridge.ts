@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { BrainConfigResponse, DaemonStatus, PlanResponse, PlanStepResponse, ShellError } from "./types";
+import type { BrainConfigResponse, DaemonStatus, PlanResponse, PlanStepResponse, SetupStatus, ShellError } from "./types";
 import type { ShellOutcome, TimelineEntry, TimelineEntryKind } from "./shellState";
 
 // ---------------------------------------------------------------------------
@@ -29,6 +29,11 @@ export async function cancelJob(jobId: string): Promise<void> {
 export async function getBrainConfig(): Promise<BrainConfigResponse> {
   requireTauriRuntime();
   return invoke<BrainConfigResponse>("get_brain_config");
+}
+
+export async function checkSetupStatus(): Promise<SetupStatus> {
+  requireTauriRuntime();
+  return invoke<SetupStatus>("check_setup_status");
 }
 
 export async function subscribeDaemonEvents(

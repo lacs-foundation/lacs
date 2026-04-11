@@ -2,7 +2,10 @@ mod commands;
 mod daemon_client;
 mod events;
 
-use commands::{approve_preview, cancel_job, get_brain_config, plan_intent, ShellCommandState};
+use commands::{
+    approve_preview, cancel_job, check_setup_status, get_brain_config, plan_intent,
+    ShellCommandState,
+};
 
 /// Spawn a background task that probes the daemon socket continuously and
 /// emits `lacs:daemon-status` events whenever the reachability state changes.
@@ -84,6 +87,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             approve_preview,
             cancel_job,
+            check_setup_status,
             get_brain_config,
             plan_intent,
         ])

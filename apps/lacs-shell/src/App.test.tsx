@@ -15,6 +15,10 @@ vi.mock("./daemonBridge", () => ({
     model: "mistral:7b",
     fallback: false,
   }),
+  checkSetupStatus: vi.fn().mockResolvedValue({
+    configExists: true,
+    providerConfigured: true,
+  }),
   subscribeDaemonEvents: vi.fn().mockResolvedValue(() => undefined),
 }));
 
