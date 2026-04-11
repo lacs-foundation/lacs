@@ -17,11 +17,13 @@
 //! - Role is checked against the action's risk level before preview and again
 //!   before execute.
 
+use std::process::Stdio;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::net::UnixStream;
 use uuid::Uuid;
 
@@ -29,7 +31,7 @@ use lacs_types::{CallerRole, JobState, PreviewEnvelope, RequestEnvelope, RiskLev
 
 use crate::{
     auth::highest_role_from_groups,
-    executor::{build_action_spec, execute_spec},
+    executor::{build_action_spec, execute_spec, rollback_spec_for, ExecutionOutput, ExecutorError},
     preview::preview_action,
     state::DaemonState,
     state_collector::{collect_state, CollectedState, CommandRunner},
@@ -662,8 +664,14 @@ async fn handle_execute(
     )
     .await?;
 
-    // Execute the action.
-    let output = execute_spec(&spec).await;
+    // Execute the action. Command actions stream stdout live as JobProgress
+    // frames; file-operation actions complete instantly with no output.
+    let output = match &spec.mechanism {
+        crate::actions::ActionMechanism::Command { program, args } => {
+            stream_command_with_progress(framed, &job_id, program, args).await
+        }
+        _ => execute_spec(&spec).await,
+    };
 
     let (final_status, summary) = match &output {
         Ok(out) if out.exit_code == 0 => {
@@ -685,25 +693,6 @@ async fn handle_execute(
         ),
         Err(e) => (JobState::Failed, format!("{action_name} failed: {e}")),
     };
-
-    // Stream stdout lines as progress events.
-    if let Ok(out) = &output {
-        for line in out.stdout.lines() {
-            if !line.is_empty() {
-                if let Err(e) = send_response(
-                    framed,
-                    &DaemonResponse::JobProgress {
-                        job_id: job_id.clone(),
-                        line: line.to_string(),
-                    },
-                )
-                .await
-                {
-                    eprintln!("[lacs-daemon] progress send failed (client disconnected?): {e}");
-                }
-            }
-        }
-    }
 
     // Update the transaction record. A failure here is an audit-trail loss —
     // log it. The job result is still sent to the client.
@@ -733,6 +722,149 @@ async fn handle_execute(
         },
     )
     .await
+}
+
+/// Execute a `Command` action, streaming each stdout line to `framed` as a
+/// `JobProgress` frame while the process runs.
+///
+/// Stderr is read concurrently via a spawned task to prevent deadlock when
+/// the OS stderr buffer fills before stdout is exhausted.
+async fn stream_command_with_progress(
+    framed: &mut FramedStream<UnixStream>,
+    job_id: &str,
+    program: &'static str,
+    args: &[String],
+) -> Result<ExecutionOutput, ExecutorError> {
+    let mut child = tokio::process::Command::new(program)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(ExecutorError::Io)?;
+
+    let stdout = child.stdout.take().expect("stdout was piped");
+    let stderr = child.stderr.take().expect("stderr was piped");
+
+    // Read stderr concurrently — if we exhaust stdout first and the process
+    // has filled the OS stderr buffer, the process blocks on writing stderr
+    // while we wait for stdout EOF: deadlock.
+    let stderr_task = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        BufReader::new(stderr).read_to_end(&mut buf).await.map(|_| buf)
+    });
+
+    let mut lines = BufReader::new(stdout).lines();
+    let mut stdout_buf = String::new();
+
+    while let Some(line) = lines.next_line().await.map_err(ExecutorError::Io)? {
+        if !line.is_empty() {
+            if let Err(e) = send_response(
+                framed,
+                &DaemonResponse::JobProgress {
+                    job_id: job_id.to_string(),
+                    line: line.clone(),
+                },
+            )
+            .await
+            {
+                // Client disconnected mid-execution. Log and continue — the
+                // daemon must not abort privileged operations because the
+                // shell dropped its connection.
+                eprintln!("[lacs-daemon] progress send failed (client disconnected?): {e}");
+            }
+        }
+        stdout_buf.push_str(&line);
+        stdout_buf.push('\n');
+    }
+
+    let exit_status = child.wait().await.map_err(ExecutorError::Io)?;
+    let stderr_bytes = stderr_task
+        .await
+        .map_err(|_| {
+            ExecutorError::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "stderr reader task panicked",
+            ))
+        })?
+        .map_err(ExecutorError::Io)?;
+
+    Ok(ExecutionOutput {
+        stdout: stdout_buf,
+        stderr: String::from_utf8_lossy(&stderr_bytes).into_owned(),
+        exit_code: exit_status.code().unwrap_or(-1),
+    })
+}
+
+/// If `status` is `Failed` and `spec.rollback_available`, attempt an
+/// automatic rollback. Returns the updated `(JobState, summary, rollback_ref)`.
+///
+/// Sends `JobProgress` frames announcing the attempt and its outcome.
+/// Send failures are logged but do not abort the rollback.
+async fn attempt_rollback_if_needed(
+    framed: &mut FramedStream<UnixStream>,
+    job_id: &str,
+    action_name: &str,
+    spec: &crate::actions::ActionSpec,
+    status: JobState,
+    summary: String,
+) -> (JobState, String, Option<String>) {
+    if !matches!(status, JobState::Failed) || !spec.rollback_available {
+        return (status, summary, None);
+    }
+    let Some(rb_spec) = rollback_spec_for(action_name) else {
+        return (status, summary, None);
+    };
+
+    eprintln!("[lacs-daemon] {action_name} failed; attempting automatic rollback");
+
+    let _ = send_response(
+        framed,
+        &DaemonResponse::JobProgress {
+            job_id: job_id.to_string(),
+            line: format!(
+                "{action_name} failed — attempting automatic rollback via rpm-ostree rollback"
+            ),
+        },
+    )
+    .await;
+
+    match execute_spec(&rb_spec).await {
+        Ok(rb_out) if rb_out.exit_code == 0 => {
+            let _ = send_response(
+                framed,
+                &DaemonResponse::JobProgress {
+                    job_id: job_id.to_string(),
+                    line: "Rollback succeeded — previous deployment restored".to_string(),
+                },
+            )
+            .await;
+            (
+                JobState::RolledBack,
+                format!(
+                    "{action_name} failed and was automatically rolled back to the previous deployment"
+                ),
+                Some("rpm-ostree rollback".to_string()),
+            )
+        }
+        other => {
+            let detail = match &other {
+                Ok(o) => format!("exit code {}", o.exit_code),
+                Err(e) => e.to_string(),
+            };
+            eprintln!("[lacs-daemon] rollback also failed: {detail}");
+            let _ = send_response(
+                framed,
+                &DaemonResponse::JobProgress {
+                    job_id: job_id.to_string(),
+                    line: format!(
+                        "Rollback also failed ({detail}) — system may need manual intervention"
+                    ),
+                },
+            )
+            .await;
+            (status, summary, None)
+        }
+    }
 }
 
 fn job_state_str(state: &JobState) -> &'static str {
@@ -1142,5 +1274,42 @@ mod tests {
 
         assert_eq!(resps[0]["type"], "error_response");
         assert_eq!(resps[0]["category"], "validation_failure");
+    }
+
+    // ------------------------------------------------------------------
+    // stream_command_with_progress
+    // ------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn stream_command_sends_job_progress_lines_during_execution() {
+        // stream_command_with_progress must emit JobProgress frames for each
+        // stdout line WHILE the process runs, not after it exits.
+        let (client_stream, server_stream) = tokio::net::UnixStream::pair().unwrap();
+        let mut framed_server = FramedStream::new(server_stream);
+
+        // Run echo in a spawned task — it exits after producing output.
+        let handle = tokio::spawn(async move {
+            stream_command_with_progress(
+                &mut framed_server,
+                "job-test-123",
+                "echo",
+                &["hello from stream".to_string()],
+            )
+            .await
+            .unwrap()
+        });
+
+        // The client should receive a JobProgress frame before the task joins.
+        let mut framed_client = FramedStream::new(client_stream);
+        let raw = framed_client.recv().await.unwrap();
+        let msg: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+
+        assert_eq!(msg["type"], "job_progress", "expected job_progress, got: {msg}");
+        assert_eq!(msg["job_id"], "job-test-123");
+        assert_eq!(msg["line"], "hello from stream");
+
+        let out = handle.await.unwrap();
+        assert_eq!(out.exit_code, 0);
+        assert!(out.stdout.contains("hello from stream"));
     }
 }
