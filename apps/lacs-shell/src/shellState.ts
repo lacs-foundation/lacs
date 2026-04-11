@@ -1,3 +1,46 @@
+import type { DaemonStatus, PlanResponse, ShellError } from "./types";
+
+export type { DaemonStatus, ShellError } from "./types";
+
+// ---------------------------------------------------------------------------
+// Timeline
+// ---------------------------------------------------------------------------
+
+export type TimelineEntryKind =
+  | "system"   // state transitions, daemon events
+  | "user"     // explicit user actions
+  | "success"  // completions
+  | "warning"  // reboot required, rollbacks, cancellations
+  | "error";   // failures, policy denials
+
+export interface TimelineEntry {
+  id: string;
+  timestamp: string;  // HH:MM:SS wall-clock, set in appendTimeline
+  kind: TimelineEntryKind;
+  text: string;
+}
+
+// ---------------------------------------------------------------------------
+// Outcome
+// ---------------------------------------------------------------------------
+
+export type ShellOutcome =
+  | "succeeded"
+  | "needs_reboot"
+  | "failed"      // execution failure → transitions to "failed" mode
+  | "rolled_back"
+  | "canceled";
+
+// ---------------------------------------------------------------------------
+// State — discriminated union
+//
+// Invariants:
+//   plan is non-null iff mode is previewing/awaiting-approval/executing/needs-reboot/rolled-back/failed
+//   activeJobId is non-null only in executing
+//   error is non-null only in idle (planning / pre-flight failures)
+//   planError is non-null only in previewing / awaiting-approval (policy errors)
+// ---------------------------------------------------------------------------
+
 export type ShellMode =
   | "idle"
   | "planning"
@@ -8,37 +51,64 @@ export type ShellMode =
   | "failed"
   | "rolled-back";
 
-export type ShellOutcome = "succeeded" | "needs_reboot" | "failed" | "rolled_back";
+type Base = {
+  intent: string;
+  timeline: TimelineEntry[];
+  daemonStatus: DaemonStatus;
+};
 
-export interface ShellPreview {
-  summary: string;
-}
+type IdleState = Base & {
+  mode: "idle";
+  plan: null;
+  activeJobId: null;
+  error: ShellError | null;
+};
 
-export interface TimelineEntry {
-  id: string;
-  text: string;
-}
+type PlanningState = Base & {
+  mode: "planning";
+  plan: null;
+  activeJobId: null;
+};
 
-// ---------------------------------------------------------------------------
-// Discriminated union — invalid mode/field combinations are unrepresentable.
-//
-// Invariants encoded at the type level:
-//   - "previewing" and "awaiting-approval" require a non-null preview
-//   - "executing" requires a non-null activeJobId
-//   - "idle" and "planning" have no preview and no activeJobId
-// ---------------------------------------------------------------------------
+type PreviewingState = Base & {
+  mode: "previewing";
+  plan: PlanResponse;
+  activeJobId: null;
+  planError: ShellError | null;
+};
 
-type Base = { intent: string; timeline: TimelineEntry[] };
+type ApprovingState = Base & {
+  mode: "awaiting-approval";
+  plan: PlanResponse;
+  activeJobId: null;
+  planError: ShellError | null;
+};
 
-type IdleState        = Base & { mode: "idle";              preview: null;               activeJobId: null   };
-type PlanningState    = Base & { mode: "planning";          preview: null;               activeJobId: null   };
-type PreviewingState  = Base & { mode: "previewing";        preview: ShellPreview;       activeJobId: null   };
-type ApprovingState   = Base & { mode: "awaiting-approval"; preview: ShellPreview;       activeJobId: null   };
-type ExecutingState   = Base & { mode: "executing";         preview: ShellPreview;       activeJobId: string };
-type NeedsRebootState = Base & { mode: "needs-reboot";      preview: ShellPreview;       activeJobId: null   };
-// Terminal error states may be reached before a preview exists (e.g. planning failure)
-type FailedState      = Base & { mode: "failed";            preview: ShellPreview | null; activeJobId: null  };
-type RolledBackState  = Base & { mode: "rolled-back";       preview: ShellPreview | null; activeJobId: null  };
+type ExecutingState = Base & {
+  mode: "executing";
+  plan: PlanResponse;
+  activeJobId: string;
+};
+
+type NeedsRebootState = Base & {
+  mode: "needs-reboot";
+  plan: PlanResponse;
+  activeJobId: null;
+};
+
+// failed is only reached from execution — plan is always present.
+type FailedState = Base & {
+  mode: "failed";
+  plan: PlanResponse;
+  activeJobId: null;
+};
+
+// rolled-back is only reached from execution — plan is always present.
+type RolledBackState = Base & {
+  mode: "rolled-back";
+  plan: PlanResponse;
+  activeJobId: null;
+};
 
 export type ShellState =
   | IdleState
@@ -50,22 +120,40 @@ export type ShellState =
   | FailedState
   | RolledBackState;
 
+// ---------------------------------------------------------------------------
+// Actions
+// ---------------------------------------------------------------------------
+
 export type ShellAction =
   | { type: "intent_submitted"; intent: string }
-  | { type: "preview_ready"; summary: string }
+  | { type: "plan_ready"; plan: PlanResponse }
   | { type: "request_approval" }
   | { type: "approval_granted" }
   | { type: "job_completed"; outcome: ShellOutcome }
-  | { type: "timeline_event"; text: string }
+  | { type: "timeline_event"; text: string; kind: TimelineEntryKind }
+  | { type: "plan_errored"; error: ShellError }       // categories 1–2: stays idle
+  | { type: "policy_errored"; error: ShellError }     // category 3: stays previewing/approving
+  | { type: "cancel_requested" }
+  | { type: "daemon_status_changed"; status: DaemonStatus }
   | { type: "reset" };
+
+// ---------------------------------------------------------------------------
+// Initial state
+// ---------------------------------------------------------------------------
 
 export const initialShellState: ShellState = {
   mode: "idle",
   intent: "",
-  preview: null,
+  plan: null,
   activeJobId: null,
+  error: null,
+  daemonStatus: "unknown",
   timeline: [],
 };
+
+// ---------------------------------------------------------------------------
+// Reducer
+// ---------------------------------------------------------------------------
 
 export function shellReducer(state: ShellState, action: ShellAction): ShellState {
   switch (action.type) {
@@ -73,103 +161,166 @@ export function shellReducer(state: ShellState, action: ShellAction): ShellState
       const next: PlanningState = {
         mode: "planning",
         intent: action.intent,
-        preview: null,
+        plan: null,
         activeJobId: null,
+        daemonStatus: state.daemonStatus,
         timeline: state.timeline,
       };
-      return appendTimeline(next, `Intent submitted: ${action.intent}`);
+      return appendTimeline(next, `Intent submitted: ${action.intent}`, "user");
     }
 
-    case "preview_ready": {
+    case "plan_ready": {
       const next: PreviewingState = {
         mode: "previewing",
         intent: state.intent,
-        preview: { summary: action.summary },
+        plan: action.plan,
         activeJobId: null,
+        planError: null,
+        daemonStatus: state.daemonStatus,
         timeline: state.timeline,
       };
-      return appendTimeline(next, `Preview ready: ${action.summary}`);
+      return appendTimeline(next, `Plan ready: ${action.plan.summary}`, "system");
     }
 
     case "request_approval": {
-      // Only reachable from "previewing" which guarantees preview is non-null.
-      const preview = state.preview as ShellPreview;
+      if (state.mode !== "previewing") return state;
       const next: ApprovingState = {
         mode: "awaiting-approval",
         intent: state.intent,
-        preview,
+        plan: state.plan,
         activeJobId: null,
+        planError: null,
+        daemonStatus: state.daemonStatus,
         timeline: state.timeline,
       };
-      return appendTimeline(next, "Awaiting user approval");
+      return appendTimeline(next, "Awaiting user approval", "system");
     }
 
     case "approval_granted": {
-      // Only reachable from "awaiting-approval" which guarantees preview is non-null.
-      const preview = state.preview as ShellPreview;
+      if (state.mode !== "awaiting-approval") return state;
       const next: ExecutingState = {
         mode: "executing",
         intent: state.intent,
-        preview,
-        // TODO(task-8): job ID must come from the daemon's approval response.
-        // Remove this synthesised ID once approve_preview returns a real job ID.
-        activeJobId: `job-${state.timeline.length + 1}`,
+        plan: state.plan,
+        activeJobId: "pending",
+        daemonStatus: state.daemonStatus,
         timeline: state.timeline,
       };
-      return appendTimeline(next, "Approval granted");
+      return appendTimeline(next, "Approval granted — executing", "user");
     }
 
     case "job_completed": {
-      if (action.outcome === "needs_reboot") {
+      const { outcome } = action;
+
+      if (outcome === "succeeded") {
+        const next: IdleState = {
+          mode: "idle",
+          intent: state.intent,
+          plan: null,
+          activeJobId: null,
+          error: null,
+          daemonStatus: state.daemonStatus,
+          timeline: state.timeline,
+        };
+        return appendTimeline(next, "Job completed successfully", "success");
+      }
+
+      if (outcome === "needs_reboot") {
+        if (state.mode !== "executing") return state;
+        const { plan } = state;
         const next: NeedsRebootState = {
           mode: "needs-reboot",
           intent: state.intent,
-          preview: state.preview as ShellPreview,
+          plan,
           activeJobId: null,
+          daemonStatus: state.daemonStatus,
           timeline: state.timeline,
         };
-        return appendTimeline(next, "Job completed; reboot required");
+        return appendTimeline(next, "Job completed — reboot required", "warning");
       }
-      if (action.outcome === "rolled_back") {
+
+      if (outcome === "rolled_back") {
+        if (state.mode !== "executing") return state;
+        const { plan } = state;
         const next: RolledBackState = {
           mode: "rolled-back",
           intent: state.intent,
-          preview: state.preview,
+          plan,
           activeJobId: null,
+          daemonStatus: state.daemonStatus,
           timeline: state.timeline,
         };
-        return appendTimeline(next, "Job rolled back");
+        return appendTimeline(next, "Job rolled back", "warning");
       }
-      if (action.outcome === "failed") {
-        const next: FailedState = {
-          mode: "failed",
+
+      if (outcome === "canceled") {
+        const next: IdleState = {
+          mode: "idle",
           intent: state.intent,
-          preview: state.preview,
+          plan: null,
           activeJobId: null,
+          error: null,
+          daemonStatus: state.daemonStatus,
           timeline: state.timeline,
         };
-        return appendTimeline(next, "Job failed");
+        return appendTimeline(next, "Job canceled", "warning");
       }
-      // "succeeded"
+
+      // "failed" — execution failure; plan must be present
+      if (state.mode !== "executing") return state;
+      const { plan } = state;
+      const next: FailedState = {
+        mode: "failed",
+        intent: state.intent,
+        plan,
+        activeJobId: null,
+        daemonStatus: state.daemonStatus,
+        timeline: state.timeline,
+      };
+      return appendTimeline(next, "Job failed", "error");
+    }
+
+    case "plan_errored": {
+      // Pre-flight or planning failure — stays idle, error shown inline in IntentPane.
       const next: IdleState = {
         mode: "idle",
         intent: state.intent,
-        preview: null,
+        plan: null,
         activeJobId: null,
+        error: action.error,
+        daemonStatus: state.daemonStatus,
         timeline: state.timeline,
       };
-      return appendTimeline(next, "Job completed successfully");
+      return appendTimeline(next, `Planning failed: ${action.error.message}`, "error");
     }
 
-    case "timeline_event":
-      return appendTimeline(state, action.text);
+    case "policy_errored": {
+      // Policy / stale-approval failure — stays previewing or awaiting-approval.
+      if (state.mode !== "previewing" && state.mode !== "awaiting-approval") return state;
+      const next = {
+        ...state,
+        planError: action.error,
+      } as PreviewingState | ApprovingState;
+      return appendTimeline(next, `Policy error: ${action.error.message}`, "error");
+    }
 
-    case "reset":
+    case "cancel_requested": {
+      return appendTimeline(state, "Cancellation requested", "user");
+    }
+
+    case "daemon_status_changed": {
+      return { ...state, daemonStatus: action.status };
+    }
+
+    case "timeline_event": {
+      return appendTimeline(state, action.text, action.kind);
+    }
+
+    case "reset": {
       return initialShellState;
+    }
 
     default: {
-      // TypeScript exhaustiveness check: if a new ShellAction variant is added
-      // without a matching case, this line produces a compile error.
       const exhaustiveCheck: never = action;
       console.warn("[LACS] shellReducer received unknown action:", exhaustiveCheck);
       return state;
@@ -177,13 +328,26 @@ export function shellReducer(state: ShellState, action: ShellAction): ShellState
   }
 }
 
-// Generic so the discriminant is preserved through the spread.
-function appendTimeline<S extends ShellState>(state: S, text: string): S {
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function appendTimeline<S extends ShellState>(
+  state: S,
+  text: string,
+  kind: TimelineEntryKind,
+): S {
+  const timestamp = new Date().toLocaleTimeString("en-US", {
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
   return {
     ...state,
     timeline: [
       ...state.timeline,
-      { id: String(state.timeline.length + 1), text },
+      { id: String(state.timeline.length + 1), timestamp, kind, text },
     ],
   } as S;
 }

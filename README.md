@@ -22,17 +22,19 @@ It is a privileged Linux execution layer with:
 
 ## Current Status
 
-LACS is under active development. The brain planning layer is
-complete and all 143 Rust tests pass. The daemon action framework
-and shell UI scaffolding are in place; daemon-to-shell IPC and
-end-to-end execution are the next milestone.
+LACS is under active development. 176 Rust tests pass. The brain
+planning layer is complete, and the daemon IPC foundation (framing,
+state collection, action execution, transaction tracking) is
+implemented. The dispatcher and shell client are the next milestone.
 
 | Component | Status |
 | --- | --- |
 | `lacs-brain` — LLM planner, tool loop, safety fence | **complete** |
-| `lacs-daemon` — action families, policy, previews, jobs | scaffolded |
+| `lacs-daemon` — action families, policy, previews, transactions | **complete** |
+| `lacs-daemon` — IPC framing, executor, state collector | **complete** |
+| `lacs-daemon` — dispatcher (connection handler, job loop) | in progress |
 | `lacs-shell` — intent, plan, approval, timeline UI | scaffolded |
-| daemon ↔ shell IPC | not yet wired |
+| daemon ↔ shell IPC | in progress |
 
 Reference docs:
 
@@ -64,7 +66,7 @@ We welcome contributors who care about:
 ## How To Get Started
 
 1. Read the spec.
-2. Read the implementation plan.
+2. Read the [daemon IPC spec](docs/plans/2026-04-10-lacs-daemon-ipc-spec.md) for active work.
 3. Open an issue for any substantial change.
 4. Keep pull requests small and reviewable.
 5. Preserve the trust boundary: planner, shell, and daemon stay separate.

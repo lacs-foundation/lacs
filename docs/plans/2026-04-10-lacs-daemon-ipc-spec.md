@@ -1,6 +1,6 @@
 # LACS Daemon IPC Specification
 
-**Status:** Draft — 2026-04-10
+**Status:** In progress — 2026-04-10 (steps 1–7 complete; step 8 remaining)
 
 ## Scope
 
@@ -424,46 +424,43 @@ systems — the brain's safety fence will reject irrelevant actions.
 
 ## 7. Action Executor
 
-`lacs-daemon/src/executor.rs` — owns `build_action_spec` (§5) and
-`execute_spec`.
+**Implemented.** `lacs-daemon/src/executor.rs` owns `build_action_spec`
+(§5) and `execute_spec`.
+
+The shipped API returns raw command output rather than a pre-interpreted
+`JobState`. The dispatcher (§4) is responsible for interpreting exit
+codes, streaming progress lines, and mapping the result to `JobState`.
 
 ```rust
-pub struct ExecutorOutcome {
-    pub status: JobState,
-    pub summary: String,
-    pub warnings: Vec<String>,
-    pub needs_reboot: bool,
-    pub rollback_ref: Option<String>,
+/// Raw output from a single mechanism execution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutionOutput {
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: i32,
 }
 
-pub async fn execute_spec(
-    spec: &ActionSpec,
-    params: &Value,
-    progress_tx: mpsc::Sender<String>,
-) -> ExecutorOutcome { ... }
+pub async fn execute_spec(spec: &ActionSpec) -> Result<ExecutionOutput, ExecutorError>
 ```
 
 `execute_spec` pattern-matches on `spec.mechanism`:
 
 - `ActionMechanism::Command { program, args }` — spawns
-  `tokio::process::Command`, streams stdout lines to `progress_tx`,
-  waits for exit, maps exit code to `JobState`.
-- `ActionMechanism::FileScan { path }` — reads the file, sends its
-  content as one progress line.
-- `ActionMechanism::FileWrite { path, content }` — writes atomically
-  (write to `.tmp`, `rename`).
-- `ActionMechanism::FilePatch { path, search, replace }` — read,
-  replace first occurrence, write back.
-- `ActionMechanism::FileDelete { path }` — `fs::remove_file`.
+  `tokio::process::Command` directly (no shell expansion), captures
+  stdout and stderr, returns `exit_code`.
+- `ActionMechanism::FileScan { path }` — reads directory entries,
+  returns sorted filenames newline-separated in `stdout`.
+- `ActionMechanism::FileWrite { path, content }` — writes content,
+  creating parent directories if needed.
+- `ActionMechanism::FilePatch { path, search, replace }` — reads,
+  replaces the first occurrence, writes back.
+- `ActionMechanism::FileDelete { path }` — `tokio::fs::remove_file`.
 
-For `Command`, the daemon runs the program directly (no shell
-expansion). If `spec.reboot_required` is true and exit code is 0, the
-outcome sets `needs_reboot: true` and the job reaches `NeedsReboot`
-state.
-
-Rollback hint for `rollback_available` actions: capture the pre-change
-state snapshot (e.g., `rpm-ostree status --json` before `upgrade`) and
-store it as `rollback_ref` in the transaction.
+**Dispatcher responsibility:** The dispatcher spawns `execute_spec`,
+streams stdout lines as `job_progress` messages, checks `exit_code`
+and `spec.reboot_required` to determine final `JobState`, and calls
+`TransactionStore::update_status`. If `spec.reboot_required` is true
+and `exit_code == 0`, the job reaches `NeedsReboot` state.
 
 ---
 
@@ -609,21 +606,23 @@ connection open.
 
 ## 11. New Files
 
-| File | Purpose |
-|---|---|
-| `crates/lacs-daemon/src/transport/framing.rs` | `FramedStream` — 4-byte LE read/write |
-| `crates/lacs-daemon/src/executor.rs` | `build_action_spec` + `execute_spec` |
-| `crates/lacs-daemon/src/state_collector.rs` | `collect_curated_state()` async fn |
-| `crates/lacs-daemon/src/dispatcher.rs` | `connection_handler` + per-request handlers |
-| `apps/lacs-shell/src-tauri/src/daemon_client.rs` | `DaemonIpcClient` + reader task |
+| File | Status | Purpose |
+|---|---|---|
+| `crates/lacs-daemon/src/transport/framing.rs` | **done** | `FramedStream` — 4-byte LE read/write; 8 tests |
+| `crates/lacs-daemon/src/executor.rs` | **done** | `build_action_spec` + `execute_spec`; 15 tests |
+| `crates/lacs-daemon/src/state_collector.rs` | **done** | `collect_state()` via `CommandRunner` trait; 8 tests (rpm-ostree best-effort) |
+| `crates/lacs-daemon/src/dispatcher.rs` | **done** | `connection_handler` + per-request handlers; 14 unit tests |
+| `apps/lacs-shell/src-tauri/src/daemon_client.rs` | **done (partial)** | Synchronous `DaemonIpcClient` (per-call connect); 3 tests. Persistent connection (ss1.3) is follow-on work. |
 
 ### Modified files
 
-| File | Change |
-|---|---|
-| `crates/lacs-daemon/src/transactions.rs` | Add `update_status` method |
-| `crates/lacs-daemon/src/main.rs` | Add accept loop calling `dispatcher::connection_handler` |
-| `apps/lacs-shell/src-tauri/src/commands.rs` | Replace `DemoStateClient` with `DaemonIpcClient`; rewrite `approve_preview` |
+| File | Status | Change |
+|---|---|---|
+| `crates/lacs-daemon/src/transactions.rs` | **done** | `update_status` + `find_by_request_hash` (Queued-only, replay safe); 8 tests |
+| `crates/lacs-daemon/src/actions/deployment.rs` | **done** | Parameterized `pin_deployment`, `unpin_deployment`, `rebase_system`, `set_kernel_arguments` |
+| `crates/lacs-daemon/src/auth.rs` | **done** | 10 unit tests added |
+| `crates/lacs-daemon/src/main.rs` | **done** | Tokio accept loop with Ctrl-C signal handling |
+| `apps/lacs-shell/src-tauri/src/commands.rs` | **partial** | `DemoStateClient` replaced with `DaemonIpcClient` for `plan_intent`. `approve_preview` still emits a Tauri event only (see ss8.3 remaining work). |
 
 ---
 
@@ -631,30 +630,30 @@ connection open.
 
 Work in this order so each step leaves a testable system:
 
-1. `framing.rs` — `FramedStream` with unit tests (encode/decode round-trip)
-2. `state_collector.rs` — `collect_curated_state()` with integration test on the
-   real system (can be skipped in CI with `#[ignore]`)
-3. `executor.rs` — `build_action_spec` with unit tests for every action; `execute_spec`
-   integration tests using `echo` / `true` as stand-in commands
-4. `transactions.rs` — add `update_status`; update existing tests
-5. `dispatcher.rs` — `connection_handler` with integration tests using a
-   `UnixStream` pair (`socketpair`)
-6. `daemon main.rs` — accept loop; test that the daemon starts and accepts a connection
-7. `daemon_client.rs` — `DaemonIpcClient` with integration test against a real daemon
-   started as a subprocess
-8. `commands.rs` — replace `DemoStateClient`, rewrite `approve_preview`
+1. ✅ `framing.rs` — `FramedStream` with unit tests (encode/decode round-trip, max-size rejection)
+2. ✅ `state_collector.rs` — `collect_state()` via `CommandRunner` trait; mock-based unit tests
+3. ✅ `executor.rs` — `build_action_spec` unit tests for all ~60 actions; `execute_spec`
+   tests using `echo`, tempfile operations
+4. ✅ `transactions.rs` — `update_status` + `find_by_request_hash`; 8 unit tests
+5. ✅ `dispatcher.rs` — `connection_handler` with 14 unit tests and 2 integration tests
+6. ✅ `daemon main.rs` — Tokio accept loop; 2 integration tests (query_state, multi-client)
+7. ✅ `daemon_client.rs` — synchronous `DaemonIpcClient` with 10s timeout; 3 unit tests
+8. ⬜ `commands.rs` — rewrite `approve_preview` to call daemon `execute` via IPC;
+   wire `ShellCommandState` with a persistent `DaemonIpcClient` (see §8.1–8.4)
 
 ---
 
 ## 13. Test Plan
 
-| Layer | What to test |
-|---|---|
-| `framing.rs` | round-trip for messages of 0, 1, 4095, 4096 bytes; max-size rejection |
-| `executor.rs` | every action name → valid `ActionSpec`; missing param returns `MissingParam`; unknown name returns `UnknownAction` |
-| `state_collector.rs` | fallback when commands are missing (mock `PATH`); field parsing for each command |
-| `dispatcher.rs` | full preview → execute → job_completed flow over a `socketpair`; stale approval is rejected; insufficient role returns `authorization_failure` |
-| `daemon_client.rs` | connects to real daemon; `query_state` returns non-empty `CuratedState`; `execute` on a no-op action returns `succeeded` |
-| `commands.rs` | existing 6 tests still pass; new test for `approve_preview` forwarding to daemon mock |
+| Layer | Status | What to test |
+|---|---|---|
+| `framing.rs` | ✅ 8 tests | round-trip for 0, 1, 4095, 4096 bytes, JSON payload; max-size rejection on send and recv; multiple messages on same stream |
+| `executor.rs` | ✅ 15 tests | every action name → valid `ActionSpec`; pin/rebase/kargs param injection; missing param returns `MissingParam`; unknown name returns `UnknownAction`; all 5 mechanism variants via `execute_spec` |
+| `state_collector.rs` | ✅ 8 tests | hostname/deployment parsing; whitespace trimming; optional commands default to empty; rpm-ostree missing → empty deployment; `CollectedState` JSON round-trip |
+| `transactions.rs` | ✅ 8 tests | `update_status` transitions; NotFound; replay protection (find_by_request_hash returns None after execution) |
+| `auth.rs` | ✅ 10 tests | all role mappings; wheel=Admin; Boot beats Admin; mixed known/unknown groups |
+| `dispatcher.rs` | ✅ 14 unit + 2 integration | full preview → execute → job_completed; stale approval; insufficient role; canonical_json array recursion; replay protection |
+| `daemon_client.rs` | ✅ 3 unit tests | state_response parsing; error_response mapping; unreachable daemon |
+| `commands.rs` | ⬜ | `approve_preview` must call daemon `execute` (currently emits event only) |
 
-Existing tests (`cargo test --workspace`) must remain green at each step.
+Current: 208 tests passing (`cargo test --workspace`). All must remain green.

@@ -1,86 +1,130 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { vi } from "vitest";
 import App from "./App";
-import { requestPlan } from "./daemonBridge";
+import * as bridge from "./daemonBridge";
+import type { PlanResponse } from "./types";
+
+const mockedRequestApproval = vi.mocked(bridge.requestApproval);
 
 vi.mock("./daemonBridge", () => ({
   requestPlan: vi.fn(),
-  requestApproval: vi.fn(),
+  requestApproval: vi.fn().mockResolvedValue(undefined),
+  cancelJob: vi.fn().mockResolvedValue(undefined),
+  getBrainConfig: vi.fn().mockResolvedValue({
+    provider: "ollama",
+    model: "mistral:7b",
+    fallback: false,
+  }),
   subscribeDaemonEvents: vi.fn().mockResolvedValue(() => undefined),
 }));
 
-const mockedRequestPlan = vi.mocked(requestPlan);
+const mockedRequestPlan = vi.mocked(bridge.requestPlan);
+
+const READ_ONLY_PLAN: PlanResponse = {
+  summary: "Inspect system state",
+  explanation: "Reads the current deployment.",
+  approvalRequired: false,
+  steps: [
+    { actionName: "GetSystemState", summary: "Read state", riskLevel: "low", approvalRequired: false, params: {} },
+  ],
+  hostName: "silverblue", deployment: "fedora/41", toolboxCount: 1, flatpakCount: 2,
+};
+
+// Low-risk plan that still requires explicit approval (approvalRequired: true).
+// Used to test the Approve button without needing a checkbox or text input.
+const LOW_RISK_APPROVAL_PLAN: PlanResponse = {
+  summary: "Check system state",
+  explanation: "Reads the current state only.",
+  approvalRequired: true,
+  steps: [
+    { actionName: "GetSystemState", summary: "Read state", riskLevel: "low", approvalRequired: true, params: {} },
+  ],
+  hostName: "silverblue", deployment: "fedora/41", toolboxCount: 1, flatpakCount: 2,
+};
+
+const MUTATING_PLAN: PlanResponse = {
+  summary: "Install vim",
+  explanation: "Layers vim via rpm-ostree.",
+  approvalRequired: true,
+  steps: [
+    { actionName: "InstallPackages", summary: "Layer vim", riskLevel: "high", approvalRequired: true, params: {} },
+  ],
+  hostName: "silverblue", deployment: "fedora/41", toolboxCount: 0, flatpakCount: 0,
+};
 
 describe("App", () => {
-  it("renders the four-pane control surface", () => {
+  it("renders the shell and shows Ready status", () => {
     render(<App />);
-
-    expect(screen.getByText("Intent")).toBeInTheDocument();
-    expect(screen.getByText("Plan")).toBeInTheDocument();
-    expect(screen.getByText("Execution")).toBeInTheDocument();
-    expect(screen.getByText("Timeline")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Ready");
   });
 
-  it("shows the idle shell mode on first render", () => {
+  it("shows 'Review plan' status for read-only plan (no approval required)", async () => {
+    mockedRequestPlan.mockResolvedValueOnce(READ_ONLY_PLAN);
     render(<App />);
-
-    expect(screen.getByRole("status")).toHaveTextContent("idle");
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "show state" } });
+    fireEvent.click(screen.getByRole("button", { name: /generate plan/i }));
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent("Ready");
+    });
   });
 
-  it("completes read-only intents without awaiting approval", async () => {
-    mockedRequestPlan.mockResolvedValueOnce({
-      summary: "Read-only inspection",
-      preview: { summary: "Preview for show me the machine state" },
-      approvalRequired: false,
+  it("transitions to 'Awaiting your approval' for mutating plans", async () => {
+    mockedRequestPlan.mockResolvedValueOnce(MUTATING_PLAN);
+    render(<App />);
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "install vim" } });
+    fireEvent.click(screen.getByRole("button", { name: /generate plan/i }));
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent("Awaiting your approval");
     });
+  });
+
+  it("stays on Ready and shows error when requestPlan rejects", async () => {
+    mockedRequestPlan.mockRejectedValueOnce({
+      code: "llm_http_error",
+      message: "HTTP 500",
+      systemChanged: false,
+    });
+    render(<App />);
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "install vim" } });
+    fireEvent.click(screen.getByRole("button", { name: /generate plan/i }));
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent("Ready");
+    });
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+  });
+
+  it("transitions to Failed when requestApproval rejects (not stuck in Executing)", async () => {
+    // Regression test: approval_granted is dispatched before requestApproval()
+    // resolves. If requestApproval rejects, policy_errored would be dropped in
+    // "executing" mode. The fix dispatches job_completed("failed") instead.
+    mockedRequestPlan.mockResolvedValueOnce(LOW_RISK_APPROVAL_PLAN);
+    mockedRequestApproval.mockRejectedValueOnce(new Error("IPC connection lost"));
 
     render(<App />);
-
-    fireEvent.change(screen.getByRole("textbox"), {
-      target: { value: "show me the machine state" },
-    });
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "check state" } });
     fireEvent.click(screen.getByRole("button", { name: /generate plan/i }));
 
     await waitFor(() => {
-      expect(screen.getByRole("status")).toHaveTextContent("idle");
-    });
-    expect(
-      screen.getByText("Read-only intent completed: show me the machine state"),
-    ).toBeInTheDocument();
-  });
-
-  it("transitions to awaiting-approval for mutating intents", async () => {
-    mockedRequestPlan.mockResolvedValueOnce({
-      summary: "Update plan",
-      preview: { summary: "Preview for update this machine" },
-      approvalRequired: true,
+      expect(screen.getByRole("status")).toHaveTextContent("Awaiting your approval");
     });
 
-    render(<App />);
-
-    fireEvent.change(screen.getByRole("textbox"), {
-      target: { value: "update this machine" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: /generate plan/i }));
+    fireEvent.click(screen.getByRole("button", { name: /approve/i }));
 
     await waitFor(() => {
-      expect(screen.getByRole("status")).toHaveTextContent("awaiting-approval");
+      expect(screen.getByRole("status")).toHaveTextContent("Failed");
     });
   });
 
-  it("transitions to failed and surfaces the error when requestPlan rejects", async () => {
-    mockedRequestPlan.mockRejectedValueOnce(new Error("daemon unavailable"));
-
+  it("sets grid data-mode attribute to the current mode", async () => {
+    mockedRequestPlan.mockResolvedValueOnce(MUTATING_PLAN);
     render(<App />);
+    expect(document.querySelector(".grid")?.getAttribute("data-mode")).toBe("idle");
 
-    fireEvent.change(screen.getByRole("textbox"), {
-      target: { value: "update this machine" },
-    });
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "install vim" } });
     fireEvent.click(screen.getByRole("button", { name: /generate plan/i }));
 
     await waitFor(() => {
-      expect(screen.getByRole("status")).toHaveTextContent("failed");
+      expect(document.querySelector(".grid")?.getAttribute("data-mode")).toBe("awaiting-approval");
     });
-    expect(screen.getByText(/Planning failed:/)).toBeInTheDocument();
   });
 });

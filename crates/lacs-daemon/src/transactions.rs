@@ -37,6 +37,9 @@ pub enum TransactionStoreError {
 
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
+
+    #[error("transaction not found: {0}")]
+    NotFound(String),
 }
 
 impl TransactionStore {
@@ -115,6 +118,55 @@ impl TransactionStore {
         }
     }
 
+    /// Find the most-recently recorded transaction with the given `request_hash`
+    /// that is still in `Queued` status.
+    ///
+    /// Returns `None` if no matching Queued transaction exists. The dispatcher
+    /// uses this to enforce preview-before-execute and to block replay attacks:
+    /// an already-executed (Succeeded/Failed) transaction is never returned,
+    /// so a captured approval hash cannot be reused after the first execute.
+    pub fn find_by_request_hash(
+        &self,
+        request_hash: &str,
+    ) -> Result<Option<TransactionRecord>, TransactionStoreError> {
+        let conn = self.connection()?;
+        // Status is stored as its JSON serialization (e.g. `"queued"`).
+        let queued_json = serialize_field(&JobState::Queued)?;
+        let mut stmt = conn.prepare(
+            "SELECT
+                transaction_id,
+                request_id,
+                request_hash,
+                action_name,
+                risk_level,
+                status,
+                approval_id,
+                summary,
+                warnings_json
+             FROM transactions
+             WHERE request_hash = ?1
+               AND status = ?2
+             ORDER BY rowid DESC
+             LIMIT 1",
+        )?;
+        let mut rows = stmt.query(params![request_hash, queued_json])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(TransactionRecord {
+                transaction_id: row.get(0)?,
+                request_id: row.get(1)?,
+                request_hash: row.get(2)?,
+                action_name: row.get(3)?,
+                risk_level: deserialize_field(&row.get::<_, String>(4)?)?,
+                status: deserialize_field(&row.get::<_, String>(5)?)?,
+                approval_id: row.get(6)?,
+                summary: row.get(7)?,
+                warnings: serde_json::from_str(&row.get::<_, String>(8)?)?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
     pub fn get_preview(
         &self,
         transaction_id: &str,
@@ -132,6 +184,49 @@ impl TransactionStore {
         } else {
             Ok(None)
         }
+    }
+
+    pub fn update_status(
+        &self,
+        transaction_id: &str,
+        new_status: JobState,
+    ) -> Result<(), TransactionStoreError> {
+        let conn = self.connection()?;
+        let rows_affected = conn.execute(
+            "UPDATE transactions SET status = ?1 WHERE transaction_id = ?2",
+            params![serialize_field(&new_status)?, transaction_id],
+        )?;
+        if rows_affected == 0 {
+            return Err(TransactionStoreError::NotFound(transaction_id.to_string()));
+        }
+        Ok(())
+    }
+
+    /// Atomically claim a `Queued` transaction for execution by transitioning
+    /// its status to `Running` in a single SQL statement.
+    ///
+    /// Returns `Ok(true)` if the transaction was claimed (it was in `Queued`
+    /// state). Returns `Ok(false)` if the transaction could not be claimed —
+    /// it either does not exist or was already transitioned away from `Queued`
+    /// by a concurrent request.
+    ///
+    /// This closes the TOCTOU window in replay protection: two concurrent
+    /// execute requests that both pass `find_by_request_hash` cannot both
+    /// proceed — only the first `claim_for_execution` wins; the loser must
+    /// return `stale_approval`.
+    pub fn claim_for_execution(
+        &self,
+        transaction_id: &str,
+    ) -> Result<bool, TransactionStoreError> {
+        let conn = self.connection()?;
+        let queued_json = serialize_field(&JobState::Queued)?;
+        let running_json = serialize_field(&JobState::Running)?;
+        let rows_affected = conn.execute(
+            "UPDATE transactions SET status = ?1 \
+             WHERE transaction_id = ?2 AND status = ?3",
+            params![running_json, transaction_id, queued_json],
+        )?;
+        Ok(rows_affected > 0)
     }
 
     fn connection(&self) -> Result<Connection, TransactionStoreError> {
@@ -236,4 +331,201 @@ fn serialize_field<T: Serialize>(value: &T) -> Result<String, serde_json::Error>
 
 fn deserialize_field<T: DeserializeOwned>(value: &str) -> Result<T, serde_json::Error> {
     serde_json::from_str(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn queued_transaction() -> NewTransaction {
+        NewTransaction {
+            request_id: "req-1".to_string(),
+            request_hash: "hash-abc".to_string(),
+            action_name: "UpdateSystem".to_string(),
+            risk_level: RiskLevel::High,
+            status: JobState::Queued,
+            approval_id: None,
+            summary: "Upgrade the system".to_string(),
+            warnings: vec![],
+        }
+    }
+
+    #[test]
+    fn update_status_transitions_queued_to_running() {
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let tx = store.record(queued_transaction()).unwrap();
+
+        store
+            .update_status(&tx.transaction_id, JobState::Running)
+            .unwrap();
+
+        let updated = store.get(&tx.transaction_id).unwrap().unwrap();
+        assert_eq!(updated.status, JobState::Running);
+    }
+
+    #[test]
+    fn update_status_transitions_running_to_succeeded() {
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let tx = store.record(queued_transaction()).unwrap();
+
+        store
+            .update_status(&tx.transaction_id, JobState::Running)
+            .unwrap();
+        store
+            .update_status(&tx.transaction_id, JobState::Succeeded)
+            .unwrap();
+
+        let updated = store.get(&tx.transaction_id).unwrap().unwrap();
+        assert_eq!(updated.status, JobState::Succeeded);
+    }
+
+    #[test]
+    fn update_status_for_unknown_id_returns_not_found() {
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+
+        let result = store.update_status("does-not-exist", JobState::Running);
+        assert!(
+            matches!(result, Err(TransactionStoreError::NotFound(ref id)) if id == "does-not-exist"),
+            "expected NotFound, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn update_status_leaves_other_fields_intact() {
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let tx = store.record(queued_transaction()).unwrap();
+
+        store
+            .update_status(&tx.transaction_id, JobState::Failed)
+            .unwrap();
+
+        let updated = store.get(&tx.transaction_id).unwrap().unwrap();
+        assert_eq!(updated.action_name, "UpdateSystem");
+        assert_eq!(updated.risk_level, RiskLevel::High);
+        assert_eq!(updated.status, JobState::Failed);
+    }
+
+    #[test]
+    fn find_by_request_hash_returns_queued_transaction() {
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let tx = store.record(queued_transaction()).unwrap();
+
+        let found = store.find_by_request_hash("hash-abc").unwrap();
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().transaction_id, tx.transaction_id);
+    }
+
+    #[test]
+    fn find_by_request_hash_returns_none_for_unknown_hash() {
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+
+        let found = store.find_by_request_hash("nonexistent-hash").unwrap();
+        assert!(found.is_none());
+    }
+
+    #[test]
+    fn find_by_request_hash_returns_none_after_transaction_executed() {
+        // A transaction that has already been executed (Succeeded/Failed) must
+        // not be returned — this blocks replay attacks where a captured approval
+        // hash is submitted a second time after the first execute completes.
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let tx = store.record(queued_transaction()).unwrap();
+
+        // Simulate completed execution.
+        store
+            .update_status(&tx.transaction_id, JobState::Succeeded)
+            .unwrap();
+
+        let found = store.find_by_request_hash("hash-abc").unwrap();
+        assert!(
+            found.is_none(),
+            "executed transaction must not be returned (replay protection)"
+        );
+    }
+
+    #[test]
+    fn claim_for_execution_succeeds_for_queued_transaction() {
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let tx = store.record(queued_transaction()).unwrap();
+
+        let claimed = store.claim_for_execution(&tx.transaction_id).unwrap();
+        assert!(claimed, "should claim Queued transaction");
+
+        let updated = store.get(&tx.transaction_id).unwrap().unwrap();
+        assert_eq!(updated.status, JobState::Running, "status must be Running after claim");
+    }
+
+    #[test]
+    fn claim_for_execution_returns_false_when_already_running() {
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let tx = store.record(queued_transaction()).unwrap();
+
+        assert!(store.claim_for_execution(&tx.transaction_id).unwrap(), "first claim must succeed");
+        assert!(
+            !store.claim_for_execution(&tx.transaction_id).unwrap(),
+            "second claim must return false — simulates concurrent execute request"
+        );
+    }
+
+    #[test]
+    fn claim_for_execution_returns_false_for_unknown_id() {
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+
+        let claimed = store.claim_for_execution("does-not-exist").unwrap();
+        assert!(!claimed, "unknown transaction must not be claimable");
+    }
+
+    #[test]
+    fn find_by_request_hash_returns_none_for_running_transaction() {
+        // A Running transaction must not be returned — it has already been
+        // claimed by a concurrent request and must not be executed again.
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let tx = store.record(queued_transaction()).unwrap();
+
+        store.claim_for_execution(&tx.transaction_id).unwrap();
+
+        let found = store.find_by_request_hash("hash-abc").unwrap();
+        assert!(
+            found.is_none(),
+            "Running transaction must not be returned (prevents duplicate execution)"
+        );
+    }
+
+    #[test]
+    fn find_by_request_hash_returns_queued_record_when_hash_shared_with_older_executed() {
+        // If a preview was generated twice for the same action, the most recent
+        // Queued record should be returned even if an older Succeeded record
+        // exists for the same hash.
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+
+        // First round: record → execute → succeed.
+        let first_tx = store.record(queued_transaction()).unwrap();
+        store
+            .update_status(&first_tx.transaction_id, JobState::Succeeded)
+            .unwrap();
+
+        // Second round: new preview with same hash (still Queued).
+        let second_tx = store.record(queued_transaction()).unwrap();
+
+        let found = store.find_by_request_hash("hash-abc").unwrap();
+        assert!(found.is_some(), "second Queued record should be found");
+        assert_eq!(
+            found.unwrap().transaction_id,
+            second_tx.transaction_id,
+            "should return the most-recent Queued record, not the older Succeeded one"
+        );
+    }
 }

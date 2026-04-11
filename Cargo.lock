@@ -1914,11 +1914,13 @@ version = "0.1.0"
 name = "lacs-daemon"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "lacs-core",
  "lacs-types",
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -1943,10 +1945,12 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "lacs-brain",
+ "lacs-core",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
 ]

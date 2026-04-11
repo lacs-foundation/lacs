@@ -163,6 +163,22 @@ impl BrainConfig {
         })
     }
 
+    /// Returns `"anthropic"` or `"ollama"`.
+    pub fn provider_name(&self) -> &str {
+        match &self.provider {
+            ProviderConfig::Anthropic { .. } => "anthropic",
+            ProviderConfig::Ollama { .. } => "ollama",
+        }
+    }
+
+    /// Returns the model identifier string (e.g. `"claude-sonnet-4-6"` or `"llama3.2"`).
+    pub fn model_name(&self) -> &str {
+        match &self.provider {
+            ProviderConfig::Anthropic { model, .. } => model,
+            ProviderConfig::Ollama { model, .. } => model,
+        }
+    }
+
     /// Ollama with defaults — used when no API key is configured.
     pub fn ollama_defaults() -> Self {
         Self {

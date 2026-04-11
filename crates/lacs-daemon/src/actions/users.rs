@@ -70,7 +70,10 @@ pub fn add_user_to_group(username: &str, group: &str) -> ActionSpec {
     ActionSpec {
         action_name: "AddUserToGroup",
         mechanism: command_mechanism("usermod", ["--append", "--groups", group, username]),
-        risk_level: RiskLevel::Medium,
+        // High risk: adding a user to a privileged group (e.g. `wheel`) grants
+        // sudo / lacs-admin rights, constituting a privilege escalation if
+        // performed at lower than Admin level.
+        risk_level: RiskLevel::High,
         reboot_required: false,
         rollback_available: false,
     }
@@ -80,7 +83,9 @@ pub fn remove_user_from_group(username: &str, group: &str) -> ActionSpec {
     ActionSpec {
         action_name: "RemoveUserFromGroup",
         mechanism: command_mechanism("gpasswd", ["--delete", username, group]),
-        risk_level: RiskLevel::Medium,
+        // High risk: mirrors AddUserToGroup — removing from a privileged group
+        // is equally impactful and should require the same Admin authorization.
+        risk_level: RiskLevel::High,
         reboot_required: false,
         rollback_available: false,
     }
