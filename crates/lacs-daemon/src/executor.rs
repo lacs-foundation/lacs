@@ -332,11 +332,11 @@ fn require_bool(params: &Value, key: &'static str) -> Result<bool, ExecutorError
 }
 
 fn require_u32(params: &Value, key: &'static str) -> Result<u32, ExecutorError> {
-    params
+    let n = params
         .get(key)
         .and_then(|v| v.as_u64())
-        .map(|n| n as u32)
-        .ok_or(ExecutorError::MissingParam(key))
+        .ok_or(ExecutorError::MissingParam(key))?;
+    u32::try_from(n).map_err(|_| ExecutorError::InvalidParam(key))
 }
 
 /// Returns a vec of owned strings from a JSON array, or an empty vec if the
@@ -464,6 +464,15 @@ mod tests {
                     "2".to_string(),
                 ],
             }
+        );
+    }
+
+    #[test]
+    fn require_u32_rejects_overflow() {
+        let err = build_action_spec("PinDeployment", &json!({ "index": u64::MAX })).unwrap_err();
+        assert!(
+            matches!(err, ExecutorError::InvalidParam("index")),
+            "expected InvalidParam(index), got: {err}"
         );
     }
 
