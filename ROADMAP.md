@@ -57,15 +57,51 @@ contributors where the project is going and what matters next.
 
 ## Phase 5: Release Quality
 
-The current focus. Items are roughly in priority order.
+- ~~systemd unit file (`lacs-daemon.service`) and install script~~ — done;
+  sysusers.d, tmpfiles.d, polkit rules, sudoers, Makefile with
+  build/install/uninstall targets
+- ~~shell reconnect with exponential backoff~~ — done; background health
+  poller emits `lacs:daemon-status` events
+- ~~`~/.config/lacs/config.toml` support~~ — done; `LacsConfig` reads
+  XDG-aware config and applies defaults to env vars
+- ~~Tauri bundle configuration for AppImage and RPM~~ — done; Flatpak
+  manifest added
+- ~~CI fix~~ — done; Tauri system deps, pnpm, clippy, all three jobs green
 
-- systemd unit file (`lacs-daemon.service`) and install script
-- multi-distro action families: apt (Debian/Ubuntu), dnf (Fedora Workstation),
-  pacman (Arch)
-- runtime distro detection so the daemon routes to the correct action family
-- shell reconnect with exponential backoff when the daemon socket disappears
-- `~/.config/lacs/config.toml` support for persistent LLM and socket settings
-- Tauri bundle configuration for AppImage and RPM
+Remaining:
+
 - harden the test matrix (integration tests against a real daemon socket)
 - stabilize the wire protocol and cut a v0.1 release
 - contributor-facing demo on real hardware with rollback visible
+
+## Phase 6: Security and Correctness
+
+The current focus. Tracked in the v0.2.0 milestone.
+
+- role-to-action allowlist in `policy.rs` — enforce per-action authorization
+  beyond risk-tier checks
+- rollback execution path — the `RolledBack` job state must actually be
+  reachable
+- structured persistent audit log for safety fence activations
+- `ActionName` newtype and `Plan::new` error handling
+- stream `job_event` frames from daemon during execution
+
+## Phase 7: UX Polish
+
+Tracked in the v0.3.0 milestone.
+
+- reconnect banner in shell chrome
+- risk-scaled confirmation modal (type action name for High/Critical steps)
+- execution pane with real-time timeline and cancel button
+- plan pane step breakdown with risk badges
+- first-run experience / LLM provider setup wizard
+- surface config errors to shell UI
+
+## Phase 8: Multi-distro
+
+Tracked in the v0.4.0 milestone.
+
+- apt action family (Debian/Ubuntu/Mint)
+- dnf action family (Fedora Workstation)
+- pacman action family (Arch/Manjaro)
+- runtime distro detection

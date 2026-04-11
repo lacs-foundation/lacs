@@ -29,7 +29,7 @@ The AI cannot do anything you did not explicitly review and approve.
 ## Current Status
 
 The core trust chain is built, tested, and wired end-to-end.
-Packaging and multi-distro support are the next milestones.
+Security hardening and multi-distro support are the next milestones.
 
 | Component | Status |
 | --- | --- |
@@ -43,7 +43,7 @@ Packaging and multi-distro support are the next milestones.
 | AppImage + RPM + Flatpak bundles | complete |
 | multi-distro support (apt, dnf, pacman) | roadmap |
 
-200+ tests pass across Rust and TypeScript.
+230+ tests pass across Rust and TypeScript.
 
 ## Install
 
@@ -81,8 +81,8 @@ model    = "llama3.2"
 ## Architecture
 
 ```text
-zeroclaw-brain  →  lacs-shell  →  lacs-daemon
-   (planner)       (approval)      (executor)
+lacs-brain  →  lacs-shell  →  lacs-daemon
+ (planner)      (approval)     (executor)
 ```
 
 The brain proposes plans but cannot touch the system directly.
@@ -111,7 +111,7 @@ cd lacs
 cargo test --workspace
 
 # Run frontend tests
-cd apps/lacs-shell && npm install && npm test
+cd apps/lacs-shell && pnpm install && pnpm test
 ```
 
 To run the full stack locally:
@@ -121,7 +121,7 @@ To run the full stack locally:
 cargo run -p lacs-daemon
 
 # Terminal 2 — start the shell
-cd apps/lacs-shell && npm install && npm run tauri dev
+cd apps/lacs-shell && pnpm install && pnpm tauri dev
 ```
 
 See [docs/developer-guide.md](docs/developer-guide.md) for the full
@@ -171,10 +171,10 @@ We welcome contributors interested in any of:
 
 **High-impact areas open now:**
 
-- systemd unit file and install script
+- Security hardening — role-to-action allowlists, structured audit logging
 - Multi-distro action families (apt / dnf / pacman)
-- Shell reconnect logic on daemon restart
-- config.toml support for persistent LLM settings
+- UX polish — reconnect banner, risk-scaled confirmation, execution timeline
+- First-run experience and LLM provider setup wizard
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) to get started.
 Open an issue before starting any substantial change.
