@@ -1,35 +1,56 @@
 # LACS — Linux Agent Control Standard
 
-An AI agent for Linux that shows you exactly what it intends to do
-and asks for your approval before changing anything.
+**Describe what you want in plain language. Review a typed plan with
+risk levels. Approve explicitly. Watch it execute with live output
+and automatic rollback.**
 
-You describe what you want in plain language.
-LACS proposes a typed plan with risk levels, previews, and rollback
-metadata.
-You approve each step explicitly.
-The daemon executes, streams live output, and rolls back automatically
-if a high-risk action fails.
+Every action is shown to you before it runs.
+The AI cannot do anything you did not review and approve.
 Every execution is logged to a local SQLite audit trail.
 
-## Why LACS
+<!-- TODO: replace with actual demo GIF once recorded on real hardware -->
+<!-- ![LACS demo](docs/assets/demo.gif) -->
+
+## Why not just use...
 
 | Tool | The problem |
 | --- | --- |
-| Open Interpreter | Runs arbitrary shell commands. No approval gate. No audit log. Dangerous on servers. |
-| Claude Computer Use | Uncontrolled. Designed for desktop automation, not system administration. |
-| Ansible | Requires YAML playbooks written in advance. Not conversational. You need to know what you want before you start. |
-| shell-gpt / Copilot | Suggests raw shell commands for you to paste into a terminal. You are still reviewing and running raw shell. |
+| Open Interpreter | Runs arbitrary shell commands. No approval gate. No audit log. |
+| Claude Computer Use | Uncontrolled desktop automation, not system administration. |
+| Ansible | Requires YAML playbooks written in advance. Not conversational. |
+| shell-gpt / Copilot | Suggests raw shell commands for you to paste. You are still running raw shell. |
 | Manual commands | No audit trail. No rollback. One typo can be destructive. |
 
-LACS occupies a different position: the agent proposes typed actions,
-you review them with full context, and a privileged daemon handles
-execution with an audit trail and automatic rollback.
-The AI cannot do anything you did not explicitly review and approve.
+LACS is different: the agent proposes **typed actions** with risk levels
+and previews. You review them with full context. A privileged daemon
+handles execution with an audit trail and automatic rollback. The AI
+never touches the system directly.
 
-## Current Status
+## How it works
+
+```text
+lacs-brain  →  lacs-shell  →  lacs-daemon
+ (planner)      (approval)     (executor)
+```
+
+1. You type a natural-language request in the shell
+2. The brain proposes a plan — each step is a typed action with a risk
+   level (`Low`, `Medium`, `High`, `Critical`)
+3. The shell shows the plan with previews and rollback metadata
+4. You approve each step explicitly
+5. The daemon executes, streams live output, and rolls back automatically
+   if a high-risk action fails
+6. Every execution is logged to a local SQLite audit trail
+
+The brain proposes but cannot touch the system. The shell renders and
+captures approval. The daemon is the only privileged process — it
+enforces policy, executes typed actions, writes the transaction log,
+and triggers rollback when things go wrong.
+
+## Current status
 
 The core trust chain is built, tested, and wired end-to-end.
-Security hardening and multi-distro support are the next milestones.
+Security hardening and multi-distro support are the active milestones.
 
 | Component | Status |
 | --- | --- |
@@ -37,17 +58,20 @@ Security hardening and multi-distro support are the next milestones.
 | `lacs-daemon` — 60+ typed actions, auth, preview, transactions | complete |
 | `lacs-daemon` — IPC dispatcher, live streaming, automatic rollback | complete |
 | `lacs-shell` — intent, plan, approval gate, job timeline | complete |
-| daemon ↔ shell IPC | complete |
-| systemd unit, polkit, install script | complete |
+| daemon ↔ shell IPC (length-prefixed JSON over Unix socket) | complete |
+| systemd unit, polkit, sysusers, tmpfiles, Makefile | complete |
 | `~/.config/lacs/config.toml` support | complete |
 | AppImage + RPM + Flatpak bundles | complete |
-| multi-distro support (apt, dnf, pacman) | roadmap |
+| Role-to-action allowlist, structured audit log | in progress |
+| Multi-distro support (apt, dnf, pacman) | roadmap |
 
 230+ tests pass across Rust and TypeScript.
 
-## Install
+## Quick start
 
-**Requires:** Rust stable, pnpm, Tauri prerequisites.
+**Prerequisites:** Rust stable, pnpm, [Tauri prerequisites][tauri-prereqs]
+
+[tauri-prereqs]: https://tauri.app/start/prerequisites/
 
 ```sh
 git clone https://github.com/lacs-foundation/lacs
@@ -57,17 +81,28 @@ sudo make install
 sudo systemctl enable --now lacs-daemon
 ```
 
-Then launch the shell:
+Launch the shell:
 
 ```sh
 cd apps/lacs-shell && pnpm install && pnpm tauri dev
 ```
 
-**Ollama (no API key):**
+### LLM provider
+
+LACS works with **Ollama** (no API key, recommended for getting started)
+or **Anthropic**.
+
+**Ollama:**
 
 ```sh
 ollama pull llama3.2
-# The shell auto-detects Ollama when ANTHROPIC_API_KEY is not set.
+# LACS auto-detects Ollama when ANTHROPIC_API_KEY is not set.
+```
+
+**Anthropic:**
+
+```sh
+export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
 **Optional config file** (`~/.config/lacs/config.toml`):
@@ -76,62 +111,13 @@ ollama pull llama3.2
 [llm]
 provider = "ollama"
 model    = "llama3.2"
+
+[daemon]
+socket   = "/run/lacs/daemon.sock"
+database = "/var/lib/lacs/daemon.sqlite"
 ```
 
-## Architecture
-
-```text
-lacs-brain  →  lacs-shell  →  lacs-daemon
- (planner)      (approval)     (executor)
-```
-
-The brain proposes plans but cannot touch the system directly.
-The shell renders the plan, captures your approval, and streams
-progress back to you.
-The daemon is the only privileged process — it enforces policy,
-executes typed actions, writes the transaction log, and triggers
-rollback when things go wrong.
-
-Read [docs/architecture.md](docs/architecture.md) for more detail.
-
-## Building From Source
-
-**Prerequisites:**
-
-- Rust stable ([rustup.rs](https://rustup.rs))
-- Node.js 20 ([nodejs.org](https://nodejs.org))
-- Tauri prerequisites ([tauri.app/start/prerequisites](https://tauri.app/start/prerequisites/))
-
-```sh
-# Clone
-git clone https://github.com/lacs-foundation/lacs
-cd lacs
-
-# Run Rust tests
-cargo test --workspace
-
-# Run frontend tests
-cd apps/lacs-shell && pnpm install && pnpm test
-```
-
-To run the full stack locally:
-
-```sh
-# Terminal 1 — start the daemon (privileged actions require root)
-cargo run -p lacs-daemon
-
-# Terminal 2 — start the shell
-cd apps/lacs-shell && pnpm install && pnpm tauri dev
-```
-
-See [docs/developer-guide.md](docs/developer-guide.md) for the full
-development setup.
-
-## LLM Configuration
-
-`lacs-brain` resolves its provider from environment variables.
-The Ollama path works without any API key and is the recommended
-starting point for local development.
+Config file values act as defaults. Environment variables always win.
 
 | Variable | Default | Description |
 | --- | --- | --- |
@@ -139,45 +125,53 @@ starting point for local development.
 | `ANTHROPIC_API_KEY` | — | Required when provider is `anthropic` |
 | `LACS_LLM_MODEL` | provider default | Override the model name |
 | `LACS_OLLAMA_URL` | `http://localhost:11434` | Ollama base URL |
-| `LACS_ANTHROPIC_URL` | `https://api.anthropic.com` | Anthropic base URL |
 | `LACS_BRAIN_MAX_TURNS` | `5` | Planning turn limit (minimum 1) |
 
-**Ollama (no API key required):**
+## Building from source
 
 ```sh
-ollama pull llama3.2
-cargo run -p lacs-daemon &
-cd apps/lacs-shell && npm run tauri dev
+# Clone
+git clone https://github.com/lacs-foundation/lacs
+cd lacs
+
+# Run all Rust tests
+cargo test --workspace
+
+# Run frontend tests
+cd apps/lacs-shell && pnpm install && pnpm test
 ```
 
-**Anthropic:**
+Run the full stack locally:
 
 ```sh
-export ANTHROPIC_API_KEY=sk-ant-...
-cargo run -p lacs-daemon &
-cd apps/lacs-shell && npm run tauri dev
+# Terminal 1 — daemon (privileged actions require root)
+cargo run -p lacs-daemon
+
+# Terminal 2 — shell
+cd apps/lacs-shell && pnpm install && pnpm tauri dev
 ```
+
+See [docs/developer-guide.md](docs/developer-guide.md) for the full
+development setup including pre-commit hooks.
 
 ## Contributing
 
-We welcome contributors interested in any of:
+Issues tagged [`good first issue`][good-first] are well-scoped with
+clear acceptance criteria. Issues tagged [`security`][security-label]
+take priority.
 
-- Rust systems programming and daemon work
-- Linux packaging and distribution (apt, dnf, pacman, RPM, Flatpak)
-- Tauri and React UI development
-- systemd service design and release engineering
-- Security hardening and audit tooling
-- Documentation and developer experience
+[good-first]: https://github.com/lacs-foundation/lacs/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22
+[security-label]: https://github.com/lacs-foundation/lacs/issues?q=is%3Aissue+is%3Aopen+label%3Asecurity
 
-**High-impact areas open now:**
+**Areas where contributions have high impact:**
 
 - Security hardening — role-to-action allowlists, structured audit logging
 - Multi-distro action families (apt / dnf / pacman)
 - UX polish — reconnect banner, risk-scaled confirmation, execution timeline
 - First-run experience and LLM provider setup wizard
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) to get started.
-Open an issue before starting any substantial change.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for workflow, branch conventions,
+and PR checklist. Open an issue before starting any substantial change.
 
 ## Documentation
 
