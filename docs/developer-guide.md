@@ -5,9 +5,9 @@ This guide explains how to work on LACS as a contributor.
 ## Read First
 
 - [Architecture overview](architecture.md)
-- [Specification draft](plans/2026-04-10-lacs-spec.md)
-- [Daemon IPC spec](plans/2026-04-10-lacs-daemon-ipc-spec.md)
 - [ADR 0001: System boundaries](adr/0001-system-boundaries.md)
+- [ADR 0002: Brain provider layer](adr/0002-brain-provider-layer.md)
+- [ADR 0003: IPC wire protocol](adr/0003-ipc-wire-protocol.md)
 
 ## Prerequisites
 
@@ -76,7 +76,7 @@ Hooks that are **intentionally excluded** (they run in CI instead):
 
 ```sh
 cargo test --workspace
-cd apps/lacs-shell && npm install && npm test
+cd apps/lacs-shell && pnpm install && pnpm test
 ```
 
 **Run the full stack:**
@@ -88,8 +88,8 @@ cargo run -p lacs-daemon
 
 # Terminal 2 — start the shell
 cd apps/lacs-shell
-npm install
-npm run tauri dev
+pnpm install
+pnpm tauri dev
 ```
 
 **Run only the daemon with a test client:**
@@ -167,7 +167,7 @@ CI runs on every pull request and push to `main`.
 | Clippy (warnings as errors) | `cargo clippy --workspace --all-features --locked -- -D warnings` |
 | Rust tests | `cargo test --workspace --locked` |
 | TypeScript type check | `npx tsc --noEmit` (in `apps/lacs-shell`) |
-| Frontend tests | `npm test` (in `apps/lacs-shell`) |
+| Frontend tests | `pnpm test` (in `apps/lacs-shell`) |
 | Markdown lint | `markdownlint-cli2` on contributor-facing docs |
 | Link check | `markdown-link-check` on contributor-facing docs |
 | YAML lint | `yamllint` on issue templates and workflows |
