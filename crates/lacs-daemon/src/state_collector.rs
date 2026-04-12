@@ -38,6 +38,18 @@ pub struct RealCommandRunner;
 impl CommandRunner for RealCommandRunner {
     fn run(&self, program: &str, args: &[&str]) -> Result<String, io::Error> {
         let output = std::process::Command::new(program).args(args).output()?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!(
+                    "{} exited with status {}: {}",
+                    program,
+                    output.status,
+                    stderr.trim()
+                ),
+            ));
+        }
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 }
@@ -57,10 +69,14 @@ pub fn collect_state(runner: &dyn CommandRunner) -> Result<CollectedState, Colle
             reason: e.to_string(),
         })?;
 
-    let deployment = runner
+    // Call rpm-ostree once and reuse for both deployment and layered_packages.
+    let rpm_ostree_output = runner
         .run("rpm-ostree", &["status", "--booted", "--json"])
         .map(|s| s.trim().to_string())
         .unwrap_or_default();
+
+    let deployment = rpm_ostree_output.clone();
+    let layered_packages = parse_layered_packages(&rpm_ostree_output);
 
     let services = runner
         .run(
@@ -85,11 +101,6 @@ pub fn collect_state(runner: &dyn CommandRunner) -> Result<CollectedState, Colle
     let toolboxes = runner
         .run("toolbox", &["list", "--containers"])
         .map(|s| parse_lines(&s))
-        .unwrap_or_default();
-
-    let layered_packages = runner
-        .run("rpm-ostree", &["status", "--booted", "--json"])
-        .map(|s| parse_layered_packages(&s))
         .unwrap_or_default();
 
     let containers = runner
