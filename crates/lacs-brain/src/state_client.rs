@@ -125,4 +125,14 @@ pub trait StateClient: Send + Sync {
     /// when the daemon is unreachable or the state cannot be read. Other
     /// `PlanningError` variants are semantically incorrect here.
     fn curated_state(&self) -> Result<CuratedState, PlanningError>;
+
+    /// Run a read-only action on the daemon and return its stdout.
+    ///
+    /// Only Low-risk (Observer-level) actions are allowed. The daemon
+    /// enforces this constraint; callers need not pre-filter.
+    fn query_action(
+        &self,
+        action_name: &str,
+        params: &serde_json::Value,
+    ) -> Result<String, PlanningError>;
 }

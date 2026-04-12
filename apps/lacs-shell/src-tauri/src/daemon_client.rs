@@ -141,9 +141,61 @@ impl DaemonIpcClient {
 }
 
 #[cfg(any(test, not(feature = "demo")))]
+impl DaemonIpcClient {
+    fn query_action_inner(
+        &self,
+        action_name: &str,
+        params: &serde_json::Value,
+    ) -> Result<String, String> {
+        let mut stream = UnixStream::connect(&self.socket_path)
+            .map_err(|e| format!("daemon connect: {e}"))?;
+        stream.set_read_timeout(Some(SOCKET_TIMEOUT)).ok();
+        stream.set_write_timeout(Some(SOCKET_TIMEOUT)).ok();
+
+        let request = serde_json::to_vec(&serde_json::json!({
+            "type": "query_action",
+            "request_id": format!("query-{action_name}"),
+            "action_name": action_name,
+            "params": params,
+        }))
+        .map_err(|e| format!("serialize: {e}"))?;
+
+        write_framed(&mut stream, &request)
+            .map_err(|e| format!("send: {e}"))?;
+        let msg = read_framed(&mut stream)
+            .map_err(|e| format!("read: {e}"))?;
+        let resp: Value = serde_json::from_slice(&msg)
+            .map_err(|e| format!("parse: {e}"))?;
+
+        match resp["type"].as_str() {
+            Some("query_action_response") => {
+                Ok(resp["output"].as_str().unwrap_or("").to_string())
+            }
+            Some("error_response") => Err(format!(
+                "daemon error: {}",
+                resp["message"].as_str().unwrap_or("unknown")
+            )),
+            other => Err(format!(
+                "unexpected: {}",
+                other.unwrap_or("<missing>")
+            )),
+        }
+    }
+}
+
+#[cfg(any(test, not(feature = "demo")))]
 impl StateClient for DaemonIpcClient {
     fn curated_state(&self) -> Result<CuratedState, PlanningError> {
         self.query_state_inner()
+            .map_err(PlanningError::StateUnavailable)
+    }
+
+    fn query_action(
+        &self,
+        action_name: &str,
+        params: &serde_json::Value,
+    ) -> Result<String, PlanningError> {
+        self.query_action_inner(action_name, params)
             .map_err(PlanningError::StateUnavailable)
     }
 }

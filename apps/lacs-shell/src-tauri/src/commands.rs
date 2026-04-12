@@ -109,6 +109,14 @@ impl StateClient for DemoStateClient {
         )
         .map_err(PlanningError::StateUnavailable)
     }
+
+    fn query_action(
+        &self,
+        action_name: &str,
+        _params: &serde_json::Value,
+    ) -> Result<String, PlanningError> {
+        Ok(format!("[demo] {action_name} output would appear here"))
+    }
 }
 
 // ---------------------------------------------------------------------------
