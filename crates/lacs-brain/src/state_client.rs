@@ -20,6 +20,7 @@ impl CuratedState {
     /// is not available.
     ///
     /// Returns `Err` if `host_name` is empty.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         host_name: impl Into<String>,
         deployment: impl Into<String>,

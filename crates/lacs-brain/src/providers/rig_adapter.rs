@@ -289,8 +289,6 @@ fn map_rig_error(err: rig::completion::CompletionError) -> ProviderError {
         ProviderError::Auth(msg)
     } else if msg.contains("429") || msg.to_lowercase().contains("rate") {
         ProviderError::RateLimit
-    } else if msg.contains("HttpError") || msg.contains("http") {
-        ProviderError::Request(msg)
     } else {
         ProviderError::Request(msg)
     }

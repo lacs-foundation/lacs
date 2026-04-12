@@ -40,15 +40,12 @@ impl CommandRunner for RealCommandRunner {
         let output = std::process::Command::new(program).args(args).output()?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!(
-                    "{} exited with status {}: {}",
-                    program,
-                    output.status,
-                    stderr.trim()
-                ),
-            ));
+            return Err(io::Error::other(format!(
+                "{} exited with status {}: {}",
+                program,
+                output.status,
+                stderr.trim()
+            )));
         }
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
