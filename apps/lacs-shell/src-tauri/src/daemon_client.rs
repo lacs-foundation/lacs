@@ -105,13 +105,14 @@ impl DaemonIpcClient {
         match resp["type"].as_str() {
             Some("state_response") => {
                 let s = &resp["state"];
-                Ok(CuratedState {
-                    host_name: s["host_name"].as_str().unwrap_or("").to_string(),
-                    deployment: s["deployment"].as_str().unwrap_or("").to_string(),
-                    services: string_array(&s["services"]),
-                    flatpaks: string_array(&s["flatpaks"]),
-                    toolboxes: string_array(&s["toolboxes"]),
-                })
+                CuratedState::new(
+                    s["host_name"].as_str().unwrap_or(""),
+                    s["deployment"].as_str().unwrap_or(""),
+                    string_array(&s["services"]),
+                    string_array(&s["flatpaks"]),
+                    string_array(&s["toolboxes"]),
+                )
+                .map_err(|e| format!("invalid state from daemon: {e}"))
             }
             Some("error_response") => Err(format!(
                 "daemon error ({}): {}",
@@ -432,11 +433,11 @@ mod tests {
         let client = DaemonIpcClient::new(socket_path.to_str().unwrap());
         let state = client.curated_state().unwrap();
 
-        assert_eq!(state.host_name, "silverblue-test");
-        assert_eq!(state.deployment, r#"{"deployments":[]}"#);
-        assert_eq!(state.services, vec!["NetworkManager.service"]);
-        assert_eq!(state.flatpaks, vec!["org.mozilla.firefox"]);
-        assert_eq!(state.toolboxes, vec!["lacs-dev"]);
+        assert_eq!(state.host_name(), "silverblue-test");
+        assert_eq!(state.deployment(), r#"{"deployments":[]}"#);
+        assert_eq!(state.services(), &["NetworkManager.service"]);
+        assert_eq!(state.flatpaks(), &["org.mozilla.firefox"]);
+        assert_eq!(state.toolboxes(), &["lacs-dev"]);
     }
 
     #[test]
