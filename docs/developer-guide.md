@@ -67,7 +67,6 @@ Hooks that are **intentionally excluded** (they run in CI instead):
   `RiskLevel`, `JobState`, request and result envelopes).
 - `apps/lacs-shell/` — Tauri + React control surface; intent,
   plan, approval gate, live job timeline. Complete.
-- `docs/plans/` — specification and implementation reference docs.
 - `docs/adr/` — architectural decision records.
 
 ## Running Locally

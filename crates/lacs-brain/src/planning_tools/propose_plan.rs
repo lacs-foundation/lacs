@@ -14,11 +14,11 @@ use crate::provider::ToolDefinition;
 
 /// The approved list of LACS action names. This is the safety fence: the LLM
 /// is shown this enum and can only produce names from it. Any name outside
-/// this set is rejected by `parse_proposed_plan`.
+/// this set is rejected by [`ActionName::parse`].
 ///
-/// Must be kept in sync with the action catalogue in `lacs-daemon` once that
-/// crate is implemented. Until then this list is the authoritative source of
-/// valid action names.
+/// Must be kept in sync with the action catalogue in `lacs-daemon`. The
+/// cross-module consistency test in `lacs-daemon/tests/action_consistency.rs`
+/// verifies this at test time.
 pub const KNOWN_ACTIONS: &[&str] = &[
     // Deployment and boot
     "GetSystemState",

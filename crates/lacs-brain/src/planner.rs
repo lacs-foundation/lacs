@@ -8,10 +8,11 @@
 //! The loop is bounded by `max_turns`. If the LLM exhausts all turns without
 //! calling `propose_plan`, the planner returns `PlanningError::PlannerStuck`.
 //!
-//! Note: `StateClient::curated_state()` is synchronous. The current
-//! `DemoStateClient` is non-blocking. A real daemon client using a blocking
-//! socket must either make the trait async (via `async_trait`) or dispatch
-//! via `tokio::task::spawn_blocking` to avoid stalling the runtime thread.
+//! Note: `StateClient::curated_state()` is synchronous. The production
+//! `DaemonIpcClient` in `lacs-shell` uses a blocking `UnixStream`; Tauri
+//! async commands run on a thread pool so blocking is acceptable there.
+//! Other runtimes using `StateClient` on a single-threaded async executor
+//! must use `spawn_blocking`.
 
 use crate::action_name::ActionName;
 use crate::audit::SafetyAuditLog;

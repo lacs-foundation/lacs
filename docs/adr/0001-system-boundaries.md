@@ -13,7 +13,7 @@ granting it arbitrary shell access or root.
 
 LACS uses three separate roles:
 
-- `zeroclaw-brain` plans
+- `lacs-brain` plans
 - `lacs-shell` presents and collects approval
 - `lacs-daemon` executes
 

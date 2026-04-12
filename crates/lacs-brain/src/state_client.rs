@@ -11,9 +11,12 @@ pub struct CuratedState {
 }
 
 impl CuratedState {
-    /// Construct a `CuratedState` with non-empty `host_name` and `deployment`.
+    /// Construct a `CuratedState` with a non-empty `host_name`.
     ///
-    /// Returns `Err` if `host_name` or `deployment` is empty.
+    /// `deployment` may be empty on non-ostree systems where `rpm-ostree`
+    /// is not available.
+    ///
+    /// Returns `Err` if `host_name` is empty.
     pub fn new(
         host_name: impl Into<String>,
         deployment: impl Into<String>,
@@ -25,9 +28,6 @@ impl CuratedState {
         let deployment = deployment.into();
         if host_name.is_empty() {
             return Err("host_name must not be empty".into());
-        }
-        if deployment.is_empty() {
-            return Err("deployment must not be empty".into());
         }
         Ok(Self {
             host_name,
@@ -60,7 +60,7 @@ impl CuratedState {
 }
 
 /// Custom `Deserialize` that routes through `CuratedState::new` so invariants
-/// (non-empty host_name/deployment) are enforced at deserialization time.
+/// (non-empty host_name) are enforced at deserialization time.
 impl<'de> Deserialize<'de> for CuratedState {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where

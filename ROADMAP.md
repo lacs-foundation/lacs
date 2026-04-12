@@ -88,10 +88,10 @@ Tracked in the v0.2.0 milestone.
 - ~~stream `job_event` frames from daemon~~ — done; live `JobProgress` frames
   during execution
 
-Remaining:
-
-- `ActionName` newtype (#10) — co-locate `KNOWN_ACTIONS` with `PlanStep`
-- `CuratedState` private fields (#11) — custom `Deserialize` for encapsulation
+- ~~`ActionName` newtype (#10)~~ — done; `PlanStep` now takes `ActionName`,
+  validated at parse time
+- ~~`CuratedState` private fields (#11)~~ — done; custom `Deserialize`
+  enforces invariants
 
 ## Phase 7: UX Polish
 

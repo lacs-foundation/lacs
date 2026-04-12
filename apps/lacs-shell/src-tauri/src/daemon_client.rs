@@ -104,10 +104,20 @@ impl DaemonIpcClient {
 
         match resp["type"].as_str() {
             Some("state_response") => {
-                let s = &resp["state"];
+                let s = resp
+                    .get("state")
+                    .ok_or("state_response missing 'state' object")?;
+                let host_name = s
+                    .get("host_name")
+                    .and_then(|v| v.as_str())
+                    .ok_or("state.host_name missing or not a string")?;
+                let deployment = s
+                    .get("deployment")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 CuratedState::new(
-                    s["host_name"].as_str().unwrap_or(""),
-                    s["deployment"].as_str().unwrap_or(""),
+                    host_name,
+                    deployment,
                     string_array(&s["services"]),
                     string_array(&s["flatpaks"]),
                     string_array(&s["toolboxes"]),

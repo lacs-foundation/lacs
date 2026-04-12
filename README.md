@@ -162,7 +162,6 @@ criteria. Issues tagged `security` take priority.
 **Areas where contributions have high impact:**
 
 - Multi-distro action families (apt / dnf / pacman)
-- Type refinements — `ActionName` newtype, private `CuratedState` fields
 - Integration test hardening against a real daemon socket
 - Demo recording on real Silverblue hardware
 
