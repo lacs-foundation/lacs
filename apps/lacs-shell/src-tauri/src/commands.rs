@@ -97,13 +97,14 @@ pub struct DemoStateClient;
 #[cfg(any(test, feature = "demo"))]
 impl StateClient for DemoStateClient {
     fn curated_state(&self) -> Result<CuratedState, PlanningError> {
-        Ok(CuratedState {
-            host_name: "silverblue".to_string(),
-            deployment: "fedora/41".to_string(),
-            services: vec!["NetworkManager.service".to_string()],
-            flatpaks: vec!["org.mozilla.firefox".to_string()],
-            toolboxes: vec!["lacs-dev".to_string()],
-        })
+        CuratedState::new(
+            "silverblue",
+            "fedora/41",
+            vec!["NetworkManager.service".to_string()],
+            vec!["org.mozilla.firefox".to_string()],
+            vec!["lacs-dev".to_string()],
+        )
+        .map_err(PlanningError::StateUnavailable)
     }
 }
 
@@ -352,10 +353,10 @@ pub(crate) fn plan_to_response(plan: Plan, curated: &CuratedState) -> PlanRespon
         explanation: plan.explanation().to_string(),
         approval_required,
         steps,
-        host_name: curated.host_name.clone(),
-        deployment: curated.deployment.clone(),
-        toolbox_count: curated.toolboxes.len(),
-        flatpak_count: curated.flatpaks.len(),
+        host_name: curated.host_name().to_string(),
+        deployment: curated.deployment().to_string(),
+        toolbox_count: curated.toolboxes().len(),
+        flatpak_count: curated.flatpaks().len(),
     }
 }
 
@@ -533,10 +534,11 @@ mod tests {
 
     #[test]
     fn plan_to_response_maps_all_fields() {
+        use lacs_brain::action_name::ActionName;
         use lacs_brain::planner::{Plan, PlanStep};
 
         let step = PlanStep::new(
-            "RebaseSystem".into(),
+            ActionName::parse("RebaseSystem").unwrap(),
             "Rebase to f42".into(),
             PlanRiskLevel::High,
             serde_json::json!({}),
@@ -588,18 +590,19 @@ mod tests {
 
     #[test]
     fn plan_to_response_approval_required_when_any_step_is_high_risk() {
+        use lacs_brain::action_name::ActionName;
         use lacs_brain::planner::{Plan, PlanStep};
 
         let steps = vec![
             PlanStep::new(
-                "GetSystemState".into(),
+                ActionName::parse("GetSystemState").unwrap(),
                 "Read current state".into(),
                 PlanRiskLevel::Low,
                 serde_json::json!({}),
             )
             .unwrap(),
             PlanStep::new(
-                "InstallPackages".into(),
+                ActionName::parse("InstallPackages").unwrap(),
                 "Layer vim via rpm-ostree".into(),
                 PlanRiskLevel::High,
                 serde_json::json!({}),

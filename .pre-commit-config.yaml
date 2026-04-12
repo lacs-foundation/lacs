@@ -71,11 +71,9 @@ repos:
         entry: bash -c 'npx --yes markdownlint-cli2 "$@"' --
         language: system
         types: [markdown]
-        # docs/plans/ contains pre-existing internal spec files with long
-        # lines and bare URLs that predate the markdownlint config.
         # docs/superpowers/ contains planning-tool artifacts.
         # .github/ templates use ## headings intentionally (GitHub form format).
-        exclude: "(Cargo.lock|node_modules|target|docs/plans/|docs/superpowers/|\\.github/)"
+        exclude: "(Cargo.lock|node_modules|target|docs/superpowers/|\\.github/)"
 
   # ── YAML lint ─────────────────────────────────────────────────────────────
   - repo: local

@@ -76,26 +76,33 @@ Remaining:
 
 ## Phase 6: Security and Correctness
 
-The current focus. Tracked in the v0.2.0 milestone.
+Tracked in the v0.2.0 milestone.
 
-- role-to-action allowlist in `policy.rs` — enforce per-action authorization
-  beyond risk-tier checks
-- rollback execution path — the `RolledBack` job state must actually be
-  reachable
-- structured persistent audit log for safety fence activations
-- `ActionName` newtype and `Plan::new` error handling
-- stream `job_event` frames from daemon during execution
+- ~~role-to-action allowlist in `policy.rs`~~ — done; per-action authorization
+  in `min_role_for_action`
+- ~~rollback execution path~~ — done; `RolledBack` state reachable, integration
+  tested
+- ~~structured persistent audit log~~ — done; safety fence events written to
+  SQLite
+- ~~`Plan::new` error handling~~ — done; returns `Result` instead of panicking
+- ~~stream `job_event` frames from daemon~~ — done; live `JobProgress` frames
+  during execution
+
+- ~~`ActionName` newtype (#10)~~ — done; `PlanStep` now takes `ActionName`,
+  validated at parse time
+- ~~`CuratedState` private fields (#11)~~ — done; custom `Deserialize`
+  enforces invariants
 
 ## Phase 7: UX Polish
 
-Tracked in the v0.3.0 milestone.
+Tracked in the v0.3.0 milestone. All items complete.
 
-- reconnect banner in shell chrome
-- risk-scaled confirmation modal (type action name for High-risk steps)
-- execution pane with real-time timeline and cancel button
-- plan pane step breakdown with risk badges
-- first-run experience / LLM provider setup wizard
-- surface config errors to shell UI
+- ~~reconnect banner in shell chrome~~ — done
+- ~~risk-scaled confirmation modal~~ — done; typed action name for High-risk
+- ~~execution pane with real-time timeline and cancel button~~ — done
+- ~~plan pane step breakdown with risk badges~~ — done
+- ~~first-run experience / LLM provider setup wizard~~ — done
+- ~~surface config errors to shell UI~~ — done
 
 ## Phase 8: Multi-distro
 
@@ -105,3 +112,7 @@ Tracked in the v0.4.0 milestone.
 - dnf action family (Fedora Workstation)
 - pacman action family (Arch/Manjaro)
 - runtime distro detection
+
+## Phase 9: Launch
+
+- record demo video on real Silverblue hardware (#32)

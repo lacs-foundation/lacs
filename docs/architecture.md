@@ -5,7 +5,7 @@ between planning, presentation, and execution.
 
 ## Core Components
 
-- `zeroclaw-brain` parses intent and produces a typed plan.
+- `lacs-brain` parses intent and produces a typed plan.
 - `lacs-shell` renders the plan, preview, approval state, execution
   progress, and transaction timeline.
 - `lacs-daemon` validates requests, enforces policy, executes typed

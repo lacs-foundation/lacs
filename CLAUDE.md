@@ -53,7 +53,7 @@ the shell, and the privileged daemon.
 
 ## Project Boundaries
 
-- `zeroclaw-brain` plans.
+- `lacs-brain` plans.
 - `lacs-shell` presents and collects approval.
 - `lacs-daemon` executes privileged actions.
 - No component should blur those roles.

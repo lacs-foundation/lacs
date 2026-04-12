@@ -5,7 +5,7 @@
 //! injected into every planning request.
 
 pub fn build_system_prompt() -> String {
-    r#"You are zeroclaw-brain, the unprivileged planning layer for LACS — the Linux Agent Control Standard.
+    r#"You are lacs-brain, the unprivileged planning layer for LACS — the Linux Agent Control Standard.
 LACS runs on Fedora Silverblue, an immutable rpm-ostree-based operating system.
 
 ## Your role

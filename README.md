@@ -62,7 +62,7 @@ Security hardening and multi-distro support are the active milestones.
 | systemd unit, polkit, sysusers, tmpfiles, Makefile | complete |
 | `~/.config/lacs/config.toml` support | complete |
 | AppImage + RPM + Flatpak bundles | complete |
-| Role-to-action allowlist, structured audit log | in progress |
+| Role-to-action allowlist, structured audit log | complete |
 | Multi-distro support (apt, dnf, pacman) | roadmap |
 
 230+ tests pass across Rust and TypeScript.
@@ -161,10 +161,9 @@ criteria. Issues tagged `security` take priority.
 
 **Areas where contributions have high impact:**
 
-- Security hardening — role-to-action allowlists, structured audit logging
 - Multi-distro action families (apt / dnf / pacman)
-- UX polish — reconnect banner, risk-scaled confirmation, execution timeline
-- First-run experience and LLM provider setup wizard
+- Integration test hardening against a real daemon socket
+- Demo recording on real Silverblue hardware
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for workflow, branch conventions,
 and PR checklist. Open an issue before starting any substantial change.
