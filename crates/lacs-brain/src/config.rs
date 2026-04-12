@@ -23,7 +23,7 @@ pub const DEFAULT_GROQ_MODEL: &str = "llama-3.3-70b-versatile";
 pub const DEFAULT_DEEPSEEK_MODEL: &str = "deepseek-chat";
 pub const DEFAULT_MISTRAL_MODEL: &str = "mistral-large-latest";
 pub const DEFAULT_XAI_MODEL: &str = "grok-3";
-pub const DEFAULT_MAX_TURNS: usize = 5;
+pub const DEFAULT_MAX_TURNS: usize = 10;
 
 // ---------------------------------------------------------------------------
 // Types
