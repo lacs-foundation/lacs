@@ -72,7 +72,7 @@ pub fn collect_state(runner: &dyn CommandRunner) -> Result<CollectedState, Colle
         .map(|s| s.trim().to_string())
         .unwrap_or_default();
 
-    let deployment = rpm_ostree_output.clone();
+    let deployment = parse_deployment_summary(&rpm_ostree_output);
     let layered_packages = parse_layered_packages(&rpm_ostree_output);
 
     let services = runner
@@ -106,7 +106,7 @@ pub fn collect_state(runner: &dyn CommandRunner) -> Result<CollectedState, Colle
         .unwrap_or_default();
 
     let users = runner
-        .run("getent", &["passwd"])
+        .run("getent", &["passwd", "--service", "files"])
         .map(|s| parse_local_users(&s))
         .unwrap_or_default();
 
@@ -141,6 +141,45 @@ fn parse_lines(output: &str) -> Vec<String> {
         .collect()
 }
 
+/// Parse the booted deployment from `rpm-ostree status --booted --json` into a
+/// human-readable summary like `"fedora/41/x86_64/silverblue (booted, v41.20260401.0)"`.
+///
+/// Returns `""` if parsing fails or the input is not valid JSON.
+fn parse_deployment_summary(json_output: &str) -> String {
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(json_output) else {
+        return String::new();
+    };
+    let booted = val
+        .get("deployments")
+        .and_then(|v| v.as_array())
+        .and_then(|arr| arr.first());
+    let Some(dep) = booted else {
+        return String::new();
+    };
+    let origin = dep
+        .get("origin")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    let is_booted = dep
+        .get("booted")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let version = dep.get("version").and_then(|v| v.as_str());
+
+    let mut summary = origin.to_string();
+    let mut tags = Vec::new();
+    if is_booted {
+        tags.push("booted".to_string());
+    }
+    if let Some(v) = version {
+        tags.push(format!("v{v}"));
+    }
+    if !tags.is_empty() {
+        summary.push_str(&format!(" ({})", tags.join(", ")));
+    }
+    summary
+}
+
 /// Extract layered package names from `rpm-ostree status --booted --json`.
 ///
 /// The JSON contains `deployments[0].requested-packages` (user-requested layers)
@@ -173,18 +212,26 @@ fn parse_layered_packages(json_output: &str) -> Vec<String> {
 
 /// Extract local human users from `getent passwd` output.
 ///
-/// Filters to uid >= 1000 and excludes `nobody` and `nfsnobody`.
+/// Filters to uid >= 1000, excludes `nobody` and `nfsnobody`, and excludes
+/// accounts whose login shell ends with `nologin` or `/false`.
 fn parse_local_users(output: &str) -> Vec<String> {
     output
         .lines()
         .filter_map(|line| {
             let fields: Vec<&str> = line.split(':').collect();
-            if fields.len() < 3 {
+            // passwd format: name:pwd:uid:gid:gecos:home:shell (7 fields)
+            if fields.len() < 7 {
                 return None;
             }
             let username = fields[0];
             let uid: u32 = fields[2].parse().ok()?;
-            if uid >= 1000 && username != "nobody" && username != "nfsnobody" {
+            let shell = fields[6];
+            if uid >= 1000
+                && username != "nobody"
+                && username != "nfsnobody"
+                && !shell.ends_with("nologin")
+                && !shell.ends_with("/false")
+            {
                 Some(username.to_string())
             } else {
                 None
@@ -235,7 +282,7 @@ mod tests {
             (
                 "rpm-ostree",
                 &["status", "--booted", "--json"],
-                r#"{"deployments":[{"requested-packages":["vim","htop"]}]}"#,
+                r#"{"deployments":[{"origin":"fedora/41/x86_64/silverblue","booted":true,"version":"41.20260401.0","requested-packages":["vim","htop"]}]}"#,
             ),
             (
                 "systemctl",
@@ -262,7 +309,7 @@ mod tests {
             ),
             (
                 "getent",
-                &["passwd"],
+                &["passwd", "--service", "files"],
                 "root:x:0:0:root:/root:/bin/bash\njane:x:1000:1000:Jane:/home/jane:/bin/bash\n",
             ),
         ]);
@@ -272,7 +319,7 @@ mod tests {
         assert_eq!(state.host_name, "silverblue-lab");
         assert_eq!(
             state.deployment,
-            r#"{"deployments":[{"requested-packages":["vim","htop"]}]}"#
+            "fedora/41/x86_64/silverblue (booted, v41.20260401.0)"
         );
         assert_eq!(state.services, vec!["sshd.service"]);
         assert_eq!(state.flatpaks, vec!["org.gnome.Gedit"]);
@@ -429,11 +476,38 @@ mod tests {
     }
 
     #[test]
+    fn parse_deployment_summary_extracts_origin_and_version() {
+        let json = r#"{"deployments":[{"origin":"fedora/41/x86_64/silverblue","booted":true,"version":"41.20260401.0","requested-packages":[]}]}"#;
+        assert_eq!(
+            super::parse_deployment_summary(json),
+            "fedora/41/x86_64/silverblue (booted, v41.20260401.0)"
+        );
+    }
+
+    #[test]
+    fn parse_deployment_summary_handles_missing_version() {
+        let json = r#"{"deployments":[{"origin":"fedora/41/x86_64/silverblue","booted":true}]}"#;
+        assert_eq!(
+            super::parse_deployment_summary(json),
+            "fedora/41/x86_64/silverblue (booted)"
+        );
+    }
+
+    #[test]
+    fn parse_deployment_summary_returns_empty_on_invalid_json() {
+        assert_eq!(super::parse_deployment_summary("not json"), "");
+        assert_eq!(super::parse_deployment_summary("{}"), "");
+        assert_eq!(super::parse_deployment_summary(r#"{"deployments":[]}"#), "");
+    }
+
+    #[test]
     fn parse_local_users_filters_by_uid_and_excludes_system_accounts() {
         let passwd = "root:x:0:0:root:/root:/bin/bash\n\
                       daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin\n\
                       jane:x:1000:1000:Jane:/home/jane:/bin/bash\n\
                       bob:x:1001:1001:Bob:/home/bob:/bin/bash\n\
+                      svcacct:x:1002:1002:Service Account:/home/svcacct:/usr/sbin/nologin\n\
+                      blocked:x:1003:1003:Blocked:/home/blocked:/bin/false\n\
                       nobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin\n\
                       nfsnobody:x:65534:65534:nfsnobody:/nonexistent:/usr/sbin/nologin\n";
         let users = super::parse_local_users(passwd);

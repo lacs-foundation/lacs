@@ -178,29 +178,25 @@ read-only queries).
    ```json
    {"steps": [
      {"action_name": "CreateToolbox", "risk_level": "medium",
-      "params": {"name": "rust-dev"}},
-     {"action_name": "EnterToolbox", "risk_level": "medium",
       "params": {"name": "rust-dev"}}
    ]}
    ```
+   (`EnterToolbox` was removed — the LLM will not propose it.)
 
-2. Both medium risk. PlanPane shows orange MEDIUM badges. User
-   checks "I understand this will modify system state" and clicks
-   Approve.
+2. Medium risk. PlanPane shows an orange MEDIUM badge. User checks
+   "I understand this will modify system state" and clicks Approve.
 
-3. Daemon runs `toolbox create rust-dev` then `toolbox enter rust-dev`.
+3. Daemon runs `toolbox create rust-dev`. The plan completes after
+   creation.
 
-4. `EnterToolbox` is interesting: it starts an interactive shell
-   session inside the toolbox. The daemon executes the command but
-   there is no interactive TTY — the action completes immediately
-   after launching the toolbox shell process, which then exits.
+4. `EnterToolbox` was removed from the action catalogue because
+   entering a toolbox is an interactive TTY operation that the daemon
+   cannot perform on behalf of the user. The LLM will not propose
+   this step.
 
-**Gap identified:** `EnterToolbox` does not work as a user would
-expect. Entering a toolbox is an interactive operation that requires
-a TTY. The daemon can create the toolbox but cannot "enter" it on
-behalf of the user. This action should either be removed or
-redesigned as "open a terminal inside the toolbox" (which requires
-desktop integration, not daemon execution).
+**Note:** `EnterToolbox` was removed (not deferred) after review
+determined that the daemon cannot meaningfully execute an interactive
+shell session.
 
 ---
 
@@ -425,7 +421,7 @@ setup as complete.
 | 1 | CuratedState lacks layered package list | LLM may propose installing already-layered packages | Medium |
 | 2 | No tool to query available ostree refs | Rebase plans can reference non-existent refs | Medium |
 | 3 | No feedback loop — LLM cannot see command output | Cannot do iterative "check then act" workflows | High |
-| 4 | EnterToolbox is not interactive-TTY-aware | Action exists but cannot work as expected | Medium |
+| 4 | ~~EnterToolbox is not interactive-TTY-aware~~ | Resolved: action removed from catalogue | — |
 | 5 | Single-shot planning — all steps proposed at once | Cannot adapt plan based on intermediate results | High |
 | 6 | Raw stdout in timeline, no LLM summarization | Read-only queries produce unformatted output | Low |
 | 7 | SetupWizard does not verify Ollama reachability | User completes setup but gets connection errors | Low |
