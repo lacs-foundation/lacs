@@ -13,6 +13,7 @@
 //! socket must either make the trait async (via `async_trait`) or dispatch
 //! via `tokio::task::spawn_blocking` to avoid stalling the runtime thread.
 
+use crate::action_name::ActionName;
 use crate::audit::SafetyAuditLog;
 use crate::config::{BrainConfig, ProviderConfig};
 use crate::planning_tools::get_state::get_state_tool_def;
@@ -66,26 +67,23 @@ impl PlanRiskLevel {
 /// bugs where the stored value disagrees with the risk level.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct PlanStep {
-    action_name: String,
+    action_name: ActionName,
     summary: String,
     risk_level: PlanRiskLevel,
     params: serde_json::Value,
 }
 
 impl PlanStep {
-    /// Construct a step. Returns an error if `action_name` or `summary` is
-    /// empty.
+    /// Construct a step. Returns an error if `summary` is empty.
+    ///
+    /// `action_name` is an [`ActionName`] which guarantees membership in
+    /// the approved action catalogue at construction time.
     pub fn new(
-        action_name: String,
+        action_name: ActionName,
         summary: String,
         risk_level: PlanRiskLevel,
         params: serde_json::Value,
     ) -> Result<Self, PlanValidationError> {
-        if action_name.is_empty() {
-            return Err(PlanValidationError(
-                "PlanStep action_name must not be empty".into(),
-            ));
-        }
         if summary.is_empty() {
             return Err(PlanValidationError(
                 "PlanStep summary must not be empty".into(),
@@ -100,7 +98,7 @@ impl PlanStep {
     }
 
     pub fn action_name(&self) -> &str {
-        &self.action_name
+        self.action_name.as_str()
     }
 
     pub fn summary(&self) -> &str {

@@ -4,6 +4,7 @@
 //! successfully. When the LLM calls it, the planner parses the structured
 //! input into a validated `Plan` and returns it.
 
+use crate::action_name::ActionName;
 use crate::planner::{Plan, PlanRiskLevel, PlanStep, PlanningError};
 use crate::provider::ToolDefinition;
 
@@ -192,7 +193,7 @@ pub fn parse_proposed_plan(intent: &str, input: &serde_json::Value) -> Result<Pl
     let mut steps = Vec::with_capacity(steps_value.len());
 
     for (i, step_val) in steps_value.iter().enumerate() {
-        let action_name = step_val
+        let action_name_str = step_val
             .get("action_name")
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
@@ -200,11 +201,11 @@ pub fn parse_proposed_plan(intent: &str, input: &serde_json::Value) -> Result<Pl
                 PlanningError::InvalidPlanOutput(format!("step {i}: missing 'action_name'"))
             })?;
 
-        if !KNOWN_ACTIONS.contains(&action_name) {
-            return Err(PlanningError::InvalidPlanOutput(format!(
-                "step {i}: unknown action_name '{action_name}'"
-            )));
-        }
+        let action_name = ActionName::parse(action_name_str).map_err(|_| {
+            PlanningError::InvalidPlanOutput(format!(
+                "step {i}: unknown action_name '{action_name_str}'"
+            ))
+        })?;
 
         let step_summary = step_val
             .get("summary")
@@ -238,7 +239,7 @@ pub fn parse_proposed_plan(intent: &str, input: &serde_json::Value) -> Result<Pl
             .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
 
         steps.push(PlanStep::new(
-            action_name.to_string(),
+            action_name,
             step_summary.to_string(),
             risk_level,
             params,

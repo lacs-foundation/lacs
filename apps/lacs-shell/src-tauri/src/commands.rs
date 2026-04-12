@@ -534,10 +534,11 @@ mod tests {
 
     #[test]
     fn plan_to_response_maps_all_fields() {
+        use lacs_brain::action_name::ActionName;
         use lacs_brain::planner::{Plan, PlanStep};
 
         let step = PlanStep::new(
-            "RebaseSystem".into(),
+            ActionName::parse("RebaseSystem").unwrap(),
             "Rebase to f42".into(),
             PlanRiskLevel::High,
             serde_json::json!({}),
@@ -589,18 +590,19 @@ mod tests {
 
     #[test]
     fn plan_to_response_approval_required_when_any_step_is_high_risk() {
+        use lacs_brain::action_name::ActionName;
         use lacs_brain::planner::{Plan, PlanStep};
 
         let steps = vec![
             PlanStep::new(
-                "GetSystemState".into(),
+                ActionName::parse("GetSystemState").unwrap(),
                 "Read current state".into(),
                 PlanRiskLevel::Low,
                 serde_json::json!({}),
             )
             .unwrap(),
             PlanStep::new(
-                "InstallPackages".into(),
+                ActionName::parse("InstallPackages").unwrap(),
                 "Layer vim via rpm-ostree".into(),
                 PlanRiskLevel::High,
                 serde_json::json!({}),

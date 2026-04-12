@@ -59,13 +59,14 @@ struct MockStateClient {
 impl StateClient for MockStateClient {
     fn curated_state(&self) -> Result<CuratedState, PlanningError> {
         self.call_count.fetch_add(1, Ordering::Relaxed);
-        Ok(CuratedState::new(
+        CuratedState::new(
             "silverblue",
             "fedora/41",
             vec!["NetworkManager.service".into()],
             vec!["org.mozilla.firefox".into()],
             vec!["lacs-dev".into()],
-        ))
+        )
+        .map_err(PlanningError::StateUnavailable)
     }
 }
 
