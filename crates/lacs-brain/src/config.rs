@@ -1,10 +1,11 @@
 //! Brain configuration loaded from environment variables.
 //!
 //! Resolution order:
-//!   1. `LACS_LLM_PROVIDER` — "anthropic" | "ollama"
+//!   1. `LACS_LLM_PROVIDER` — "anthropic" | "ollama" | "openai" | "gemini" | "groq" | "deepseek" | "mistral" | "xai"
 //!      If unset: "anthropic" when `ANTHROPIC_API_KEY` is set and non-whitespace,
 //!      else "ollama". Whitespace-only values are treated as absent.
 //!   2. `ANTHROPIC_API_KEY` — required when provider is anthropic. Must be non-empty.
+//!      Other providers require their own key env var (e.g. `OPENAI_API_KEY`, `GEMINI_API_KEY`).
 //!   3. `LACS_LLM_MODEL` — overrides the provider default model.
 //!   4. `LACS_ANTHROPIC_URL` — overrides the Anthropic base URL (default: https://api.anthropic.com).
 //!   5. `LACS_OLLAMA_URL` — overrides the Ollama base URL (default: http://localhost:11434).
