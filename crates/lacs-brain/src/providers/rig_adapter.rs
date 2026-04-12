@@ -251,14 +251,38 @@ fn from_rig_response(choice: OneOrMany<AssistantContent>) -> Result<Completion, 
                 });
             }
             AssistantContent::Reasoning(_) => {
-                // Reasoning blocks are not part of our protocol; skip.
+                eprintln!(
+                    "[lacs-brain] WARNING: skipping Reasoning block \
+                     (not supported by planning loop)"
+                );
             }
             AssistantContent::Image(_) => {
-                // Image blocks are not part of our protocol; skip.
+                eprintln!(
+                    "[lacs-brain] WARNING: skipping Image block \
+                     (not supported by planning loop)"
+                );
             }
         }
     }
 
+    // If the model returned content but we ended up with nothing after filtering
+    // out unsupported block types, that is an error — the planning loop cannot
+    // proceed with an empty response.
+    if content.is_empty() && choice.iter().next().is_some() {
+        return Err(ProviderError::Parse(
+            "model response contained only unsupported content types \
+             (reasoning/image); no text or tool calls found"
+                .into(),
+        ));
+    }
+
+    // LIMITATION: Rig's CompletionResponse does not expose a stop reason, so we
+    // cannot distinguish MaxTokens from EndTurn. We infer ToolUse when tool
+    // calls are present and fall back to EndTurn otherwise. This means a
+    // response that was truncated due to the token limit will be reported as
+    // EndTurn, which causes the planning loop to return NoPlanProposed instead
+    // of a more specific "output truncated" error. If Rig exposes stop reasons
+    // in a future release, this inference should be replaced with the real value.
     let stop_reason = if has_tool_calls {
         StopReason::ToolUse
     } else {
@@ -275,8 +299,27 @@ fn from_rig_response(choice: OneOrMany<AssistantContent>) -> Result<Completion, 
 // Error mapping
 // ---------------------------------------------------------------------------
 
+/// Strip URL query parameters that may contain API keys from error messages.
+///
+/// Looks for common key-bearing query parameters (`?key=`, `?api_key=`) and
+/// replaces everything from the `?` to the next whitespace (or end of string)
+/// with `?[REDACTED]`. This avoids leaking secrets in logs or user-facing
+/// error messages without pulling in a regex crate.
+fn sanitize_error_msg(msg: &str) -> String {
+    let mut result = msg.to_string();
+    if let Some(qpos) = result.find("?key=").or_else(|| result.find("?api_key=")) {
+        if let Some(space_pos) = result[qpos..].find(|c: char| c.is_whitespace()) {
+            result.replace_range(qpos..qpos + space_pos, "?[REDACTED]");
+        } else {
+            result.truncate(qpos);
+            result.push_str("?[REDACTED]");
+        }
+    }
+    result
+}
+
 fn map_rig_error(err: rig::completion::CompletionError) -> ProviderError {
-    let msg = err.to_string();
+    let msg = sanitize_error_msg(&err.to_string());
 
     // NOTE: This classification relies on string matching against Rig's error
     // messages, which is inherently fragile — a Rig version bump could change
@@ -430,5 +473,49 @@ mod tests {
         let completion = from_rig_response(choice).unwrap();
         assert_eq!(completion.stop_reason, StopReason::ToolUse);
         assert_eq!(completion.content.len(), 2);
+    }
+
+    #[test]
+    fn sanitize_error_msg_strips_key_param() {
+        let input = "request to https://api.example.com/v1?key=sk-secret123 failed";
+        let result = sanitize_error_msg(input);
+        assert_eq!(
+            result,
+            "request to https://api.example.com/v1?[REDACTED] failed"
+        );
+    }
+
+    #[test]
+    fn sanitize_error_msg_strips_api_key_param() {
+        let input = "https://api.example.com/v1?api_key=sk-secret123";
+        let result = sanitize_error_msg(input);
+        assert_eq!(result, "https://api.example.com/v1?[REDACTED]");
+    }
+
+    #[test]
+    fn sanitize_error_msg_no_key_unchanged() {
+        let input = "connection refused: https://api.example.com/v1";
+        let result = sanitize_error_msg(input);
+        assert_eq!(result, input);
+    }
+
+    /// Verify that the empty-content guard fires: if every block is filtered
+    /// out (e.g. all Reasoning), `from_rig_response` returns a Parse error.
+    ///
+    /// We cannot construct `Reasoning` directly (non-exhaustive), so we
+    /// exercise the guard by verifying the error message on a response that
+    /// contains only empty text (which is also filtered out).
+    #[test]
+    fn from_rig_response_empty_text_only_returns_ok_empty() {
+        // An empty text block is filtered, producing empty content.
+        // The OneOrMany is non-empty, so the guard should fire.
+        let choice = OneOrMany::one(AssistantContent::Text(Text { text: "".into() }));
+        let err = from_rig_response(choice).unwrap_err();
+        match err {
+            ProviderError::Parse(msg) => {
+                assert!(msg.contains("unsupported content types"));
+            }
+            other => panic!("expected Parse error, got {other:?}"),
+        }
     }
 }
