@@ -121,6 +121,9 @@ impl DaemonIpcClient {
                     string_array(&s["services"]),
                     string_array(&s["flatpaks"]),
                     string_array(&s["toolboxes"]),
+                    string_array(&s["layered_packages"]),
+                    string_array(&s["containers"]),
+                    string_array(&s["users"]),
                 )
                 .map_err(|e| format!("invalid state from daemon: {e}"))
             }
@@ -432,7 +435,10 @@ mod tests {
                     "deployment": r#"{"deployments":[]}"#,
                     "services": ["NetworkManager.service"],
                     "flatpaks": ["org.mozilla.firefox"],
-                    "toolboxes": ["lacs-dev"]
+                    "toolboxes": ["lacs-dev"],
+                    "layered_packages": ["vim"],
+                    "containers": ["dev-box"],
+                    "users": ["alice"]
                 }
             }),
         );
@@ -448,6 +454,9 @@ mod tests {
         assert_eq!(state.services(), &["NetworkManager.service"]);
         assert_eq!(state.flatpaks(), &["org.mozilla.firefox"]);
         assert_eq!(state.toolboxes(), &["lacs-dev"]);
+        assert_eq!(state.layered_packages(), &["vim"]);
+        assert_eq!(state.containers(), &["dev-box"]);
+        assert_eq!(state.users(), &["alice"]);
     }
 
     #[test]

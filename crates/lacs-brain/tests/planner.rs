@@ -65,6 +65,9 @@ impl StateClient for MockStateClient {
             vec!["NetworkManager.service".into()],
             vec!["org.mozilla.firefox".into()],
             vec!["lacs-dev".into()],
+            vec!["vim".into()],
+            vec!["dev-box".into()],
+            vec!["alice".into()],
         )
         .map_err(PlanningError::StateUnavailable)
     }

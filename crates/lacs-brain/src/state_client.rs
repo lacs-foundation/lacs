@@ -8,6 +8,9 @@ pub struct CuratedState {
     services: Vec<String>,
     flatpaks: Vec<String>,
     toolboxes: Vec<String>,
+    layered_packages: Vec<String>,
+    containers: Vec<String>,
+    users: Vec<String>,
 }
 
 impl CuratedState {
@@ -23,6 +26,9 @@ impl CuratedState {
         services: Vec<String>,
         flatpaks: Vec<String>,
         toolboxes: Vec<String>,
+        layered_packages: Vec<String>,
+        containers: Vec<String>,
+        users: Vec<String>,
     ) -> Result<Self, String> {
         let host_name = host_name.into();
         let deployment = deployment.into();
@@ -35,6 +41,9 @@ impl CuratedState {
             services,
             flatpaks,
             toolboxes,
+            layered_packages,
+            containers,
+            users,
         })
     }
 
@@ -57,6 +66,18 @@ impl CuratedState {
     pub fn toolboxes(&self) -> &[String] {
         &self.toolboxes
     }
+
+    pub fn layered_packages(&self) -> &[String] {
+        &self.layered_packages
+    }
+
+    pub fn containers(&self) -> &[String] {
+        &self.containers
+    }
+
+    pub fn users(&self) -> &[String] {
+        &self.users
+    }
 }
 
 /// Custom `Deserialize` that routes through `CuratedState::new` so invariants
@@ -73,6 +94,12 @@ impl<'de> Deserialize<'de> for CuratedState {
             services: Vec<String>,
             flatpaks: Vec<String>,
             toolboxes: Vec<String>,
+            #[serde(default)]
+            layered_packages: Vec<String>,
+            #[serde(default)]
+            containers: Vec<String>,
+            #[serde(default)]
+            users: Vec<String>,
         }
 
         let raw = Raw::deserialize(deserializer)?;
@@ -82,6 +109,9 @@ impl<'de> Deserialize<'de> for CuratedState {
             raw.services,
             raw.flatpaks,
             raw.toolboxes,
+            raw.layered_packages,
+            raw.containers,
+            raw.users,
         )
         .map_err(serde::de::Error::custom)
     }

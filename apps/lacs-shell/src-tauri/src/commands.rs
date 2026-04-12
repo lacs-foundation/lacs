@@ -103,6 +103,9 @@ impl StateClient for DemoStateClient {
             vec!["NetworkManager.service".to_string()],
             vec!["org.mozilla.firefox".to_string()],
             vec!["lacs-dev".to_string()],
+            vec!["vim".to_string()],
+            vec!["dev-box".to_string()],
+            vec!["alice".to_string()],
         )
         .map_err(PlanningError::StateUnavailable)
     }
