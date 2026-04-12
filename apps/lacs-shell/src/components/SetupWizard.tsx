@@ -119,7 +119,8 @@ import { detectHardware, checkOllamaStatus } from "../daemonBridge";
 async function safeDetectHardware(): Promise<HardwareInfo | null> {
   try {
     return await detectHardware();
-  } catch {
+  } catch (e) {
+    console.warn("[lacs-shell] detectHardware failed:", e);
     return null;
   }
 }
@@ -127,7 +128,8 @@ async function safeDetectHardware(): Promise<HardwareInfo | null> {
 async function safeCheckOllama(): Promise<OllamaStatus | null> {
   try {
     return await checkOllamaStatus();
-  } catch {
+  } catch (e) {
+    console.warn("[lacs-shell] checkOllamaStatus failed:", e);
     return null;
   }
 }
@@ -305,7 +307,7 @@ export function SetupWizard({ onDismiss }: Props) {
             {hardware.gpuName
               ? `GPU: ${hardware.gpuName}${hardware.vramMb ? ` (${Math.round(hardware.vramMb / 1024)}GB VRAM)` : ""}`
               : "No GPU detected"}
-            {" | "}RAM: {Math.round(hardware.ramMb / 1024)}GB
+            {" | "}RAM: {hardware.ramMb != null ? `${Math.round(hardware.ramMb / 1024)}GB` : "unknown"}
           </p>
         )}
 
@@ -314,7 +316,9 @@ export function SetupWizard({ onDismiss }: Props) {
           <p className={`setup-wizard__ollama-status ${ollamaStatus.reachable ? "setup-wizard__ollama-status--ok" : "setup-wizard__ollama-status--err"}`}>
             {ollamaStatus.reachable
               ? "Ollama is running"
-              : "Ollama is not reachable -- make sure it is installed and running"}
+              : ollamaStatus.errorMessage
+                ? `Ollama is not reachable: ${ollamaStatus.errorMessage}`
+                : "Ollama is not reachable -- make sure it is installed and running"}
           </p>
         )}
 

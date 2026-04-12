@@ -15,6 +15,7 @@ vi.mock("../daemonBridge", () => ({
     Promise.resolve({
       reachable: true,
       models: ["qwen3:8b"],
+      errorMessage: null,
     }),
   ),
 }));

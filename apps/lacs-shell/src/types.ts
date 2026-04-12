@@ -57,10 +57,11 @@ export interface SetupStatus {
 export interface HardwareInfo {
   gpuName: string | null;
   vramMb: number | null;
-  ramMb: number;
+  ramMb: number | null;
 }
 
 export interface OllamaStatus {
   reachable: boolean;
   models: string[];
+  errorMessage: string | null;
 }

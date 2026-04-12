@@ -372,7 +372,7 @@ pub(crate) fn plan_to_response(plan: Plan, curated: &CuratedState) -> PlanRespon
 pub struct HardwareInfo {
     pub gpu_name: Option<String>,
     pub vram_mb: Option<u64>,
-    pub ram_mb: u64,
+    pub ram_mb: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -380,17 +380,27 @@ pub struct HardwareInfo {
 pub struct OllamaStatus {
     pub reachable: bool,
     pub models: Vec<String>,
+    pub error_message: Option<String>,
 }
 
 #[tauri::command]
 pub async fn detect_hardware() -> HardwareInfo {
-    let (gpu_name, vram_mb) = detect_gpu();
-    let ram_mb = detect_ram_mb();
-    HardwareInfo {
-        gpu_name,
-        vram_mb,
-        ram_mb,
-    }
+    let hw = tokio::task::spawn_blocking(|| {
+        let (gpu_name, vram_mb) = detect_gpu();
+        let ram_mb = detect_ram_mb();
+        HardwareInfo {
+            gpu_name,
+            vram_mb,
+            ram_mb,
+        }
+    })
+    .await
+    .unwrap_or(HardwareInfo {
+        gpu_name: None,
+        vram_mb: None,
+        ram_mb: None,
+    });
+    hw
 }
 
 #[tauri::command]
@@ -399,10 +409,12 @@ pub async fn check_ollama_status() -> OllamaStatus {
         Ok(models) => OllamaStatus {
             reachable: true,
             models,
+            error_message: None,
         },
-        Err(_) => OllamaStatus {
+        Err(e) => OllamaStatus {
             reachable: false,
             models: vec![],
+            error_message: Some(e.to_string()),
         },
     }
 }
@@ -460,22 +472,22 @@ fn detect_gpu() -> (Option<String>, Option<u64>) {
     (None, None)
 }
 
-/// Read system RAM from /proc/meminfo.
-fn detect_ram_mb() -> u64 {
-    if let Ok(contents) = std::fs::read_to_string("/proc/meminfo") {
-        for line in contents.lines() {
-            if line.starts_with("MemTotal:") {
-                // Format: "MemTotal:       32768000 kB"
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() >= 2 {
-                    if let Ok(kb) = parts[1].parse::<u64>() {
-                        return kb / 1024;
-                    }
+/// Read system RAM from /proc/meminfo. Returns `None` when the file
+/// cannot be read or parsed (e.g. non-Linux hosts, CI containers).
+fn detect_ram_mb() -> Option<u64> {
+    let contents = std::fs::read_to_string("/proc/meminfo").ok()?;
+    for line in contents.lines() {
+        if line.starts_with("MemTotal:") {
+            // Format: "MemTotal:       32768000 kB"
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 2 {
+                if let Ok(kb) = parts[1].parse::<u64>() {
+                    return Some(kb / 1024);
                 }
             }
         }
     }
-    0
+    None
 }
 
 /// Query Ollama API for available models.
