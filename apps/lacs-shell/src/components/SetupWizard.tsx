@@ -12,7 +12,7 @@ const CONFIG_PATH = "~/.config/lacs/config.toml";
 function ollamaConfig(): string {
   return `[llm]
 provider = "ollama"
-model    = "llama3.2"`;
+model    = "qwen3:8b"`;
 }
 
 function anthropicConfig(): string {
@@ -167,7 +167,7 @@ export function SetupWizard({ onDismiss }: Props) {
           <div className="setup-wizard__hint">
             <p>Make sure Ollama is installed and running, then pull a model:</p>
             <pre className="setup-wizard__config">
-              <code>ollama pull llama3.2</code>
+              <code>ollama pull qwen3:8b</code>
             </pre>
           </div>
         )}

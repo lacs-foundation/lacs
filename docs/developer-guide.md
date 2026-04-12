@@ -112,7 +112,7 @@ database = "/var/lib/lacs/daemon.sqlite"
 
 [llm]
 provider   = "ollama"                 # "ollama" | "anthropic"
-model      = "llama3.2"
+model      = "qwen3:8b"
 ollama_url = "http://localhost:11434"
 max_turns  = 5
 ```

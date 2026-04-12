@@ -14,7 +14,7 @@ use std::fmt;
 
 pub const DEFAULT_ANTHROPIC_MODEL: &str = "claude-sonnet-4-6";
 pub const DEFAULT_ANTHROPIC_BASE_URL: &str = "https://api.anthropic.com";
-pub const DEFAULT_OLLAMA_MODEL: &str = "llama3.2";
+pub const DEFAULT_OLLAMA_MODEL: &str = "qwen3:8b";
 pub const DEFAULT_OLLAMA_BASE_URL: &str = "http://localhost:11434";
 pub const DEFAULT_OPENAI_MODEL: &str = "gpt-4o";
 pub const DEFAULT_GEMINI_MODEL: &str = "gemini-2.0-flash";
@@ -292,7 +292,7 @@ impl BrainConfig {
         }
     }
 
-    /// Returns the model identifier string (e.g. `"claude-sonnet-4-6"` or `"llama3.2"`).
+    /// Returns the model identifier string (e.g. `"claude-sonnet-4-6"` or `"qwen3:8b"`).
     pub fn model_name(&self) -> &str {
         match &self.provider {
             ProviderConfig::Anthropic { model, .. }

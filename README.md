@@ -95,7 +95,7 @@ or **Anthropic**.
 **Ollama:**
 
 ```sh
-ollama pull llama3.2
+ollama pull qwen3:8b
 # LACS auto-detects Ollama when ANTHROPIC_API_KEY is not set.
 ```
 
@@ -110,7 +110,7 @@ export ANTHROPIC_API_KEY=sk-ant-...
 ```toml
 [llm]
 provider = "ollama"
-model    = "llama3.2"
+model    = "qwen3:8b"
 
 [daemon]
 socket   = "/run/lacs/daemon.sock"
