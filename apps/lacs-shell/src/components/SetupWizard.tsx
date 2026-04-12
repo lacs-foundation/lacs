@@ -201,7 +201,7 @@ export function SetupWizard({ onDismiss }: Props) {
     if (!ollamaStatus?.models) return false;
     // Ollama tags may include ":latest" suffix
     return ollamaStatus.models.some(
-      (m) => m === model.ollamaTag || m === `${model.ollamaTag}:latest` || model.ollamaTag.startsWith(m.replace(":latest", "")),
+      (m) => m === model.ollamaTag || m === `${model.ollamaTag}:latest`,
     );
   };
 
@@ -310,6 +310,9 @@ export function SetupWizard({ onDismiss }: Props) {
             {" | "}RAM: {hardware.ramMb != null ? `${Math.round(hardware.ramMb / 1024)}GB` : "unknown"}
           </p>
         )}
+        {!hwLoading && !hardware && (
+          <p className="setup-wizard__hw-summary">No GPU detected</p>
+        )}
 
         {/* Ollama reachability */}
         {!hwLoading && ollamaStatus && (
@@ -346,18 +349,24 @@ export function SetupWizard({ onDismiss }: Props) {
                   {pulled && <span className="setup-wizard__model-pulled"> (pulled)</span>}
                 </span>
                 <span className="setup-wizard__model-vram">
-                  {m.vramMb >= 1000 ? `${Math.round(m.vramMb / 1000)}GB VRAM` : `${m.vramMb}MB VRAM`}
+                  {m.vramMb >= 1024 ? `${Math.round(m.vramMb / 1024)}GB VRAM` : `${m.vramMb}MB VRAM`}
                 </span>
                 <span className="setup-wizard__model-desc">{m.description}</span>
                 {!fits && hardware?.vramMb && (
                   <span className="setup-wizard__model-warn">
-                    requires {Math.round(m.vramMb / 1000)}GB VRAM
+                    requires {Math.round(m.vramMb / 1024)}GB VRAM
                   </span>
                 )}
               </button>
             );
           })}
         </div>
+
+        {hardware?.vramMb != null && selectedModel && !fitsVram(selectedModel) && (
+          <p className="setup-wizard__warning">
+            This model requires more VRAM than detected. It may run slowly using CPU offloading.
+          </p>
+        )}
 
         <div className="setup-wizard__actions">
           <button
@@ -388,7 +397,7 @@ export function SetupWizard({ onDismiss }: Props) {
         </p>
         <div className="setup-wizard__field">
           <input
-            type="text"
+            type="password"
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
             placeholder={currentCloudMeta.placeholder}
@@ -455,7 +464,7 @@ export function SetupWizard({ onDismiss }: Props) {
               Set the API key in your shell profile or systemd environment:
             </p>
             <pre className="setup-wizard__config">
-              <code>export {currentCloudMeta.envVar}="{currentCloudMeta.placeholder}"</code>
+              <code>export {currentCloudMeta.envVar}="{apiKey || `your-${currentCloudMeta.id}-key`}"</code>
             </pre>
           </div>
         )}

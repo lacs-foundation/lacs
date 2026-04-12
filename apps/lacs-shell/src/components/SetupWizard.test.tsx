@@ -160,6 +160,47 @@ describe("SetupWizard", () => {
     expect(screen.getByText("Choose your LLM provider")).toBeInTheDocument();
   });
 
+  it("shows 'No GPU detected' when detectHardware returns null", async () => {
+    const { detectHardware } = await import("../daemonBridge");
+    vi.mocked(detectHardware).mockRejectedValueOnce(new Error("no GPU"));
+
+    render(<SetupWizard onDismiss={() => {}} />);
+    fireEvent.click(screen.getByText("Ollama"));
+    await waitFor(() => {
+      expect(screen.getByText(/No GPU detected/)).toBeInTheDocument();
+    });
+  });
+
+  it("shows error message when checkOllamaStatus returns unreachable", async () => {
+    const { checkOllamaStatus } = await import("../daemonBridge");
+    vi.mocked(checkOllamaStatus).mockResolvedValueOnce({
+      reachable: false,
+      models: [],
+      errorMessage: null,
+    });
+
+    render(<SetupWizard onDismiss={() => {}} />);
+    fireEvent.click(screen.getByText("Ollama"));
+    await waitFor(() => {
+      expect(screen.getByText(/Ollama is not reachable/)).toBeInTheDocument();
+    });
+  });
+
+  it("shows custom error message from Ollama status", async () => {
+    const { checkOllamaStatus } = await import("../daemonBridge");
+    vi.mocked(checkOllamaStatus).mockResolvedValueOnce({
+      reachable: false,
+      models: [],
+      errorMessage: "connection refused on port 11434",
+    });
+
+    render(<SetupWizard onDismiss={() => {}} />);
+    fireEvent.click(screen.getByText("Ollama"));
+    await waitFor(() => {
+      expect(screen.getByText(/connection refused on port 11434/)).toBeInTheDocument();
+    });
+  });
+
   it("can select a different model in the Ollama step", () => {
     render(<SetupWizard onDismiss={() => {}} />);
     fireEvent.click(screen.getByText("Ollama"));
