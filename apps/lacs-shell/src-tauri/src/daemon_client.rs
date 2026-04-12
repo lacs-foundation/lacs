@@ -258,7 +258,7 @@ pub async fn execute_action(
     app: &tauri::AppHandle,
     action_name: &str,
     params: &serde_json::Value,
-) -> Result<String, String> {
+) -> Result<(String, Vec<String>), String> {
     use tokio::net::UnixStream as TokioStream;
     use tokio::time::{timeout, Duration as TDuration};
 
@@ -326,6 +326,7 @@ pub async fn execute_action(
         .map_err(|e| format!("failed to send execute request: {e}"))?;
 
     // ── Stream responses ──────────────────────────────────────────────────────
+    let mut collected_lines: Vec<String> = Vec::new();
     loop {
         let raw = timeout(
             TDuration::from_secs(EXECUTE_STEP_TIMEOUT_SECS),
@@ -350,6 +351,7 @@ pub async fn execute_action(
             Some("job_progress") => {
                 if let Some(line) = msg["line"].as_str() {
                     if !line.is_empty() {
+                        collected_lines.push(line.to_string());
                         emit_timeline(app, line.to_string());
                     }
                 }
@@ -361,10 +363,11 @@ pub async fn execute_action(
                     .to_string();
                 if let Some(summary) = msg["result"]["summary"].as_str() {
                     if !summary.is_empty() {
+                        collected_lines.push(summary.to_string());
                         emit_timeline(app, summary.to_string());
                     }
                 }
-                return Ok(status);
+                return Ok((status, collected_lines));
             }
             Some("error_response") => {
                 return Err(format!(

@@ -65,3 +65,14 @@ export interface OllamaStatus {
   models: string[];
   errorMessage: string | null;
 }
+
+export interface StepOutput {
+  actionName: string;
+  status: string;
+  outputLines: string[];
+}
+
+export interface ExecutionResult {
+  outcome: string;
+  stepOutputs: StepOutput[];
+}

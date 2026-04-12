@@ -59,6 +59,21 @@ impl ShellError {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct StepOutput {
+    pub action_name: String,
+    pub status: String,
+    pub output_lines: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecutionResult {
+    pub outcome: String,
+    pub step_outputs: Vec<StepOutput>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BrainConfigResponse {
     pub provider: String,
     pub model: String,
@@ -236,6 +251,7 @@ pub async fn approve_preview(app: AppHandle, steps: Vec<PlanStepRequest>) -> Res
     let socket_path = resolve_socket_path();
 
     let mut final_status = "succeeded".to_string();
+    let mut step_outputs: Vec<StepOutput> = Vec::new();
 
     'steps: for step in &steps {
         match crate::daemon_client::execute_action(
@@ -246,7 +262,12 @@ pub async fn approve_preview(app: AppHandle, steps: Vec<PlanStepRequest>) -> Res
         )
         .await
         {
-            Ok(status) => {
+            Ok((status, lines)) => {
+                step_outputs.push(StepOutput {
+                    action_name: step.action_name.clone(),
+                    status: status.clone(),
+                    output_lines: lines,
+                });
                 final_status = status;
                 if final_status != "succeeded" {
                     break 'steps;
@@ -257,6 +278,11 @@ pub async fn approve_preview(app: AppHandle, steps: Vec<PlanStepRequest>) -> Res
                     "[lacs-shell] execute_action failed for '{}': {e}",
                     step.action_name
                 );
+                step_outputs.push(StepOutput {
+                    action_name: step.action_name.clone(),
+                    status: "failed".to_string(),
+                    output_lines: vec![e.clone()],
+                });
                 final_status = "failed".to_string();
                 break 'steps;
             }
@@ -269,6 +295,15 @@ pub async fn approve_preview(app: AppHandle, steps: Vec<PlanStepRequest>) -> Res
         "rolled_back" => DaemonJobOutcome::RolledBack,
         _ => DaemonJobOutcome::Failed,
     };
+
+    let execution_result = ExecutionResult {
+        outcome: final_status,
+        step_outputs,
+    };
+
+    // Emit execution result before job-completed so the frontend can capture it
+    app.emit("lacs:execution-result", &execution_result)
+        .map_err(|e| format!("failed to emit lacs:execution-result: {e}"))?;
 
     app.emit("lacs:job-completed", outcome)
         .map_err(|e| format!("failed to emit lacs:job-completed: {e}"))?;
@@ -287,6 +322,28 @@ pub fn check_setup_status() -> SetupStatus {
         config_exists: config_path_exists(),
         provider_configured: provider_is_configured(),
     }
+}
+
+#[tauri::command]
+pub async fn review_execution(
+    execution_result: ExecutionResult,
+    intent: String,
+) -> Result<String, String> {
+    let mut lines = vec![format!("Task: {intent}")];
+    lines.push(format!("Outcome: {}", execution_result.outcome));
+    for step in &execution_result.step_outputs {
+        lines.push(format!("\n{} — {}", step.action_name, step.status));
+        for line in step.output_lines.iter().take(10) {
+            lines.push(format!("  {line}"));
+        }
+        if step.output_lines.len() > 10 {
+            lines.push(format!(
+                "  ... ({} more lines)",
+                step.output_lines.len() - 10
+            ));
+        }
+    }
+    Ok(lines.join("\n"))
 }
 
 #[tauri::command]
