@@ -66,6 +66,11 @@ enum DaemonRequest {
     Cancel {
         job_id: String,
     },
+    QueryAction {
+        request_id: String,
+        action_name: String,
+        params: Value,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -96,6 +101,11 @@ enum DaemonResponse {
     JobCompleted {
         job_id: String,
         result: JobResult,
+    },
+    QueryActionResponse {
+        request_id: String,
+        action_name: String,
+        output: String,
     },
     ErrorResponse {
         request_id: String,
@@ -381,6 +391,20 @@ pub async fn connection_handler_with_executor(
                 )
                 .await
             }
+            DaemonRequest::QueryAction {
+                request_id,
+                action_name,
+                params,
+            } => {
+                handle_query_action(
+                    &mut framed,
+                    Arc::clone(&executor),
+                    action_name,
+                    params,
+                    request_id,
+                )
+                .await
+            }
             DaemonRequest::Cancel { job_id } => {
                 // MVP: cancel acknowledgement only. Active-job signaling is a follow-up.
                 send_error(
@@ -426,6 +450,67 @@ async fn handle_query_state(
         &DaemonResponse::StateResponse {
             request_id: request_id.to_string(),
             state: collected,
+        },
+    )
+    .await
+}
+
+async fn handle_query_action(
+    framed: &mut FramedStream<UnixStream>,
+    executor: Arc<dyn ActionExecutor>,
+    action_name: &str,
+    params: &Value,
+    request_id: &str,
+) -> Result<(), HandlerError> {
+    use crate::policy::min_role_for_action;
+    use lacs_types::CallerRole;
+
+    // Only allow Low-risk (Observer-level) actions.
+    let min_role = match min_role_for_action(action_name) {
+        Some(role) => role,
+        None => {
+            return send_error(
+                framed,
+                request_id,
+                "validation_failure",
+                format!("unknown action: {action_name}"),
+            )
+            .await;
+        }
+    };
+
+    if min_role != CallerRole::Observer {
+        return send_error(
+            framed,
+            request_id,
+            "authorization_failure",
+            format!(
+                "{action_name} is not a read-only action; use preview+execute instead"
+            ),
+        )
+        .await;
+    }
+
+    let spec = match build_action_spec(action_name, params) {
+        Ok(s) => s,
+        Err(e) => {
+            return send_error(framed, request_id, "validation_failure", e.to_string()).await;
+        }
+    };
+
+    let output = match executor.execute(&spec).await {
+        Ok(out) => out,
+        Err(e) => {
+            return send_error(framed, request_id, "execution_failure", e.to_string()).await;
+        }
+    };
+
+    send_response(
+        framed,
+        &DaemonResponse::QueryActionResponse {
+            request_id: request_id.to_string(),
+            action_name: action_name.to_string(),
+            output: output.stdout,
         },
     )
     .await

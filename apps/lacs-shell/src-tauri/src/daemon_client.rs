@@ -141,9 +141,61 @@ impl DaemonIpcClient {
 }
 
 #[cfg(any(test, not(feature = "demo")))]
+impl DaemonIpcClient {
+    fn query_action_inner(
+        &self,
+        action_name: &str,
+        params: &serde_json::Value,
+    ) -> Result<String, String> {
+        let mut stream = UnixStream::connect(&self.socket_path)
+            .map_err(|e| format!("daemon connect: {e}"))?;
+        stream.set_read_timeout(Some(SOCKET_TIMEOUT)).ok();
+        stream.set_write_timeout(Some(SOCKET_TIMEOUT)).ok();
+
+        let request = serde_json::to_vec(&serde_json::json!({
+            "type": "query_action",
+            "request_id": format!("query-{action_name}"),
+            "action_name": action_name,
+            "params": params,
+        }))
+        .map_err(|e| format!("serialize: {e}"))?;
+
+        write_framed(&mut stream, &request)
+            .map_err(|e| format!("send: {e}"))?;
+        let msg = read_framed(&mut stream)
+            .map_err(|e| format!("read: {e}"))?;
+        let resp: Value = serde_json::from_slice(&msg)
+            .map_err(|e| format!("parse: {e}"))?;
+
+        match resp["type"].as_str() {
+            Some("query_action_response") => {
+                Ok(resp["output"].as_str().unwrap_or("").to_string())
+            }
+            Some("error_response") => Err(format!(
+                "daemon error: {}",
+                resp["message"].as_str().unwrap_or("unknown")
+            )),
+            other => Err(format!(
+                "unexpected: {}",
+                other.unwrap_or("<missing>")
+            )),
+        }
+    }
+}
+
+#[cfg(any(test, not(feature = "demo")))]
 impl StateClient for DaemonIpcClient {
     fn curated_state(&self) -> Result<CuratedState, PlanningError> {
         self.query_state_inner()
+            .map_err(PlanningError::StateUnavailable)
+    }
+
+    fn query_action(
+        &self,
+        action_name: &str,
+        params: &serde_json::Value,
+    ) -> Result<String, PlanningError> {
+        self.query_action_inner(action_name, params)
             .map_err(PlanningError::StateUnavailable)
     }
 }
@@ -206,7 +258,7 @@ pub async fn execute_action(
     app: &tauri::AppHandle,
     action_name: &str,
     params: &serde_json::Value,
-) -> Result<String, String> {
+) -> Result<(String, Vec<String>), String> {
     use tokio::net::UnixStream as TokioStream;
     use tokio::time::{timeout, Duration as TDuration};
 
@@ -274,6 +326,7 @@ pub async fn execute_action(
         .map_err(|e| format!("failed to send execute request: {e}"))?;
 
     // ── Stream responses ──────────────────────────────────────────────────────
+    let mut collected_lines: Vec<String> = Vec::new();
     loop {
         let raw = timeout(
             TDuration::from_secs(EXECUTE_STEP_TIMEOUT_SECS),
@@ -298,6 +351,7 @@ pub async fn execute_action(
             Some("job_progress") => {
                 if let Some(line) = msg["line"].as_str() {
                     if !line.is_empty() {
+                        collected_lines.push(line.to_string());
                         emit_timeline(app, line.to_string());
                     }
                 }
@@ -309,10 +363,11 @@ pub async fn execute_action(
                     .to_string();
                 if let Some(summary) = msg["result"]["summary"].as_str() {
                     if !summary.is_empty() {
+                        collected_lines.push(summary.to_string());
                         emit_timeline(app, summary.to_string());
                     }
                 }
-                return Ok(status);
+                return Ok((status, collected_lines));
             }
             Some("error_response") => {
                 return Err(format!(

@@ -1,4 +1,4 @@
-import type { PlanResponse, ShellError } from "./types";
+import type { ExecutionResult, PlanResponse, ShellError } from "./types";
 import {
   initialShellState,
   shellReducer,
@@ -201,6 +201,96 @@ describe("shellReducer — daemon status", () => {
     const updated = shellReducer(planning, { type: "daemon_status_changed", status: "unreachable" });
     expect(updated.mode).toBe("planning");
     expect(updated.timeline.length).toBe(planning.timeline.length);
+  });
+});
+
+describe("shellReducer — reviewing mode", () => {
+  const MOCK_EXECUTION_RESULT: ExecutionResult = {
+    outcome: "succeeded",
+    stepOutputs: [
+      { actionName: "GetSystemState", status: "succeeded", outputLines: ["state collected"] },
+      { actionName: "InstallPackages", status: "succeeded", outputLines: ["vim layered"] },
+    ],
+  };
+
+  function reachExecuting(): ShellState {
+    return shellReducer(reachAwaitingApproval(), { type: "approval_granted" });
+  }
+
+  it("execution_review_ready from executing transitions to reviewing", () => {
+    const executing = reachExecuting();
+    const reviewing = shellReducer(executing, {
+      type: "execution_review_ready",
+      executionResult: MOCK_EXECUTION_RESULT,
+    });
+    expect(reviewing.mode).toBe("reviewing");
+    if (reviewing.mode === "reviewing") {
+      expect(reviewing.executionResult).toBe(MOCK_EXECUTION_RESULT);
+      expect(reviewing.summary).toBeNull();
+      expect(reviewing.plan).not.toBeNull();
+    }
+  });
+
+  it("execution_review_ready from non-executing is ignored", () => {
+    const idle = initialShellState;
+    const same = shellReducer(idle, {
+      type: "execution_review_ready",
+      executionResult: MOCK_EXECUTION_RESULT,
+    });
+    expect(same.mode).toBe("idle");
+  });
+
+  it("summary_ready populates summary in reviewing mode", () => {
+    const executing = reachExecuting();
+    const reviewing = shellReducer(executing, {
+      type: "execution_review_ready",
+      executionResult: MOCK_EXECUTION_RESULT,
+    });
+    const withSummary = shellReducer(reviewing, {
+      type: "summary_ready",
+      summary: "All steps completed successfully.",
+    });
+    expect(withSummary.mode).toBe("reviewing");
+    if (withSummary.mode === "reviewing") {
+      expect(withSummary.summary).toBe("All steps completed successfully.");
+    }
+  });
+
+  it("summary_ready from non-reviewing is ignored", () => {
+    const idle = initialShellState;
+    const same = shellReducer(idle, { type: "summary_ready", summary: "ignored" });
+    expect(same.mode).toBe("idle");
+  });
+
+  it("dismiss_review from reviewing transitions to idle", () => {
+    const executing = reachExecuting();
+    const reviewing = shellReducer(executing, {
+      type: "execution_review_ready",
+      executionResult: MOCK_EXECUTION_RESULT,
+    });
+    const idle = shellReducer(reviewing, { type: "dismiss_review" });
+    expect(idle.mode).toBe("idle");
+    if (idle.mode === "idle") {
+      expect(idle.plan).toBeNull();
+      expect(idle.intent).toBe("");
+    }
+  });
+
+  it("dismiss_review from non-reviewing is ignored", () => {
+    const executing = reachExecuting();
+    const same = shellReducer(executing, { type: "dismiss_review" });
+    expect(same.mode).toBe("executing");
+  });
+
+  it("reset from reviewing returns to idle", () => {
+    const executing = reachExecuting();
+    const reviewing = shellReducer(executing, {
+      type: "execution_review_ready",
+      executionResult: MOCK_EXECUTION_RESULT,
+    });
+    const afterReset = shellReducer(reviewing, { type: "reset" });
+    expect(afterReset.mode).toBe("idle");
+    expect(afterReset.intent).toBe("");
   });
 });
 

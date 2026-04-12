@@ -1,7 +1,8 @@
-import { useEffect, useReducer, useCallback, useState } from "react";
+import { useEffect, useReducer, useCallback, useState, useRef } from "react";
 import { IntentPane } from "./components/IntentPane";
 import { ExecutionPane } from "./components/ExecutionPane";
 import { PlanPane } from "./components/PlanPane";
+import { ReviewPane } from "./components/ReviewPane";
 import { SetupWizard } from "./components/SetupWizard";
 import { TimelinePane } from "./components/TimelinePane";
 import {
@@ -10,13 +11,14 @@ import {
   requestPlan,
   requestApproval,
   cancelJob,
+  reviewExecution,
   subscribeDaemonEvents,
 } from "./daemonBridge";
 import {
   initialShellState,
   shellReducer,
 } from "./shellState";
-import type { BrainConfigResponse, ShellError } from "./types";
+import type { BrainConfigResponse, ExecutionResult, ShellError } from "./types";
 
 const STATUS_LABELS: Record<string, string> = {
   idle:                "Ready",
@@ -24,6 +26,7 @@ const STATUS_LABELS: Record<string, string> = {
   previewing:          "Review plan",
   "awaiting-approval": "Awaiting your approval",
   executing:           "Executing...",
+  reviewing:           "Reviewing results",
   "needs-reboot":      "Done — reboot required",
   failed:              "Failed",
   "rolled-back":       "Rolled back",
@@ -33,6 +36,9 @@ export default function App() {
   const [state, dispatch] = useReducer(shellReducer, initialShellState);
   const [brainConfig, setBrainConfig] = useState<BrainConfigResponse | null>(null);
   const [needsSetup, setNeedsSetup] = useState<boolean | null>(null);
+  const pendingExecutionResult = useRef<ExecutionResult | null>(null);
+  const intentRef = useRef(state.intent);
+  intentRef.current = state.intent;
 
   // Check setup status on mount
   useEffect(() => {
@@ -79,13 +85,34 @@ export default function App() {
         }
       },
       (outcome) => {
-        if (!cancelled) {
-          dispatch({ type: "job_completed", outcome });
+        if (cancelled) return;
+        // For succeeded/needs_reboot, transition to reviewing if we have the execution result
+        if (outcome === "succeeded" || outcome === "needs_reboot") {
+          const result = pendingExecutionResult.current;
+          if (result) {
+            pendingExecutionResult.current = null;
+            dispatch({ type: "execution_review_ready", executionResult: result });
+            // Kick off the summary generation in the background
+            reviewExecution(result, intentRef.current).catch((err: unknown) => {
+              console.warn("[LACS] reviewExecution failed:", err);
+            }).then((summary) => {
+              if (!cancelled && summary) {
+                dispatch({ type: "summary_ready", summary });
+              }
+            });
+            return;
+          }
         }
+        dispatch({ type: "job_completed", outcome });
       },
       (status) => {
         if (!cancelled) {
           dispatch({ type: "daemon_status_changed", status });
+        }
+      },
+      (result) => {
+        if (!cancelled) {
+          pendingExecutionResult.current = result;
         }
       },
     )
@@ -166,6 +193,10 @@ export default function App() {
     dispatch({ type: "reset" });
   }, []);
 
+  const handleDismissReview = useCallback(() => {
+    dispatch({ type: "dismiss_review" });
+  }, []);
+
   // Show the setup wizard when no provider is configured
   if (needsSetup) {
     return (
@@ -185,6 +216,7 @@ export default function App() {
     state.mode === "previewing" ||
     state.mode === "awaiting-approval" ||
     state.mode === "executing" ||
+    state.mode === "reviewing" ||
     state.mode === "needs-reboot" ||
     state.mode === "rolled-back" ||
     state.mode === "failed"
@@ -267,6 +299,13 @@ export default function App() {
             onCancel={handleCancel}
             onReset={handleReset}
             timeline={state.timeline}
+          />
+        )}
+        {state.mode === "reviewing" && (
+          <ReviewPane
+            executionResult={state.executionResult}
+            summary={state.summary}
+            onDismiss={handleDismissReview}
           />
         )}
         <TimelinePane entries={state.timeline} />

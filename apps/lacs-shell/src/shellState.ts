@@ -1,4 +1,4 @@
-import type { DaemonStatus, PlanResponse, ShellError } from "./types";
+import type { DaemonStatus, ExecutionResult, PlanResponse, ShellError } from "./types";
 
 export type { DaemonStatus, ShellError } from "./types";
 
@@ -47,6 +47,7 @@ export type ShellMode =
   | "previewing"
   | "awaiting-approval"
   | "executing"
+  | "reviewing"
   | "needs-reboot"
   | "failed"
   | "rolled-back";
@@ -90,6 +91,14 @@ type ExecutingState = Base & {
   activeJobId: string;
 };
 
+type ReviewingState = Base & {
+  mode: "reviewing";
+  plan: PlanResponse;
+  activeJobId: null;
+  executionResult: ExecutionResult;
+  summary: string | null;
+};
+
 type NeedsRebootState = Base & {
   mode: "needs-reboot";
   plan: PlanResponse;
@@ -116,6 +125,7 @@ export type ShellState =
   | PreviewingState
   | ApprovingState
   | ExecutingState
+  | ReviewingState
   | NeedsRebootState
   | FailedState
   | RolledBackState;
@@ -130,6 +140,9 @@ export type ShellAction =
   | { type: "request_approval" }
   | { type: "approval_granted" }
   | { type: "job_completed"; outcome: ShellOutcome }
+  | { type: "execution_review_ready"; executionResult: ExecutionResult }
+  | { type: "summary_ready"; summary: string }
+  | { type: "dismiss_review" }
   | { type: "timeline_event"; text: string; kind: TimelineEntryKind }
   | { type: "plan_errored"; error: ShellError }       // categories 1–2: stays idle
   | { type: "policy_errored"; error: ShellError }     // category 3: stays previewing/approving
@@ -278,6 +291,41 @@ export function shellReducer(state: ShellState, action: ShellAction): ShellState
         timeline: state.timeline,
       };
       return appendTimeline(next, "Job failed", "error");
+    }
+
+    case "execution_review_ready": {
+      if (state.mode !== "executing") return state;
+      const { plan } = state;
+      const next: ReviewingState = {
+        mode: "reviewing",
+        intent: state.intent,
+        plan,
+        activeJobId: null,
+        executionResult: action.executionResult,
+        summary: null,
+        daemonStatus: state.daemonStatus,
+        timeline: state.timeline,
+      };
+      return appendTimeline(next, "Execution complete — reviewing results", "success");
+    }
+
+    case "summary_ready": {
+      if (state.mode !== "reviewing") return state;
+      return { ...state, summary: action.summary };
+    }
+
+    case "dismiss_review": {
+      if (state.mode !== "reviewing") return state;
+      const next: IdleState = {
+        mode: "idle",
+        intent: "",
+        plan: null,
+        activeJobId: null,
+        error: null,
+        daemonStatus: state.daemonStatus,
+        timeline: state.timeline,
+      };
+      return next;
     }
 
     case "plan_errored": {

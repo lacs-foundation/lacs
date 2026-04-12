@@ -71,6 +71,14 @@ impl StateClient for MockStateClient {
         )
         .map_err(PlanningError::StateUnavailable)
     }
+
+    fn query_action(
+        &self,
+        action_name: &str,
+        _params: &serde_json::Value,
+    ) -> Result<String, PlanningError> {
+        Ok(format!("[mock] {action_name} query result"))
+    }
 }
 
 struct FailingStateClient {
@@ -79,6 +87,14 @@ struct FailingStateClient {
 
 impl StateClient for FailingStateClient {
     fn curated_state(&self) -> Result<CuratedState, PlanningError> {
+        Err(PlanningError::StateUnavailable(self.reason.clone()))
+    }
+
+    fn query_action(
+        &self,
+        _action_name: &str,
+        _params: &serde_json::Value,
+    ) -> Result<String, PlanningError> {
         Err(PlanningError::StateUnavailable(self.reason.clone()))
     }
 }

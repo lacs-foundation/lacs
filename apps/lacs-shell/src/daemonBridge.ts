@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { BrainConfigResponse, DaemonStatus, HardwareInfo, OllamaStatus, PlanResponse, PlanStepResponse, SetupStatus, ShellError } from "./types";
+import type { BrainConfigResponse, DaemonStatus, ExecutionResult, HardwareInfo, OllamaStatus, PlanResponse, PlanStepResponse, SetupStatus, ShellError } from "./types";
 import type { ShellOutcome, TimelineEntry, TimelineEntryKind } from "./shellState";
 
 // ---------------------------------------------------------------------------
@@ -46,10 +46,16 @@ export async function checkOllamaStatus(): Promise<OllamaStatus> {
   return invoke<OllamaStatus>("check_ollama_status");
 }
 
+export async function reviewExecution(result: ExecutionResult, intent: string): Promise<string> {
+  requireTauriRuntime();
+  return invoke<string>("review_execution", { executionResult: result, intent });
+}
+
 export async function subscribeDaemonEvents(
   onTimeline: (payload: TimelineEntry) => void,
   onOutcome: (payload: ShellOutcome) => void,
   onDaemonStatus: (status: DaemonStatus) => void,
+  onExecutionResult?: (result: ExecutionResult) => void,
 ): Promise<() => void> {
   requireTauriRuntime();
 
@@ -84,6 +90,14 @@ export async function subscribeDaemonEvents(
         onDaemonStatus(status);
       }),
     );
+
+    if (onExecutionResult) {
+      unlisteners.push(
+        await listen<ExecutionResult>("lacs:execution-result", (event) => {
+          onExecutionResult(event.payload);
+        }),
+      );
+    }
   } catch (err) {
     unlisteners.forEach((fn) => fn());
     throw err;

@@ -4,7 +4,7 @@ mod events;
 
 use commands::{
     approve_preview, cancel_job, check_ollama_status, check_setup_status, detect_hardware,
-    get_brain_config, plan_intent, ShellCommandState,
+    get_brain_config, plan_intent, review_execution, ShellCommandState,
 };
 
 /// Spawn a background task that probes the daemon socket continuously and
@@ -92,6 +92,7 @@ fn main() {
             detect_hardware,
             get_brain_config,
             plan_intent,
+            review_execution,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run lacs-shell");

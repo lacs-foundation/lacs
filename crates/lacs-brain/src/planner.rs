@@ -19,6 +19,7 @@ use crate::audit::SafetyAuditLog;
 use crate::config::{BrainConfig, ProviderConfig};
 use crate::planning_tools::get_state::get_state_tool_def;
 use crate::planning_tools::propose_plan::{parse_proposed_plan, propose_plan_tool_def};
+use crate::planning_tools::query_tools::query_tools;
 use crate::prompt::build_system_prompt;
 use crate::provider::{
     ContentBlock, LlmProvider, Message, ProviderError, Role, StopReason, ToolDefinition,
@@ -266,7 +267,12 @@ impl LlmPlanner {
             state_client,
             max_turns,
             system_prompt: build_system_prompt(),
-            tools: vec![get_state_tool_def(), propose_plan_tool_def()],
+            tools: {
+                let mut t = vec![get_state_tool_def()];
+                t.extend(query_tools());
+                t.push(propose_plan_tool_def());
+                t
+            },
             audit_log: None,
         }
     }
@@ -438,6 +444,27 @@ impl LlmPlanner {
                                     content: state_json,
                                     is_error: false,
                                 });
+                            }
+                            name if crate::planning_tools::query_tools::query_tool_to_action(name).is_some() => {
+                                let (action_name, params) =
+                                    crate::planning_tools::query_tools::query_tool_to_action(name)
+                                        .unwrap();
+                                match self.state_client.query_action(action_name, &params) {
+                                    Ok(output) => {
+                                        tool_results.push(ToolResultBlock {
+                                            tool_use_id: id.clone(),
+                                            content: output,
+                                            is_error: false,
+                                        });
+                                    }
+                                    Err(e) => {
+                                        tool_results.push(ToolResultBlock {
+                                            tool_use_id: id.clone(),
+                                            content: format!("Query failed: {e}"),
+                                            is_error: true,
+                                        });
+                                    }
+                                }
                             }
                             "propose_plan" => {
                                 // Parse and validate before returning.
