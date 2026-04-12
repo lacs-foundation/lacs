@@ -6,7 +6,7 @@ type ProviderCategory = "local" | "cloud";
 type CloudProvider =
   | "anthropic"
   | "openai"
-  | "google"
+  | "gemini"
   | "groq"
   | "deepseek"
   | "mistral"
@@ -80,7 +80,7 @@ const OLLAMA_MODELS: ModelOption[] = [
 const CLOUD_PROVIDERS: { id: CloudProvider; label: string; placeholder: string; envVar: string }[] = [
   { id: "anthropic", label: "Anthropic", placeholder: "sk-ant-...", envVar: "ANTHROPIC_API_KEY" },
   { id: "openai", label: "OpenAI", placeholder: "sk-...", envVar: "OPENAI_API_KEY" },
-  { id: "google", label: "Google Gemini", placeholder: "AI...", envVar: "GOOGLE_API_KEY" },
+  { id: "gemini", label: "Google Gemini", placeholder: "AI...", envVar: "GEMINI_API_KEY" },
   { id: "groq", label: "Groq", placeholder: "gsk_...", envVar: "GROQ_API_KEY" },
   { id: "deepseek", label: "DeepSeek", placeholder: "sk-...", envVar: "DEEPSEEK_API_KEY" },
   { id: "mistral", label: "Mistral", placeholder: "...", envVar: "MISTRAL_API_KEY" },
@@ -90,11 +90,11 @@ const CLOUD_PROVIDERS: { id: CloudProvider; label: string; placeholder: string; 
 const DEFAULT_CLOUD_MODELS: Record<CloudProvider, string> = {
   anthropic: "claude-sonnet-4-20250514",
   openai: "gpt-4o",
-  google: "gemini-2.5-flash",
+  gemini: "gemini-2.0-flash",
   groq: "llama-3.3-70b-versatile",
   deepseek: "deepseek-chat",
-  mistral: "mistral-small-latest",
-  xai: "grok-3-mini-fast",
+  mistral: "mistral-large-latest",
+  xai: "grok-3",
 };
 
 // ---------------------------------------------------------------------------
