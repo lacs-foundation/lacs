@@ -1,7 +1,16 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import type { HardwareInfo, OllamaStatus } from "../types";
 
-type WizardStep = "select" | "configure" | "done";
-type Provider = "ollama" | "anthropic";
+type WizardStep = "select" | "ollama-model" | "cloud-key" | "configure" | "done";
+type ProviderCategory = "local" | "cloud";
+type CloudProvider =
+  | "anthropic"
+  | "openai"
+  | "google"
+  | "groq"
+  | "deepseek"
+  | "mistral"
+  | "xai";
 
 interface Props {
   onDismiss: () => void;
@@ -9,40 +18,165 @@ interface Props {
 
 const CONFIG_PATH = "~/.config/lacs/config.toml";
 
-function ollamaConfig(): string {
-  return `[llm]
-provider = "ollama"
-model    = "qwen3:8b"`;
+// ---------------------------------------------------------------------------
+// Model catalogue — VRAM requirements are approximate Q4 quantised sizes
+// ---------------------------------------------------------------------------
+
+interface ModelOption {
+  id: string;
+  label: string;
+  ollamaTag: string;
+  vramMb: number;
+  description: string;
+  recommended?: boolean;
 }
 
-function anthropicConfig(): string {
-  return `[llm]
-provider = "anthropic"
-model    = "claude-sonnet-4-20250514"`;
+const OLLAMA_MODELS: ModelOption[] = [
+  {
+    id: "qwen3-8b",
+    label: "Qwen3-8B",
+    ollamaTag: "qwen3:8b",
+    vramMb: 5_000,
+    description: "Best tool-calling reliability",
+    recommended: true,
+  },
+  {
+    id: "gemma4-e4b",
+    label: "Gemma 4 E4B",
+    ollamaTag: "gemma4:4b-it-qat",
+    vramMb: 5_000,
+    description: "Google's latest, native function calling",
+  },
+  {
+    id: "gemma4-e2b",
+    label: "Gemma 4 E2B",
+    ollamaTag: "gemma4:2b",
+    vramMb: 2_000,
+    description: "Ultra-light, for 4GB GPUs",
+  },
+  {
+    id: "qwen3-30b-a3b",
+    label: "Qwen3-30B-A3B",
+    ollamaTag: "qwen3:30b-a3b",
+    vramMb: 17_000,
+    description: "Premium quality, needs 24GB+ GPU",
+  },
+  {
+    id: "gemma4-27b",
+    label: "Gemma 4 27B",
+    ollamaTag: "gemma4:27b",
+    vramMb: 18_000,
+    description: "MoE, near-31B quality",
+  },
+  {
+    id: "mistral-small-3.2",
+    label: "Mistral Small 3.2",
+    ollamaTag: "mistral-small3.2:24b",
+    vramMb: 15_000,
+    description: "Battle-tested function calling",
+  },
+];
+
+const CLOUD_PROVIDERS: { id: CloudProvider; label: string; placeholder: string; envVar: string }[] = [
+  { id: "anthropic", label: "Anthropic", placeholder: "sk-ant-...", envVar: "ANTHROPIC_API_KEY" },
+  { id: "openai", label: "OpenAI", placeholder: "sk-...", envVar: "OPENAI_API_KEY" },
+  { id: "google", label: "Google Gemini", placeholder: "AI...", envVar: "GOOGLE_API_KEY" },
+  { id: "groq", label: "Groq", placeholder: "gsk_...", envVar: "GROQ_API_KEY" },
+  { id: "deepseek", label: "DeepSeek", placeholder: "sk-...", envVar: "DEEPSEEK_API_KEY" },
+  { id: "mistral", label: "Mistral", placeholder: "...", envVar: "MISTRAL_API_KEY" },
+  { id: "xai", label: "xAI", placeholder: "xai-...", envVar: "XAI_API_KEY" },
+];
+
+const DEFAULT_CLOUD_MODELS: Record<CloudProvider, string> = {
+  anthropic: "claude-sonnet-4-20250514",
+  openai: "gpt-4o",
+  google: "gemini-2.5-flash",
+  groq: "llama-3.3-70b-versatile",
+  deepseek: "deepseek-chat",
+  mistral: "mistral-small-latest",
+  xai: "grok-3-mini-fast",
+};
+
+// ---------------------------------------------------------------------------
+// Config generators
+// ---------------------------------------------------------------------------
+
+function ollamaConfig(ollamaTag: string): string {
+  return `[llm]\nprovider = "ollama"\nmodel    = "${ollamaTag}"`;
 }
+
+function cloudConfig(provider: CloudProvider): string {
+  const model = DEFAULT_CLOUD_MODELS[provider];
+  return `[llm]\nprovider = "${provider}"\nmodel    = "${model}"`;
+}
+
+// ---------------------------------------------------------------------------
+// Helpers to load hardware/Ollama info — stubbed when not in Tauri
+// ---------------------------------------------------------------------------
+
+import { detectHardware, checkOllamaStatus } from "../daemonBridge";
+
+async function safeDetectHardware(): Promise<HardwareInfo | null> {
+  try {
+    return await detectHardware();
+  } catch {
+    return null;
+  }
+}
+
+async function safeCheckOllama(): Promise<OllamaStatus | null> {
+  try {
+    return await checkOllamaStatus();
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
 
 export function SetupWizard({ onDismiss }: Props) {
   const [step, setStep] = useState<WizardStep>("select");
-  const [provider, setProvider] = useState<Provider | null>(null);
+  const [category, setCategory] = useState<ProviderCategory | null>(null);
+  const [cloudProvider, setCloudProvider] = useState<CloudProvider | null>(null);
+  const [selectedModel, setSelectedModel] = useState<ModelOption>(OLLAMA_MODELS[0]);
   const [apiKey, setApiKey] = useState("");
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
 
-  const handleSelectProvider = (p: Provider) => {
-    setProvider(p);
-    if (p === "ollama") {
-      setStep("configure");
+  // Hardware & Ollama state (loaded when entering Ollama step)
+  const [hardware, setHardware] = useState<HardwareInfo | null>(null);
+  const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
+  const [hwLoading, setHwLoading] = useState(false);
+
+  // Load hardware info when entering the Ollama model step
+  useEffect(() => {
+    if (step !== "ollama-model") return;
+    let cancelled = false;
+    setHwLoading(true);
+
+    Promise.all([safeDetectHardware(), safeCheckOllama()]).then(([hw, ollama]) => {
+      if (cancelled) return;
+      setHardware(hw);
+      setOllamaStatus(ollama);
+      setHwLoading(false);
+    });
+
+    return () => { cancelled = true; };
+  }, [step]);
+
+  const handleSelectCategory = (cat: ProviderCategory) => {
+    setCategory(cat);
+    if (cat === "local") {
+      setStep("ollama-model");
     }
-    // For anthropic, stay on "select" to collect the API key, then
-    // user clicks Continue to go to "configure".
+    // Cloud stays on select to pick a sub-provider
   };
 
-  const handleContinueToConfig = () => {
-    setStep("configure");
-  };
-
-  const handleContinueToDone = () => {
-    setStep("done");
+  const handleSelectCloudProvider = (p: CloudProvider) => {
+    setCloudProvider(p);
+    setStep("cloud-key");
   };
 
   const handleCopy = async (text: string) => {
@@ -56,10 +190,33 @@ export function SetupWizard({ onDismiss }: Props) {
     }
   };
 
-  const configContent = provider === "anthropic" ? anthropicConfig() : ollamaConfig();
+  const fitsVram = (model: ModelOption): boolean => {
+    if (!hardware?.vramMb) return true; // unknown = don't gray out
+    return model.vramMb <= hardware.vramMb;
+  };
 
-  // ----- Provider selection -----
-  if (step === "select" && provider !== "anthropic") {
+  const modelAlreadyPulled = (model: ModelOption): boolean => {
+    if (!ollamaStatus?.models) return false;
+    // Ollama tags may include ":latest" suffix
+    return ollamaStatus.models.some(
+      (m) => m === model.ollamaTag || m === `${model.ollamaTag}:latest` || model.ollamaTag.startsWith(m.replace(":latest", "")),
+    );
+  };
+
+  // Derive config content based on current selections
+  const configContent =
+    category === "local"
+      ? ollamaConfig(selectedModel.ollamaTag)
+      : cloudProvider
+        ? cloudConfig(cloudProvider)
+        : "";
+
+  const currentCloudMeta = cloudProvider
+    ? CLOUD_PROVIDERS.find((p) => p.id === cloudProvider)
+    : null;
+
+  // ---- Step: Provider category selection ----
+  if (step === "select" && !category) {
     return (
       <section className="pane setup-wizard">
         <h2>Choose your LLM provider</h2>
@@ -70,23 +227,23 @@ export function SetupWizard({ onDismiss }: Props) {
           <button
             type="button"
             className="setup-wizard__card"
-            onClick={() => handleSelectProvider("ollama")}
+            onClick={() => handleSelectCategory("local")}
           >
             <span className="setup-wizard__card-title">Ollama</span>
             <span className="setup-wizard__card-tag">recommended</span>
             <p className="setup-wizard__card-desc">
-              Local inference, no API key required. Runs entirely on your machine.
+              Runs on your hardware, no API key needed. Best for privacy.
             </p>
           </button>
           <button
             type="button"
             className="setup-wizard__card"
-            onClick={() => handleSelectProvider("anthropic")}
+            onClick={() => handleSelectCategory("cloud")}
           >
-            <span className="setup-wizard__card-title">Anthropic</span>
-            <span className="setup-wizard__card-tag">cloud</span>
+            <span className="setup-wizard__card-title">Cloud</span>
+            <span className="setup-wizard__card-tag">api key required</span>
             <p className="setup-wizard__card-desc">
-              Requires an API key. Higher quality, needs internet access.
+              Higher quality models via Anthropic, OpenAI, Google, and more.
             </p>
           </button>
         </div>
@@ -97,39 +254,116 @@ export function SetupWizard({ onDismiss }: Props) {
     );
   }
 
-  // ----- Anthropic API key input -----
-  if (step === "select" && provider === "anthropic") {
+  // ---- Step: Cloud provider sub-selection ----
+  if (step === "select" && category === "cloud") {
     return (
       <section className="pane setup-wizard">
-        <h2>Anthropic API key</h2>
+        <h2>Choose a cloud provider</h2>
         <p className="setup-wizard__subtitle">
-          Enter your Anthropic API key. You can find it at{" "}
-          <code>console.anthropic.com</code>.
+          Select the provider you have an API key for.
         </p>
-        <div className="setup-wizard__field">
-          <input
-            type="text"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder="sk-ant-..."
-          />
+        <div className="setup-wizard__cards">
+          {CLOUD_PROVIDERS.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              className="setup-wizard__card"
+              onClick={() => handleSelectCloudProvider(p.id)}
+            >
+              <span className="setup-wizard__card-title">{p.label}</span>
+            </button>
+          ))}
         </div>
-        <p className="setup-wizard__note">
-          The key will NOT be stored in config.toml. Set it as{" "}
-          <code>ANTHROPIC_API_KEY</code> in your environment instead.
-        </p>
         <div className="setup-wizard__actions">
           <button
             type="button"
             className="intent-reset"
-            onClick={() => {
-              setProvider(null);
-              setStep("select");
-            }}
+            onClick={() => { setCategory(null); }}
           >
             Back
           </button>
-          <button type="button" onClick={handleContinueToConfig}>
+        </div>
+        <button type="button" className="setup-wizard__skip" onClick={onDismiss}>
+          Skip setup
+        </button>
+      </section>
+    );
+  }
+
+  // ---- Step: Ollama model selection with hardware detection ----
+  if (step === "ollama-model") {
+    return (
+      <section className="pane setup-wizard">
+        <h2>Select a model</h2>
+
+        {/* Hardware summary */}
+        {hwLoading && (
+          <p className="setup-wizard__subtitle">Detecting hardware...</p>
+        )}
+        {!hwLoading && hardware && (
+          <p className="setup-wizard__hw-summary">
+            {hardware.gpuName
+              ? `GPU: ${hardware.gpuName}${hardware.vramMb ? ` (${Math.round(hardware.vramMb / 1024)}GB VRAM)` : ""}`
+              : "No GPU detected"}
+            {" | "}RAM: {Math.round(hardware.ramMb / 1024)}GB
+          </p>
+        )}
+
+        {/* Ollama reachability */}
+        {!hwLoading && ollamaStatus && (
+          <p className={`setup-wizard__ollama-status ${ollamaStatus.reachable ? "setup-wizard__ollama-status--ok" : "setup-wizard__ollama-status--err"}`}>
+            {ollamaStatus.reachable
+              ? "Ollama is running"
+              : "Ollama is not reachable -- make sure it is installed and running"}
+          </p>
+        )}
+
+        {/* Model list */}
+        <div className="setup-wizard__models" role="radiogroup" aria-label="Model selection">
+          {OLLAMA_MODELS.map((m) => {
+            const fits = fitsVram(m);
+            const pulled = modelAlreadyPulled(m);
+            return (
+              <button
+                key={m.id}
+                type="button"
+                role="radio"
+                aria-checked={selectedModel.id === m.id}
+                className={[
+                  "setup-wizard__model",
+                  selectedModel.id === m.id ? "setup-wizard__model--selected" : "",
+                  fits ? "setup-wizard__model--fits" : "setup-wizard__model--heavy",
+                ].join(" ")}
+                onClick={() => setSelectedModel(m)}
+              >
+                <span className="setup-wizard__model-name">
+                  {m.recommended && <span className="setup-wizard__model-rec" aria-label="recommended">*</span>}
+                  {m.label}
+                  {pulled && <span className="setup-wizard__model-pulled"> (pulled)</span>}
+                </span>
+                <span className="setup-wizard__model-vram">
+                  {m.vramMb >= 1000 ? `${Math.round(m.vramMb / 1000)}GB VRAM` : `${m.vramMb}MB VRAM`}
+                </span>
+                <span className="setup-wizard__model-desc">{m.description}</span>
+                {!fits && hardware?.vramMb && (
+                  <span className="setup-wizard__model-warn">
+                    requires {Math.round(m.vramMb / 1000)}GB VRAM
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="setup-wizard__actions">
+          <button
+            type="button"
+            className="intent-reset"
+            onClick={() => { setCategory(null); setStep("select"); }}
+          >
+            Back
+          </button>
+          <button type="button" onClick={() => setStep("configure")}>
             Continue
           </button>
         </div>
@@ -140,8 +374,48 @@ export function SetupWizard({ onDismiss }: Props) {
     );
   }
 
-  // ----- Configuration -----
+  // ---- Step: Cloud API key input ----
+  if (step === "cloud-key" && currentCloudMeta) {
+    return (
+      <section className="pane setup-wizard">
+        <h2>{currentCloudMeta.label} API key</h2>
+        <p className="setup-wizard__subtitle">
+          Enter your {currentCloudMeta.label} API key.
+        </p>
+        <div className="setup-wizard__field">
+          <input
+            type="text"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            placeholder={currentCloudMeta.placeholder}
+          />
+        </div>
+        <p className="setup-wizard__note">
+          The key will NOT be stored in config.toml. Set it as{" "}
+          <code>{currentCloudMeta.envVar}</code> in your environment instead.
+        </p>
+        <div className="setup-wizard__actions">
+          <button
+            type="button"
+            className="intent-reset"
+            onClick={() => { setCloudProvider(null); setStep("select"); }}
+          >
+            Back
+          </button>
+          <button type="button" onClick={() => setStep("configure")}>
+            Continue
+          </button>
+        </div>
+        <button type="button" className="setup-wizard__skip" onClick={onDismiss}>
+          Skip setup
+        </button>
+      </section>
+    );
+  }
+
+  // ---- Step: Config preview ----
   if (step === "configure") {
+    const isOllama = category === "local";
     return (
       <section className="pane setup-wizard">
         <h2>Create config.toml</h2>
@@ -159,25 +433,25 @@ export function SetupWizard({ onDismiss }: Props) {
           >
             {copyFailed ? "Copy failed" : copied ? "Copied" : "Copy to clipboard"}
           </button>
-          <button type="button" onClick={handleContinueToDone}>
+          <button type="button" onClick={() => setStep("done")}>
             Continue
           </button>
         </div>
-        {provider === "ollama" && (
+        {isOllama && (
           <div className="setup-wizard__hint">
-            <p>Make sure Ollama is installed and running, then pull a model:</p>
+            <p>Make sure Ollama is installed and running, then pull the model:</p>
             <pre className="setup-wizard__config">
-              <code>ollama pull qwen3:8b</code>
+              <code>ollama pull {selectedModel.ollamaTag}</code>
             </pre>
           </div>
         )}
-        {provider === "anthropic" && (
+        {!isOllama && currentCloudMeta && (
           <div className="setup-wizard__hint">
             <p>
               Set the API key in your shell profile or systemd environment:
             </p>
             <pre className="setup-wizard__config">
-              <code>export ANTHROPIC_API_KEY="sk-ant-..."</code>
+              <code>export {currentCloudMeta.envVar}="{currentCloudMeta.placeholder}"</code>
             </pre>
           </div>
         )}
@@ -188,14 +462,14 @@ export function SetupWizard({ onDismiss }: Props) {
     );
   }
 
-  // ----- Done -----
+  // ---- Step: Done ----
   return (
     <section className="pane setup-wizard">
       <h2>Setup complete</h2>
       <p className="setup-wizard__subtitle">
         Restart the shell to apply the new configuration. LACS will read{" "}
         <code>{CONFIG_PATH}</code> on startup and use{" "}
-        {provider === "anthropic" ? "Anthropic" : "Ollama"} as the LLM provider.
+        {category === "local" ? "Ollama" : currentCloudMeta?.label ?? "your provider"} as the LLM provider.
       </p>
       <div className="setup-wizard__actions">
         <button type="button" onClick={onDismiss}>

@@ -3,8 +3,8 @@ mod daemon_client;
 mod events;
 
 use commands::{
-    approve_preview, cancel_job, check_setup_status, get_brain_config, plan_intent,
-    ShellCommandState,
+    approve_preview, cancel_job, check_ollama_status, check_setup_status, detect_hardware,
+    get_brain_config, plan_intent, ShellCommandState,
 };
 
 /// Spawn a background task that probes the daemon socket continuously and
@@ -87,7 +87,9 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             approve_preview,
             cancel_job,
+            check_ollama_status,
             check_setup_status,
+            detect_hardware,
             get_brain_config,
             plan_intent,
         ])
