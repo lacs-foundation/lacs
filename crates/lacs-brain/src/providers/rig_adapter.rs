@@ -56,16 +56,18 @@ where
         let rig_messages = to_rig_messages(system, messages);
         let rig_tools = to_rig_tools(tools);
 
+        let chat_history = OneOrMany::many(rig_messages).map_err(|_| {
+            ProviderError::Request(
+                "message conversion produced an empty chat history; \
+                 at minimum a system message is expected"
+                    .into(),
+            )
+        })?;
+
         let request = CompletionRequest {
             model: None,
             preamble: None, // system prompt is in chat_history as first message
-            chat_history: OneOrMany::many(rig_messages)
-                .unwrap_or_else(|_| {
-                    // If no messages, create a minimal user message
-                    OneOrMany::one(RigMessage::User {
-                        content: OneOrMany::one(UserContent::text("")),
-                    })
-                }),
+            chat_history,
             documents: vec![],
             tools: rig_tools,
             temperature: None,
@@ -116,13 +118,18 @@ fn to_rig_messages(system: &str, messages: &[Message]) -> Vec<RigMessage> {
                             if let ContentBlock::ToolResult {
                                 tool_use_id,
                                 content,
-                                ..
+                                is_error,
                             } = b
                             {
+                                let text = if *is_error {
+                                    format!("[TOOL ERROR] {content}")
+                                } else {
+                                    content.clone()
+                                };
                                 Some(UserContent::ToolResult(ToolResult {
                                     id: tool_use_id.clone(),
                                     call_id: None,
-                                    content: OneOrMany::one(ToolResultContent::text(content)),
+                                    content: OneOrMany::one(ToolResultContent::text(&text)),
                                 }))
                             } else {
                                 None
@@ -130,8 +137,16 @@ fn to_rig_messages(system: &str, messages: &[Message]) -> Vec<RigMessage> {
                         })
                         .collect();
 
-                    if let Ok(many) = OneOrMany::many(tool_results) {
-                        result.push(RigMessage::User { content: many });
+                    match OneOrMany::many(tool_results) {
+                        Ok(many) => {
+                            result.push(RigMessage::User { content: many });
+                        }
+                        Err(_) => {
+                            eprintln!(
+                                "[lacs-brain] WARNING: tool-result user message produced \
+                                 zero items after conversion; message dropped"
+                            );
+                        }
                     }
                 } else {
                     let text = msg
@@ -175,11 +190,19 @@ fn to_rig_messages(system: &str, messages: &[Message]) -> Vec<RigMessage> {
                 }
 
                 if !assistant_content.is_empty() {
-                    if let Ok(content) = OneOrMany::many(assistant_content) {
-                        result.push(RigMessage::Assistant {
-                            id: None,
-                            content,
-                        });
+                    match OneOrMany::many(assistant_content) {
+                        Ok(content) => {
+                            result.push(RigMessage::Assistant {
+                                id: None,
+                                content,
+                            });
+                        }
+                        Err(_) => {
+                            eprintln!(
+                                "[lacs-brain] WARNING: assistant message produced \
+                                 zero content items after conversion; message dropped"
+                            );
+                        }
                     }
                 }
             }
@@ -255,13 +278,18 @@ fn from_rig_response(choice: OneOrMany<AssistantContent>) -> Result<Completion, 
 fn map_rig_error(err: rig::completion::CompletionError) -> ProviderError {
     let msg = err.to_string();
 
-    // Try to classify the error based on the message content.
+    // NOTE: This classification relies on string matching against Rig's error
+    // messages, which is inherently fragile — a Rig version bump could change
+    // the wording and break our categorisation. We accept this trade-off
+    // because Rig does not expose structured error variants for HTTP status
+    // codes. If Rig adds typed error variants in the future, prefer those.
+    eprintln!("[lacs-brain] Rig completion error: {msg}");
+
     if msg.contains("401") || msg.to_lowercase().contains("auth") {
         ProviderError::Auth(msg)
     } else if msg.contains("429") || msg.to_lowercase().contains("rate") {
         ProviderError::RateLimit
     } else if msg.contains("HttpError") || msg.contains("http") {
-        // Extract status code if present
         ProviderError::Request(msg)
     } else {
         ProviderError::Request(msg)
