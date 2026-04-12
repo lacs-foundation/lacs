@@ -24,9 +24,9 @@ use crate::provider::{
     ContentBlock, LlmProvider, Message, ProviderError, Role, StopReason, ToolDefinition,
     ToolResultBlock,
 };
-use crate::providers::anthropic::AnthropicProvider;
-use crate::providers::ollama::OllamaProvider;
+use crate::providers::rig_adapter::RigCompletionAdapter;
 use crate::state_client::StateClient;
+use rig::client::CompletionClient;
 use serde::Serialize;
 use thiserror::Error;
 
@@ -281,8 +281,9 @@ impl LlmPlanner {
 
     /// Construct a planner from a [`BrainConfig`].
     ///
-    /// Returns an error if the HTTP client cannot be initialised (rare; only
-    /// fails if the TLS subsystem is unavailable).
+    /// Uses Rig provider clients for all backends. Returns an error if the
+    /// HTTP client cannot be initialised (rare; only fails if the TLS
+    /// subsystem is unavailable).
     pub fn from_config(
         config: BrainConfig,
         state_client: Box<dyn StateClient>,
@@ -292,11 +293,71 @@ impl LlmPlanner {
                 api_key,
                 model,
                 base_url,
-            } => Box::new(
-                AnthropicProvider::new(&api_key, &model, &base_url).map_err(|e| e.to_string())?,
-            ),
+            } => {
+                let client = rig::providers::anthropic::Client::builder()
+                    .api_key(api_key)
+                    .base_url(base_url)
+                    .build()
+                    .map_err(|e| e.to_string())?;
+                let completion_model = client.completion_model(&model);
+                Box::new(RigCompletionAdapter::new(completion_model))
+            }
             ProviderConfig::Ollama { base_url, model } => {
-                Box::new(OllamaProvider::new(&base_url, &model).map_err(|e| e.to_string())?)
+                let client = rig::providers::ollama::Client::builder()
+                    .api_key(rig::client::Nothing)
+                    .base_url(base_url)
+                    .build()
+                    .map_err(|e| e.to_string())?;
+                let completion_model = client.completion_model(&model);
+                Box::new(RigCompletionAdapter::new(completion_model))
+            }
+            ProviderConfig::OpenAI { api_key, model } => {
+                let client = rig::providers::openai::Client::builder()
+                    .api_key(api_key)
+                    .build()
+                    .map_err(|e| e.to_string())?;
+                let completion_model = client.completion_model(&model);
+                Box::new(RigCompletionAdapter::new(completion_model))
+            }
+            ProviderConfig::Gemini { api_key, model } => {
+                let client = rig::providers::gemini::Client::builder()
+                    .api_key(api_key)
+                    .build()
+                    .map_err(|e| e.to_string())?;
+                let completion_model = client.completion_model(&model);
+                Box::new(RigCompletionAdapter::new(completion_model))
+            }
+            ProviderConfig::Groq { api_key, model } => {
+                let client = rig::providers::groq::Client::builder()
+                    .api_key(api_key)
+                    .build()
+                    .map_err(|e| e.to_string())?;
+                let completion_model = client.completion_model(&model);
+                Box::new(RigCompletionAdapter::new(completion_model))
+            }
+            ProviderConfig::DeepSeek { api_key, model } => {
+                let client = rig::providers::deepseek::Client::builder()
+                    .api_key(api_key)
+                    .build()
+                    .map_err(|e| e.to_string())?;
+                let completion_model = client.completion_model(&model);
+                Box::new(RigCompletionAdapter::new(completion_model))
+            }
+            ProviderConfig::Mistral { api_key, model } => {
+                let client = rig::providers::mistral::Client::builder()
+                    .api_key(api_key)
+                    .build()
+                    .map_err(|e| e.to_string())?;
+                let completion_model = client.completion_model(&model);
+                Box::new(RigCompletionAdapter::new(completion_model))
+            }
+            ProviderConfig::XAI { api_key, model } => {
+                let client = rig::providers::xai::Client::builder()
+                    .api_key(api_key)
+                    .build()
+                    .map_err(|e| e.to_string())?;
+                let completion_model = client.completion_model(&model);
+                Box::new(RigCompletionAdapter::new(completion_model))
             }
         };
         Ok(Self::new(provider, state_client, config.max_turns))

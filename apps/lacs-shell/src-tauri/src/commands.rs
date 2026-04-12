@@ -103,6 +103,9 @@ impl StateClient for DemoStateClient {
             vec!["NetworkManager.service".to_string()],
             vec!["org.mozilla.firefox".to_string()],
             vec!["lacs-dev".to_string()],
+            vec!["vim".to_string()],
+            vec!["dev-box".to_string()],
+            vec!["alice".to_string()],
         )
         .map_err(PlanningError::StateUnavailable)
     }
@@ -358,6 +361,159 @@ pub(crate) fn plan_to_response(plan: Plan, curated: &CuratedState) -> PlanRespon
         toolbox_count: curated.toolboxes().len(),
         flatpak_count: curated.flatpaks().len(),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Hardware detection and Ollama status types
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HardwareInfo {
+    pub gpu_name: Option<String>,
+    pub vram_mb: Option<u64>,
+    pub ram_mb: Option<u64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OllamaStatus {
+    pub reachable: bool,
+    pub models: Vec<String>,
+    pub error_message: Option<String>,
+}
+
+#[tauri::command]
+pub async fn detect_hardware() -> HardwareInfo {
+    let hw = tokio::task::spawn_blocking(|| {
+        let (gpu_name, vram_mb) = detect_gpu();
+        let ram_mb = detect_ram_mb();
+        HardwareInfo {
+            gpu_name,
+            vram_mb,
+            ram_mb,
+        }
+    })
+    .await
+    .unwrap_or(HardwareInfo {
+        gpu_name: None,
+        vram_mb: None,
+        ram_mb: None,
+    });
+    hw
+}
+
+#[tauri::command]
+pub async fn check_ollama_status() -> OllamaStatus {
+    match query_ollama_tags().await {
+        Ok(models) => OllamaStatus {
+            reachable: true,
+            models,
+            error_message: None,
+        },
+        Err(e) => OllamaStatus {
+            reachable: false,
+            models: vec![],
+            error_message: Some(e.to_string()),
+        },
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Hardware detection helpers
+// ---------------------------------------------------------------------------
+
+/// Try NVIDIA first, then AMD. Returns (gpu_name, vram_mb).
+fn detect_gpu() -> (Option<String>, Option<u64>) {
+    // NVIDIA via nvidia-smi
+    if let Ok(output) = std::process::Command::new("nvidia-smi")
+        .args([
+            "--query-gpu=name,memory.total",
+            "--format=csv,noheader,nounits",
+        ])
+        .output()
+    {
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let line = stdout.trim();
+            // Format: "NVIDIA GeForce RTX 4070, 12282"
+            if let Some((name, vram_str)) = line.split_once(',') {
+                let vram = vram_str.trim().parse::<u64>().ok();
+                return (Some(name.trim().to_string()), vram);
+            }
+        }
+    }
+
+    // AMD via rocm-smi
+    if let Ok(output) = std::process::Command::new("rocm-smi")
+        .args(["--showmeminfo", "vram", "--csv"])
+        .output()
+    {
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            // rocm-smi CSV output has headers, then data lines.
+            // We try to extract total VRAM from the output.
+            for line in stdout.lines().skip(1) {
+                // Typical columns: GPU, VRAM Total, VRAM Used
+                let cols: Vec<&str> = line.split(',').collect();
+                if cols.len() >= 2 {
+                    // Total VRAM is in bytes typically, convert to MB
+                    if let Ok(bytes) = cols[1].trim().parse::<u64>() {
+                        let mb = bytes / (1024 * 1024);
+                        return (Some("AMD GPU".to_string()), Some(mb));
+                    }
+                }
+            }
+        }
+    }
+
+    // Also try rocm-smi for GPU name via --showproductname
+    // But if we got here, rocm-smi didn't work either
+    (None, None)
+}
+
+/// Read system RAM from /proc/meminfo. Returns `None` when the file
+/// cannot be read or parsed (e.g. non-Linux hosts, CI containers).
+fn detect_ram_mb() -> Option<u64> {
+    let contents = std::fs::read_to_string("/proc/meminfo").ok()?;
+    for line in contents.lines() {
+        if line.starts_with("MemTotal:") {
+            // Format: "MemTotal:       32768000 kB"
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 2 {
+                if let Ok(kb) = parts[1].parse::<u64>() {
+                    return Some(kb / 1024);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Query Ollama API for available models.
+async fn query_ollama_tags() -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+    let base_url =
+        std::env::var("OLLAMA_HOST").unwrap_or_else(|_| "http://localhost:11434".to_string());
+    let url = format!("{}/api/tags", base_url);
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()?;
+
+    let resp = client.get(&url).send().await?;
+    let body: serde_json::Value = resp.json().await?;
+
+    let models = body
+        .get("models")
+        .and_then(|m| m.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|m| m.get("name").and_then(|n| n.as_str()).map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Ok(models)
 }
 
 // ---------------------------------------------------------------------------

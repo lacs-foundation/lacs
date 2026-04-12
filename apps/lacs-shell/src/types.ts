@@ -53,3 +53,15 @@ export interface SetupStatus {
   configExists: boolean;
   providerConfigured: boolean;
 }
+
+export interface HardwareInfo {
+  gpuName: string | null;
+  vramMb: number | null;
+  ramMb: number | null;
+}
+
+export interface OllamaStatus {
+  reachable: boolean;
+  models: string[];
+  errorMessage: string | null;
+}

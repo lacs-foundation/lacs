@@ -12,6 +12,9 @@ pub struct CollectedState {
     pub services: Vec<String>,
     pub flatpaks: Vec<String>,
     pub toolboxes: Vec<String>,
+    pub layered_packages: Vec<String>,
+    pub containers: Vec<String>,
+    pub users: Vec<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -35,6 +38,15 @@ pub struct RealCommandRunner;
 impl CommandRunner for RealCommandRunner {
     fn run(&self, program: &str, args: &[&str]) -> Result<String, io::Error> {
         let output = std::process::Command::new(program).args(args).output()?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(io::Error::other(format!(
+                "{} exited with status {}: {}",
+                program,
+                output.status,
+                stderr.trim()
+            )));
+        }
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 }
@@ -54,10 +66,14 @@ pub fn collect_state(runner: &dyn CommandRunner) -> Result<CollectedState, Colle
             reason: e.to_string(),
         })?;
 
-    let deployment = runner
+    // Call rpm-ostree once and reuse for both deployment and layered_packages.
+    let rpm_ostree_output = runner
         .run("rpm-ostree", &["status", "--booted", "--json"])
         .map(|s| s.trim().to_string())
         .unwrap_or_default();
+
+    let deployment = rpm_ostree_output.clone();
+    let layered_packages = parse_layered_packages(&rpm_ostree_output);
 
     let services = runner
         .run(
@@ -84,12 +100,25 @@ pub fn collect_state(runner: &dyn CommandRunner) -> Result<CollectedState, Colle
         .map(|s| parse_lines(&s))
         .unwrap_or_default();
 
+    let containers = runner
+        .run("podman", &["ps", "--format", "{{.Names}}"])
+        .map(|s| parse_lines(&s))
+        .unwrap_or_default();
+
+    let users = runner
+        .run("getent", &["passwd"])
+        .map(|s| parse_local_users(&s))
+        .unwrap_or_default();
+
     Ok(CollectedState {
         host_name,
         deployment,
         services,
         flatpaks,
         toolboxes,
+        layered_packages,
+        containers,
+        users,
     })
 }
 
@@ -109,6 +138,58 @@ fn parse_lines(output: &str) -> Vec<String> {
         .lines()
         .map(|l| l.trim().to_string())
         .filter(|l| !l.is_empty())
+        .collect()
+}
+
+/// Extract layered package names from `rpm-ostree status --booted --json`.
+///
+/// The JSON contains `deployments[0].requested-packages` (user-requested layers)
+/// and optionally `requested-local-packages`. We merge both lists.
+fn parse_layered_packages(json_output: &str) -> Vec<String> {
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(json_output) else {
+        return Vec::new();
+    };
+    let deployments = match val.get("deployments").and_then(|v| v.as_array()) {
+        Some(arr) => arr,
+        None => return Vec::new(),
+    };
+    let Some(booted) = deployments.first() else {
+        return Vec::new();
+    };
+    let mut pkgs = Vec::new();
+    for key in &["requested-packages", "requested-local-packages"] {
+        if let Some(arr) = booted.get(*key).and_then(|v| v.as_array()) {
+            for item in arr {
+                if let Some(s) = item.as_str() {
+                    if !s.is_empty() {
+                        pkgs.push(s.to_string());
+                    }
+                }
+            }
+        }
+    }
+    pkgs
+}
+
+/// Extract local human users from `getent passwd` output.
+///
+/// Filters to uid >= 1000 and excludes `nobody` and `nfsnobody`.
+fn parse_local_users(output: &str) -> Vec<String> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let fields: Vec<&str> = line.split(':').collect();
+            if fields.len() < 3 {
+                return None;
+            }
+            let username = fields[0];
+            let uid: u32 = fields[2].parse().ok()?;
+            if uid >= 1000 && username != "nobody" && username != "nfsnobody" {
+                Some(username.to_string())
+            } else {
+                None
+            }
+        })
         .collect()
 }
 
@@ -154,7 +235,7 @@ mod tests {
             (
                 "rpm-ostree",
                 &["status", "--booted", "--json"],
-                r#"{"deployments":[]}"#,
+                r#"{"deployments":[{"requested-packages":["vim","htop"]}]}"#,
             ),
             (
                 "systemctl",
@@ -174,15 +255,31 @@ mod tests {
                 "org.gnome.Gedit\n",
             ),
             ("toolbox", &["list", "--containers"], "lacs-dev\n"),
+            (
+                "podman",
+                &["ps", "--format", "{{.Names}}"],
+                "my-container\n",
+            ),
+            (
+                "getent",
+                &["passwd"],
+                "root:x:0:0:root:/root:/bin/bash\njane:x:1000:1000:Jane:/home/jane:/bin/bash\n",
+            ),
         ]);
 
         let state = collect_state(&runner).unwrap();
 
         assert_eq!(state.host_name, "silverblue-lab");
-        assert_eq!(state.deployment, r#"{"deployments":[]}"#);
+        assert_eq!(
+            state.deployment,
+            r#"{"deployments":[{"requested-packages":["vim","htop"]}]}"#
+        );
         assert_eq!(state.services, vec!["sshd.service"]);
         assert_eq!(state.flatpaks, vec!["org.gnome.Gedit"]);
         assert_eq!(state.toolboxes, vec!["lacs-dev"]);
+        assert_eq!(state.layered_packages, vec!["vim", "htop"]);
+        assert_eq!(state.containers, vec!["my-container"]);
+        assert_eq!(state.users, vec!["jane"]);
     }
 
     #[test]
@@ -213,6 +310,9 @@ mod tests {
         assert!(state.services.is_empty());
         assert!(state.flatpaks.is_empty());
         assert!(state.toolboxes.is_empty());
+        assert!(state.layered_packages.is_empty());
+        assert!(state.containers.is_empty());
+        assert!(state.users.is_empty());
     }
 
     #[test]
@@ -261,6 +361,9 @@ mod tests {
         assert!(state.services.is_empty());
         assert!(state.flatpaks.is_empty());
         assert!(state.toolboxes.is_empty());
+        assert!(state.layered_packages.is_empty());
+        assert!(state.containers.is_empty());
+        assert!(state.users.is_empty());
     }
 
     #[test]
@@ -297,10 +400,48 @@ mod tests {
             services: vec!["sshd.service".to_string()],
             flatpaks: vec!["org.mozilla.firefox".to_string()],
             toolboxes: vec![],
+            layered_packages: vec!["vim".to_string()],
+            containers: vec!["dev-box".to_string()],
+            users: vec!["alice".to_string()],
         };
 
         let json = serde_json::to_string(&state).unwrap();
         let restored: CollectedState = serde_json::from_str(&json).unwrap();
         assert_eq!(state, restored);
+    }
+
+    #[test]
+    fn parse_layered_packages_extracts_requested_packages() {
+        let json = r#"{"deployments":[{"requested-packages":["vim","htop"],"requested-local-packages":["my-tool"]}]}"#;
+        let pkgs = super::parse_layered_packages(json);
+        assert_eq!(pkgs, vec!["vim", "htop", "my-tool"]);
+    }
+
+    #[test]
+    fn parse_layered_packages_handles_empty_deployments() {
+        let json = r#"{"deployments":[]}"#;
+        assert!(super::parse_layered_packages(json).is_empty());
+    }
+
+    #[test]
+    fn parse_layered_packages_handles_invalid_json() {
+        assert!(super::parse_layered_packages("not json").is_empty());
+    }
+
+    #[test]
+    fn parse_local_users_filters_by_uid_and_excludes_system_accounts() {
+        let passwd = "root:x:0:0:root:/root:/bin/bash\n\
+                      daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin\n\
+                      jane:x:1000:1000:Jane:/home/jane:/bin/bash\n\
+                      bob:x:1001:1001:Bob:/home/bob:/bin/bash\n\
+                      nobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin\n\
+                      nfsnobody:x:65534:65534:nfsnobody:/nonexistent:/usr/sbin/nologin\n";
+        let users = super::parse_local_users(passwd);
+        assert_eq!(users, vec!["jane", "bob"]);
+    }
+
+    #[test]
+    fn parse_local_users_handles_empty_output() {
+        assert!(super::parse_local_users("").is_empty());
     }
 }

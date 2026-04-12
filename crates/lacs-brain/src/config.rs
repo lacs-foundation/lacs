@@ -1,10 +1,11 @@
 //! Brain configuration loaded from environment variables.
 //!
 //! Resolution order:
-//!   1. `LACS_LLM_PROVIDER` — "anthropic" | "ollama"
+//!   1. `LACS_LLM_PROVIDER` — "anthropic" | "ollama" | "openai" | "gemini" | "groq" | "deepseek" | "mistral" | "xai"
 //!      If unset: "anthropic" when `ANTHROPIC_API_KEY` is set and non-whitespace,
 //!      else "ollama". Whitespace-only values are treated as absent.
 //!   2. `ANTHROPIC_API_KEY` — required when provider is anthropic. Must be non-empty.
+//!      Other providers require their own key env var (e.g. `OPENAI_API_KEY`, `GEMINI_API_KEY`).
 //!   3. `LACS_LLM_MODEL` — overrides the provider default model.
 //!   4. `LACS_ANTHROPIC_URL` — overrides the Anthropic base URL (default: https://api.anthropic.com).
 //!   5. `LACS_OLLAMA_URL` — overrides the Ollama base URL (default: http://localhost:11434).
@@ -14,8 +15,14 @@ use std::fmt;
 
 pub const DEFAULT_ANTHROPIC_MODEL: &str = "claude-sonnet-4-6";
 pub const DEFAULT_ANTHROPIC_BASE_URL: &str = "https://api.anthropic.com";
-pub const DEFAULT_OLLAMA_MODEL: &str = "llama3.2";
+pub const DEFAULT_OLLAMA_MODEL: &str = "qwen3:8b";
 pub const DEFAULT_OLLAMA_BASE_URL: &str = "http://localhost:11434";
+pub const DEFAULT_OPENAI_MODEL: &str = "gpt-4o";
+pub const DEFAULT_GEMINI_MODEL: &str = "gemini-2.0-flash";
+pub const DEFAULT_GROQ_MODEL: &str = "llama-3.3-70b-versatile";
+pub const DEFAULT_DEEPSEEK_MODEL: &str = "deepseek-chat";
+pub const DEFAULT_MISTRAL_MODEL: &str = "mistral-large-latest";
+pub const DEFAULT_XAI_MODEL: &str = "grok-3";
 pub const DEFAULT_MAX_TURNS: usize = 5;
 
 // ---------------------------------------------------------------------------
@@ -29,6 +36,7 @@ pub struct BrainConfig {
 }
 
 #[derive(Clone)]
+#[allow(clippy::upper_case_acronyms)]
 pub(crate) enum ProviderConfig {
     Anthropic {
         /// Never logged or exposed in error messages.
@@ -38,6 +46,30 @@ pub(crate) enum ProviderConfig {
     },
     Ollama {
         base_url: String,
+        model: String,
+    },
+    OpenAI {
+        api_key: String,
+        model: String,
+    },
+    Gemini {
+        api_key: String,
+        model: String,
+    },
+    Groq {
+        api_key: String,
+        model: String,
+    },
+    DeepSeek {
+        api_key: String,
+        model: String,
+    },
+    Mistral {
+        api_key: String,
+        model: String,
+    },
+    XAI {
+        api_key: String,
         model: String,
     },
 }
@@ -57,6 +89,36 @@ impl fmt::Debug for ProviderConfig {
             ProviderConfig::Ollama { base_url, model } => f
                 .debug_struct("Ollama")
                 .field("base_url", base_url)
+                .field("model", model)
+                .finish(),
+            ProviderConfig::OpenAI { model, .. } => f
+                .debug_struct("OpenAI")
+                .field("api_key", &"[redacted]")
+                .field("model", model)
+                .finish(),
+            ProviderConfig::Gemini { model, .. } => f
+                .debug_struct("Gemini")
+                .field("api_key", &"[redacted]")
+                .field("model", model)
+                .finish(),
+            ProviderConfig::Groq { model, .. } => f
+                .debug_struct("Groq")
+                .field("api_key", &"[redacted]")
+                .field("model", model)
+                .finish(),
+            ProviderConfig::DeepSeek { model, .. } => f
+                .debug_struct("DeepSeek")
+                .field("api_key", &"[redacted]")
+                .field("model", model)
+                .finish(),
+            ProviderConfig::Mistral { model, .. } => f
+                .debug_struct("Mistral")
+                .field("api_key", &"[redacted]")
+                .field("model", model)
+                .finish(),
+            ProviderConfig::XAI { model, .. } => f
+                .debug_struct("xAI")
+                .field("api_key", &"[redacted]")
                 .field("model", model)
                 .finish(),
         }
@@ -82,7 +144,10 @@ pub enum ConfigError {
     #[error("ANTHROPIC_API_KEY is required when provider is 'anthropic' and must not be empty")]
     MissingAnthropicKey,
 
-    #[error("unknown provider '{0}': expected 'anthropic' or 'ollama'")]
+    #[error("API key environment variable '{0}' is required for provider '{1}' and must not be empty")]
+    MissingApiKey(String, String),
+
+    #[error("unknown provider '{0}': expected one of: anthropic, ollama, openai, gemini, groq, deepseek, mistral, xai")]
     UnknownProvider(String),
 
     #[error("LACS_BRAIN_MAX_TURNS must be a positive integer (>= 1), got '{0}'")]
@@ -92,6 +157,15 @@ pub enum ConfigError {
 // ---------------------------------------------------------------------------
 // Loading
 // ---------------------------------------------------------------------------
+
+/// Read a required API key from an environment variable, returning
+/// `ConfigError::MissingApiKey` if absent or whitespace-only.
+fn require_api_key(env_var: &str, provider: &str) -> Result<String, ConfigError> {
+    std::env::var(env_var)
+        .ok()
+        .filter(|k| !k.trim().is_empty())
+        .ok_or_else(|| ConfigError::MissingApiKey(env_var.into(), provider.into()))
+}
 
 impl BrainConfig {
     /// Load from environment variables.
@@ -154,6 +228,48 @@ impl BrainConfig {
                     model: model_override.unwrap_or_else(|| DEFAULT_OLLAMA_MODEL.into()),
                 }
             }
+            "openai" => {
+                let api_key = require_api_key("OPENAI_API_KEY", "openai")?;
+                ProviderConfig::OpenAI {
+                    api_key,
+                    model: model_override.unwrap_or_else(|| DEFAULT_OPENAI_MODEL.into()),
+                }
+            }
+            "gemini" => {
+                let api_key = require_api_key("GEMINI_API_KEY", "gemini")?;
+                ProviderConfig::Gemini {
+                    api_key,
+                    model: model_override.unwrap_or_else(|| DEFAULT_GEMINI_MODEL.into()),
+                }
+            }
+            "groq" => {
+                let api_key = require_api_key("GROQ_API_KEY", "groq")?;
+                ProviderConfig::Groq {
+                    api_key,
+                    model: model_override.unwrap_or_else(|| DEFAULT_GROQ_MODEL.into()),
+                }
+            }
+            "deepseek" => {
+                let api_key = require_api_key("DEEPSEEK_API_KEY", "deepseek")?;
+                ProviderConfig::DeepSeek {
+                    api_key,
+                    model: model_override.unwrap_or_else(|| DEFAULT_DEEPSEEK_MODEL.into()),
+                }
+            }
+            "mistral" => {
+                let api_key = require_api_key("MISTRAL_API_KEY", "mistral")?;
+                ProviderConfig::Mistral {
+                    api_key,
+                    model: model_override.unwrap_or_else(|| DEFAULT_MISTRAL_MODEL.into()),
+                }
+            }
+            "xai" => {
+                let api_key = require_api_key("XAI_API_KEY", "xai")?;
+                ProviderConfig::XAI {
+                    api_key,
+                    model: model_override.unwrap_or_else(|| DEFAULT_XAI_MODEL.into()),
+                }
+            }
             other => return Err(ConfigError::UnknownProvider(other.into())),
         };
 
@@ -163,19 +279,31 @@ impl BrainConfig {
         })
     }
 
-    /// Returns `"anthropic"` or `"ollama"`.
+    /// Returns the provider name string (e.g. `"anthropic"`, `"ollama"`, `"openai"`).
     pub fn provider_name(&self) -> &str {
         match &self.provider {
             ProviderConfig::Anthropic { .. } => "anthropic",
             ProviderConfig::Ollama { .. } => "ollama",
+            ProviderConfig::OpenAI { .. } => "openai",
+            ProviderConfig::Gemini { .. } => "gemini",
+            ProviderConfig::Groq { .. } => "groq",
+            ProviderConfig::DeepSeek { .. } => "deepseek",
+            ProviderConfig::Mistral { .. } => "mistral",
+            ProviderConfig::XAI { .. } => "xai",
         }
     }
 
-    /// Returns the model identifier string (e.g. `"claude-sonnet-4-6"` or `"llama3.2"`).
+    /// Returns the model identifier string (e.g. `"claude-sonnet-4-6"` or `"qwen3:8b"`).
     pub fn model_name(&self) -> &str {
         match &self.provider {
-            ProviderConfig::Anthropic { model, .. } => model,
-            ProviderConfig::Ollama { model, .. } => model,
+            ProviderConfig::Anthropic { model, .. }
+            | ProviderConfig::Ollama { model, .. }
+            | ProviderConfig::OpenAI { model, .. }
+            | ProviderConfig::Gemini { model, .. }
+            | ProviderConfig::Groq { model, .. }
+            | ProviderConfig::DeepSeek { model, .. }
+            | ProviderConfig::Mistral { model, .. }
+            | ProviderConfig::XAI { model, .. } => model,
         }
     }
 

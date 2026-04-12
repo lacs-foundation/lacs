@@ -45,7 +45,6 @@ pub const KNOWN_ACTIONS: &[&str] = &[
     // Toolbox
     "ListToolboxes",
     "CreateToolbox",
-    "EnterToolbox",
     "RemoveToolbox",
     // Layering
     "InstallPackages",

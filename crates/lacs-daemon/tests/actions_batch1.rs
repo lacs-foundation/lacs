@@ -101,12 +101,7 @@ fn toolbox_family_covers_create_enter_list_and_remove() {
 
     assert_eq!(
         names,
-        vec![
-            "ListToolboxes",
-            "CreateToolbox",
-            "EnterToolbox",
-            "RemoveToolbox"
-        ]
+        vec!["ListToolboxes", "CreateToolbox", "RemoveToolbox"]
     );
 }
 
