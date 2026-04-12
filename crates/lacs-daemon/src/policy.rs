@@ -63,7 +63,6 @@ pub fn min_role_for_action(action_name: &str) -> Option<CallerRole> {
         | "MaskService"
         | "UnmaskService"
         | "CreateToolbox"
-        | "EnterToolbox"
         | "RemoveToolbox"
         | "SetHostname"
         | "SetTimezone"
@@ -232,7 +231,6 @@ mod tests {
         assert!(action_allowed(&role, "MaskService"));
         assert!(action_allowed(&role, "UnmaskService"));
         assert!(action_allowed(&role, "CreateToolbox"));
-        assert!(action_allowed(&role, "EnterToolbox"));
         assert!(action_allowed(&role, "RemoveToolbox"));
         assert!(action_allowed(&role, "SetHostname"));
         assert!(action_allowed(&role, "SetTimezone"));

@@ -239,10 +239,6 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
                 image.as_deref(),
             ))
         }
-        "EnterToolbox" => {
-            let name = validated_safe_arg(require_str(params, "name")?, "name")?;
-            Ok(toolbox::enter_toolbox(&name))
-        }
         "RemoveToolbox" => {
             let name = validated_safe_arg(require_str(params, "name")?, "name")?;
             Ok(toolbox::remove_toolbox(&name))

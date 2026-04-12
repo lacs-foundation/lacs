@@ -32,7 +32,7 @@ ListPackageRepositories, ListContainers, GetContainerInfo, ListUsers, ListGroups
 ### Medium risk — approval required before execution
 
 InstallFlatpak, RemoveFlatpak, AddFlatpakRemote, RemoveFlatpakRemote,
-CreateToolbox, EnterToolbox, RemoveToolbox,
+CreateToolbox, RemoveToolbox,
 StartService, StopService, RestartService, SetServiceEnabled, MaskService, UnmaskService,
 ConfigureWifi, SetDnsServers, ConfigureFirewall,
 SetHostname, SetTimezone, SetLocale, SetNtp,

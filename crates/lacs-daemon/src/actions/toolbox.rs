@@ -5,7 +5,6 @@ pub fn specs() -> Vec<ActionSpec> {
     vec![
         list_toolboxes(),
         create_toolbox("lacs-dev", Some("41"), None),
-        enter_toolbox("lacs-dev"),
         remove_toolbox("lacs-dev"),
     ]
 }
@@ -41,16 +40,6 @@ pub fn create_toolbox(name: &str, release: Option<&str>, image: Option<&str>) ->
             program: "toolbox",
             args,
         },
-        risk_level: RiskLevel::Medium,
-        reboot_required: false,
-        rollback_available: false,
-    }
-}
-
-pub fn enter_toolbox(name: &str) -> ActionSpec {
-    ActionSpec {
-        action_name: "EnterToolbox",
-        mechanism: command_mechanism("toolbox", ["enter", name]),
         risk_level: RiskLevel::Medium,
         reboot_required: false,
         rollback_available: false,

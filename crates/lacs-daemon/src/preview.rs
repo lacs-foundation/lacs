@@ -76,8 +76,7 @@ fn preview_profile(action_name: &str) -> PreviewProfile {
         | "SetLocale"
         | "SetNtp"
         | "CreateUser"
-        | "DeleteUser"
-        | "EnterToolbox" => PreviewProfile {
+        | "DeleteUser" => PreviewProfile {
             risk_level: RiskLevel::Medium,
             expected_side_effects: vec!["service interruption".to_string()],
             reboot_required: false,
