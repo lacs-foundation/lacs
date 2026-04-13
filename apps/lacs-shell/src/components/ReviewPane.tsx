@@ -7,16 +7,28 @@ interface Props {
 }
 
 export function ReviewPane({ executionResult, summary, onDismiss }: Props) {
-  const needsReboot = executionResult.outcome === "needs_reboot";
-  const heading = needsReboot
-    ? "Execution Complete \u2014 Reboot Required"
-    : "Execution Complete";
+  const outcome = executionResult.outcome;
+  const heading =
+    outcome === "needs_reboot"
+      ? "Execution Complete \u2014 Reboot Required"
+      : outcome === "failed"
+        ? "Execution Failed"
+        : outcome === "rolled_back"
+          ? "Execution Rolled Back"
+          : "Execution Complete";
+
+  const badgeClass =
+    outcome === "succeeded" || outcome === "needs_reboot"
+      ? "review-outcome-badge--ok"
+      : "review-outcome-badge--fail";
 
   return (
     <section className="pane pane-review">
       <h2>{heading}</h2>
 
-      {needsReboot && (
+      <span className={`review-outcome-badge ${badgeClass}`}>{outcome}</span>
+
+      {outcome === "needs_reboot" && (
         <div className="execution-reboot-banner" role="note">
           <p>Reboot required to apply changes.</p>
           <p>Run: <code>systemctl reboot</code></p>

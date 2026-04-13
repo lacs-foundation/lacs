@@ -377,6 +377,45 @@ impl LlmPlanner {
         self.state_client.curated_state()
     }
 
+    /// Generate a plain-language summary of a short prompt, bypassing the
+    /// tool-use loop. Used for post-execution review.
+    ///
+    /// Returns the raw text content from the LLM. No tools are provided, so
+    /// the LLM is constrained to text-only output.
+    pub async fn summarize(&self, prompt: &str) -> Result<String, PlanningError> {
+        let messages = vec![Message::user_text(prompt)];
+        let completion = self
+            .provider
+            .complete(
+                "You are a concise technical writer. Respond with a short plain-language summary. Do not use markdown formatting.",
+                &messages,
+                &[], // no tools
+                512, // short response
+            )
+            .await
+            .map_err(PlanningError::from)?;
+
+        // Extract text from the completion
+        let text = completion
+            .content
+            .iter()
+            .filter_map(|b| {
+                if let ContentBlock::Text { text } = b {
+                    Some(text.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        if text.is_empty() {
+            Err(PlanningError::NoPlanProposed)
+        } else {
+            Ok(text)
+        }
+    }
+
     /// Run the planning loop for the given natural-language intent.
     ///
     /// Returns `Err(EmptyIntent)` immediately if the intent is blank.
@@ -481,6 +520,7 @@ impl LlmPlanner {
                                 if let Some((action_name, params)) =
                                     crate::planning_tools::query_tools::query_tool_to_action(
                                         other_name,
+                                        input,
                                     )
                                 {
                                     match self

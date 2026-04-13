@@ -399,6 +399,7 @@ pub async fn connection_handler_with_executor(
                 handle_query_action(
                     &mut framed,
                     Arc::clone(&executor),
+                    &caller_role,
                     action_name,
                     params,
                     request_id,
@@ -458,12 +459,26 @@ async fn handle_query_state(
 async fn handle_query_action(
     framed: &mut FramedStream<UnixStream>,
     executor: Arc<dyn ActionExecutor>,
+    caller_role: &CallerRole,
     action_name: &str,
     params: &Value,
     request_id: &str,
 ) -> Result<(), HandlerError> {
+    use crate::auth::role_rank;
     use crate::policy::min_role_for_action;
-    use lacs_types::CallerRole;
+
+    // Defense-in-depth: verify the caller has at least Observer rank.
+    if role_rank(caller_role) < role_rank(&CallerRole::Observer) {
+        return send_error(
+            framed,
+            request_id,
+            "authorization_failure",
+            format!(
+                "query_action requires at least Observer role; caller has {caller_role:?}"
+            ),
+        )
+        .await;
+    }
 
     // Only allow Low-risk (Observer-level) actions.
     let min_role = match min_role_for_action(action_name) {
@@ -505,12 +520,18 @@ async fn handle_query_action(
         }
     };
 
+    let output_text = if output.stderr.is_empty() {
+        output.stdout
+    } else {
+        format!("{}\n[stderr]\n{}", output.stdout, output.stderr)
+    };
+
     send_response(
         framed,
         &DaemonResponse::QueryActionResponse {
             request_id: request_id.to_string(),
             action_name: action_name.to_string(),
-            output: output.stdout,
+            output: output_text,
         },
     )
     .await

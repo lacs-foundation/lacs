@@ -326,24 +326,44 @@ pub fn check_setup_status() -> SetupStatus {
 
 #[tauri::command]
 pub async fn review_execution(
+    state: tauri::State<'_, ShellCommandState>,
     execution_result: ExecutionResult,
     intent: String,
 ) -> Result<String, String> {
-    let mut lines = vec![format!("Task: {intent}")];
-    lines.push(format!("Outcome: {}", execution_result.outcome));
+    // Build a summarization intent that includes the execution output.
+    let mut output_text = String::new();
+    output_text.push_str(&format!("Outcome: {}\n\n", execution_result.outcome));
     for step in &execution_result.step_outputs {
-        lines.push(format!("\n{} — {}", step.action_name, step.status));
-        for line in step.output_lines.iter().take(10) {
-            lines.push(format!("  {line}"));
+        output_text.push_str(&format!("Step: {} ({})\n", step.action_name, step.status));
+        for line in step.output_lines.iter().take(50) {
+            output_text.push_str(&format!("  {line}\n"));
         }
-        if step.output_lines.len() > 10 {
-            lines.push(format!(
-                "  ... ({} more lines)",
-                step.output_lines.len() - 10
+        if step.output_lines.len() > 50 {
+            output_text.push_str(&format!(
+                "  ... ({} more lines)\n",
+                step.output_lines.len() - 50
             ));
         }
+        output_text.push('\n');
     }
-    Ok(lines.join("\n"))
+
+    let summary_intent = format!(
+        "Summarize the following LACS execution result in 2-3 plain-language sentences for the user. \
+         The user's original task was: \"{intent}\". \
+         Explain what happened and whether the task was successful. \
+         If there were errors, mention them briefly. Do not propose a plan — just summarize.\n\n\
+         Execution output:\n{output_text}"
+    );
+
+    // Call the LLM via the planner's summarize method (bypasses the safety fence).
+    match state.planner.summarize(&summary_intent).await {
+        Ok(text) => Ok(text),
+        Err(e) => {
+            // Fallback: return the formatted output without LLM summary
+            eprintln!("[lacs-shell] review_execution LLM call failed: {e}");
+            Ok(output_text)
+        }
+    }
 }
 
 #[tauri::command]
