@@ -40,6 +40,11 @@ pub fn min_role_for_action(action_name: &str) -> Option<CallerRole> {
         | "GetServiceLogs"
         | "ListToolboxes"
         | "GetFirewallState"
+        | "GetNetworkStatus"
+        | "GetDiskUsage"
+        | "ListProcesses"
+        | "GetMemoryInfo"
+        | "GetAuthorizedKeys"
         | "ListUsers"
         | "ListGroups" => CallerRole::Observer,
 
@@ -76,7 +81,9 @@ pub fn min_role_for_action(action_name: &str) -> Option<CallerRole> {
         | "EnablePackageRepository"
         | "DisablePackageRepository"
         | "CreateUser"
-        | "DeleteUser" => CallerRole::Dev,
+        | "DeleteUser"
+        | "AddAuthorizedKey"
+        | "RemoveAuthorizedKey" => CallerRole::Dev,
 
         // ── High-risk system mutations (Admin) ───────────────────────────
         //
@@ -181,6 +188,11 @@ mod tests {
         assert!(action_allowed(&role, "GetFirewallState"));
         assert!(action_allowed(&role, "ListUsers"));
         assert!(action_allowed(&role, "ListGroups"));
+        assert!(action_allowed(&role, "GetDiskUsage"));
+        assert!(action_allowed(&role, "ListProcesses"));
+        assert!(action_allowed(&role, "GetMemoryInfo"));
+        assert!(action_allowed(&role, "GetNetworkStatus"));
+        assert!(action_allowed(&role, "GetAuthorizedKeys"));
     }
 
     // ------------------------------------------------------------------
@@ -245,6 +257,8 @@ mod tests {
         assert!(action_allowed(&role, "DisablePackageRepository"));
         assert!(action_allowed(&role, "CreateUser"));
         assert!(action_allowed(&role, "DeleteUser"));
+        assert!(action_allowed(&role, "AddAuthorizedKey"));
+        assert!(action_allowed(&role, "RemoveAuthorizedKey"));
         // Observer-level actions still allowed
         assert!(action_allowed(&role, "GetSystemState"));
         assert!(action_allowed(&role, "ListServices"));

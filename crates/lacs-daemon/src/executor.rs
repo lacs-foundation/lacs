@@ -1,6 +1,6 @@
 use crate::actions::{
-    containers, deployment, flatpak, identity, layering, network, package_repos, services, toolbox,
-    users,
+    containers, deployment, filesystem, flatpak, identity, layering, network, package_repos,
+    processes, services, ssh, system_info, toolbox, users,
     validate::{
         validated_group, validated_hostname, validated_locale, validated_safe_arg,
         validated_timezone, validated_unit_name, validated_username,
@@ -259,8 +259,18 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
         }
         "SetNtp" => Ok(identity::set_ntp(require_bool(params, "enabled")?)),
 
+        // ── Filesystem ────────────────────────────────────────────────────
+        "GetDiskUsage" => Ok(filesystem::disk_usage_spec()),
+
+        // ── Processes ────────────────────────────────────────────────────
+        "ListProcesses" => Ok(processes::list_processes_spec()),
+
+        // ── System info ──────────────────────────────────────────────────
+        "GetMemoryInfo" => Ok(system_info::get_memory_info_spec()),
+
         // ── Network ───────────────────────────────────────────────────────
         "GetFirewallState" => Ok(network::get_firewall_state()),
+        "GetNetworkStatus" => Ok(network::get_network_status()),
         "ConfigureWifi" => {
             let ssid = validated_safe_arg(require_str(params, "ssid")?, "ssid")?;
             Ok(network::configure_wifi(&ssid))
@@ -305,6 +315,22 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
             let username = validated_username(require_str(params, "username")?, "username")?;
             let group = validated_group(require_str(params, "group")?, "group")?;
             Ok(users::remove_user_from_group(&username, &group))
+        }
+
+        // ── SSH ──────────────────────────────────────────────────────────
+        "GetAuthorizedKeys" => {
+            let username = validated_username(require_str(params, "username")?, "username")?;
+            Ok(ssh::get_authorized_keys(&username))
+        }
+        "AddAuthorizedKey" => {
+            let username = validated_username(require_str(params, "username")?, "username")?;
+            let public_key = validated_public_key(require_str(params, "public_key")?)?;
+            Ok(ssh::add_authorized_key(&username, &public_key))
+        }
+        "RemoveAuthorizedKey" => {
+            let username = validated_username(require_str(params, "username")?, "username")?;
+            let public_key = validated_public_key(require_str(params, "public_key")?)?;
+            Ok(ssh::remove_authorized_key(&username, &public_key))
         }
 
         _ => Err(ExecutorError::UnknownAction(action_name.to_string())),
@@ -420,6 +446,37 @@ fn validated_no_newline<'a>(
     } else {
         Ok(val)
     }
+}
+
+/// Validate an SSH public key: must start with a known key-type prefix,
+/// contain only printable ASCII, no newlines, no single quotes (to prevent
+/// shell injection in `sh -c` scripts), and be at most 8192 characters.
+fn validated_public_key(s: &str) -> Result<String, ExecutorError> {
+    const MAX_LEN: usize = 8192;
+    const ALLOWED_PREFIXES: &[&str] = &[
+        "ssh-rsa",
+        "ssh-ed25519",
+        "ssh-ed25519-sk",
+        "ecdsa-sha2-nistp256",
+        "ecdsa-sha2-nistp384",
+        "ecdsa-sha2-nistp521",
+        "sk-ssh-ed25519",
+        "sk-ecdsa-sha2-nistp256",
+    ];
+
+    if s.is_empty() || s.len() > MAX_LEN {
+        return Err(ExecutorError::InvalidParam("public_key"));
+    }
+    if !ALLOWED_PREFIXES.iter().any(|p| s.starts_with(p)) {
+        return Err(ExecutorError::InvalidParam("public_key"));
+    }
+    // No newlines, no single quotes, only printable ASCII.
+    if s.chars()
+        .any(|c| c == '\n' || c == '\r' || c == '\'' || !c.is_ascii() || c.is_ascii_control())
+    {
+        return Err(ExecutorError::InvalidParam("public_key"));
+    }
+    Ok(s.to_string())
 }
 
 fn require_bool(params: &Value, key: &'static str) -> Result<bool, ExecutorError> {
@@ -919,12 +976,16 @@ mod tests {
         let all_specs: Vec<ActionSpec> = containers::specs()
             .into_iter()
             .chain(deployment::specs())
+            .chain(filesystem::specs())
             .chain(flatpak::specs())
             .chain(identity::specs())
             .chain(layering::specs())
             .chain(network::specs())
             .chain(package_repos::specs())
+            .chain(processes::specs())
             .chain(services::specs())
+            .chain(ssh::specs())
+            .chain(system_info::specs())
             .chain(toolbox::specs())
             .chain(users::specs())
             .collect();

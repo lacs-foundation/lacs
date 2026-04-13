@@ -117,7 +117,41 @@ pub fn query_tools() -> Vec<ToolDefinition> {
         ToolDefinition {
             name: "query_deployment_history".into(),
             description: "Show the deployment history of rpm-ostree upgrades and rollbacks.".into(),
+            input_schema: empty_schema.clone(),
+        },
+        ToolDefinition {
+            name: "query_disk_usage".into(),
+            description: "Show disk usage for all mounted filesystems.".into(),
+            input_schema: empty_schema.clone(),
+        },
+        ToolDefinition {
+            name: "query_processes".into(),
+            description: "List running processes sorted by memory usage.".into(),
+            input_schema: empty_schema.clone(),
+        },
+        ToolDefinition {
+            name: "query_memory".into(),
+            description: "Show system memory usage (total, used, free, swap).".into(),
+            input_schema: empty_schema.clone(),
+        },
+        ToolDefinition {
+            name: "query_network".into(),
+            description: "Show network interface addresses and status.".into(),
             input_schema: empty_schema,
+        },
+        ToolDefinition {
+            name: "query_authorized_keys".into(),
+            description: "Show SSH authorized keys for a user account.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "username": {
+                        "type": "string",
+                        "description": "The username whose authorized_keys to read"
+                    }
+                },
+                "required": ["username"]
+            }),
         },
     ]
 }
@@ -158,6 +192,14 @@ pub fn query_tool_to_action(
         "query_package_repos" => Some(("ListPackageRepositories", serde_json::json!({}))),
         "query_diagnostics" => Some(("CollectDiagnostics", serde_json::json!({}))),
         "query_deployment_history" => Some(("GetDeploymentHistory", serde_json::json!({}))),
+        "query_disk_usage" => Some(("GetDiskUsage", serde_json::json!({}))),
+        "query_processes" => Some(("ListProcesses", serde_json::json!({}))),
+        "query_memory" => Some(("GetMemoryInfo", serde_json::json!({}))),
+        "query_network" => Some(("GetNetworkStatus", serde_json::json!({}))),
+        "query_authorized_keys" => Some((
+            "GetAuthorizedKeys",
+            serde_json::json!({"username": input.get("username").and_then(|v| v.as_str()).unwrap_or("")}),
+        )),
         _ => None,
     }
 }
@@ -235,10 +277,7 @@ mod tests {
     #[test]
     fn parameterized_query_tools_forward_input() {
         assert_eq!(
-            query_tool_to_action(
-                "query_logs",
-                &serde_json::json!({"unit": "sshd.service"})
-            ),
+            query_tool_to_action("query_logs", &serde_json::json!({"unit": "sshd.service"})),
             Some((
                 "GetServiceLogs",
                 serde_json::json!({"unit": "sshd.service"})
@@ -291,9 +330,9 @@ mod tests {
     }
 
     #[test]
-    fn query_tools_returns_sixteen_definitions() {
+    fn query_tools_returns_twenty_one_definitions() {
         let tools = query_tools();
-        assert_eq!(tools.len(), 16);
+        assert_eq!(tools.len(), 21);
         for tool in &tools {
             assert!(tool.name.starts_with("query_"));
             assert!(!tool.description.is_empty());
