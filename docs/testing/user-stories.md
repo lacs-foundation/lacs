@@ -1,8 +1,8 @@
 # LACS E2E User Stories
 
 Ten scenarios for validating LACS on a real Fedora Atomic Desktop (Silverblue,
-Kinoite, Sway Atomic, Budgie Atomic, or COSMIC Atomic) — typically run inside
-a VirtualBox or libvirt VM via `vagrant up`.
+Kinoite, Sway Atomic, Budgie Atomic, or COSMIC Atomic). Run inside a QEMU/KVM
+VM via `tests/e2e/silverblue-vm.sh`, or on real hardware.
 
 Each story has:
 
@@ -13,10 +13,11 @@ Each story has:
 - **Pass criteria** — concrete conditions for success
 - **Cleanup** — how to revert any system changes
 
-The **automated** stories (1–7) run in CI via a Vagrant-provisioned VM.
-The **semi-automated** stories (8–10) make real system changes — the harness
-runs them only when `LACS_ALLOW_DESTRUCTIVE=1` is set, and a VM snapshot is
-reverted between runs.
+The **automated** stories (1–7) are also covered by the container-based CI
+smoke test (see `.github/workflows/e2e.yml`). The **semi-automated** stories
+(8–10) make real rpm-ostree / filesystem changes and only run when
+`LACS_ALLOW_DESTRUCTIVE=1` is set — take a VM snapshot first via
+`silverblue-vm.sh snapshot pre-destructive`.
 
 ---
 
@@ -258,18 +259,27 @@ by the manual QA checklist (see `demo-script.md`):
 
 ## Running the stories
 
-### Locally (automated only)
+### Locally (real Silverblue VM, all 10 stories)
 
 ```sh
-# Boot the VM (defaults to libvirt; set VAGRANT_PROVIDER=virtualbox if preferred)
-vagrant up
+# One-time: download the Fedora Silverblue ISO and install it in QEMU/KVM
+./tests/e2e/silverblue-vm.sh download
+./tests/e2e/silverblue-vm.sh install
 
-# Run the automated stories (1–7)
-vagrant ssh -c 'cd /vagrant && sudo tests/e2e/run-stories.sh'
+# Every run: boot, provision (rsyncs repo + builds LACS), run stories
+./tests/e2e/silverblue-vm.sh start
+./tests/e2e/silverblue-vm.sh provision
+./tests/e2e/silverblue-vm.sh run
 
-# Run all stories including destructive ones
-vagrant ssh -c 'cd /vagrant && sudo LACS_ALLOW_DESTRUCTIVE=1 tests/e2e/run-stories.sh'
+# Destructive stories — snapshot first, then revert
+./tests/e2e/silverblue-vm.sh stop && ./tests/e2e/silverblue-vm.sh snapshot clean
+./tests/e2e/silverblue-vm.sh start
+LACS_ALLOW_DESTRUCTIVE=1 ./tests/e2e/silverblue-vm.sh run
+./tests/e2e/silverblue-vm.sh stop && ./tests/e2e/silverblue-vm.sh restore clean
 ```
+
+See [docs/contributing/testing.md](../contributing/testing.md) for
+installation prerequisites, Windows instructions, and troubleshooting.
 
 ### In CI
 

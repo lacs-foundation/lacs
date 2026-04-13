@@ -1,167 +1,186 @@
 #!/usr/bin/env bash
 # LACS E2E VM provisioning script.
-# Runs inside the Vagrant VM as root.
-# Installs all dependencies, builds LACS, and starts the daemon.
+#
+# Runs inside a Fedora Atomic Desktop VM (Silverblue, Kinoite, Sway Atomic,
+# Budgie Atomic, or COSMIC Atomic) as root. It layers required build tools
+# via rpm-ostree, installs Ollama, pulls a small model, builds LACS from
+# the repo copy at $REPO_DIR, and starts the daemon.
+#
+# The repo copy is expected at $REPO_DIR (default: /home/lacsdev/lacs),
+# matching what tests/e2e/silverblue-vm.sh rsyncs over via `provision`.
+#
+# If rpm-ostree needs to layer packages, it requires a reboot to take
+# effect. This script handles the two-phase flow:
+#   - First run: layers build tools + reboots
+#   - Second run: builds LACS + starts daemon
+# A sentinel file at /var/lib/lacs-e2e/layered marks phase 1 complete.
+
 set -euo pipefail
 
+REPO_DIR="${REPO_DIR:-/home/lacsdev/lacs}"
 MARKER="/var/lib/lacs-e2e/ready"
+LAYERED_MARKER="/var/lib/lacs-e2e/layered"
 LOG="/var/log/lacs-e2e-provision.log"
 
-# Remove stale marker from a previous run.
+mkdir -p /var/lib/lacs-e2e
 rm -f "$MARKER"
 
 # Redirect all output to both the console and the log file.
 exec > >(tee -a "$LOG") 2>&1
 
 step() {
-  echo ""
-  echo "================================================================"
-  echo "  STEP: $1"
-  echo "================================================================"
+    echo ""
+    echo "================================================================"
+    echo "  STEP: $1"
+    echo "================================================================"
 }
 
 fail() {
-  echo ""
-  echo "!!! PROVISIONING FAILED at step: $1"
-  echo "!!! Check $LOG for details."
-  exit 1
+    echo ""
+    echo "!!! PROVISIONING FAILED at step: $1"
+    echo "!!! Check $LOG for details."
+    exit 1
 }
 
 # ---------------------------------------------------------------------------
-# 1. System packages
+# Phase 1: Layer build tools via rpm-ostree (requires reboot afterward)
 # ---------------------------------------------------------------------------
-step "Install system packages"
-dnf install -y \
-  git curl jq file \
-  gcc gcc-c++ make openssl-devel pkg-config \
-  nodejs npm \
-  systemd-journal-remote \
-  firewalld \
-  podman toolbox flatpak \
-  || fail "Install system packages"
 
-# rpm-ostree-client may not exist on non-Silverblue; install if available.
-# On plain Fedora this is a no-op / soft failure.
-dnf install -y rpm-ostree 2>/dev/null || echo "NOTE: rpm-ostree not available (expected on non-Silverblue)"
-
-# ---------------------------------------------------------------------------
-# 2. Install Rust via rustup (if not already present)
-# ---------------------------------------------------------------------------
-step "Install Rust toolchain"
-if ! command -v cargo &>/dev/null; then
-  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+if [ ! -f "$LAYERED_MARKER" ]; then
+    step "Layer build tools via rpm-ostree"
+    # jq, rsync, nc usually present; add what's missing.
+    # rustup handles rust itself; we only need build prereqs.
+    # podman, toolbox, flatpak are already present on atomic desktops.
+    rpm-ostree install --idempotent --allow-inactive \
+        gcc gcc-c++ make openssl-devel pkg-config \
+        || fail "Layer build tools"
+    touch "$LAYERED_MARKER"
+    echo ""
+    echo "================================================================"
+    echo "  PHASE 1 COMPLETE — rebooting to activate layered packages"
+    echo "  After reboot, re-run: sudo bash $0"
+    echo "================================================================"
+    sleep 3
+    systemctl reboot
+    exit 0
 fi
-# Make cargo available for the rest of this script.
+
+echo "Phase 1 already complete (found $LAYERED_MARKER). Continuing phase 2."
+
+# ---------------------------------------------------------------------------
+# Phase 2: Rust toolchain via rustup (user-local, no rpm-ostree reboot)
+# ---------------------------------------------------------------------------
+
+step "Install Rust via rustup"
+if ! command -v cargo &>/dev/null; then
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --default-toolchain stable \
+        || fail "Install Rust"
+fi
 # shellcheck disable=SC1091
 source "$HOME/.cargo/env" 2>/dev/null || true
 export PATH="$HOME/.cargo/bin:$PATH"
-cargo --version || fail "Rust installation"
+cargo --version || fail "Rust install verification"
 
 # ---------------------------------------------------------------------------
-# 3. Install Ollama
+# Phase 2: Install Ollama
 # ---------------------------------------------------------------------------
+
 step "Install Ollama"
 if ! command -v ollama &>/dev/null; then
-  curl -fsSL https://ollama.com/install.sh | sh || fail "Ollama installation"
+    curl -fsSL https://ollama.com/install.sh | sh || fail "Ollama install"
 fi
 
-# Start the Ollama service so we can pull a model.
+# Start Ollama. The installer typically creates a systemd unit.
 systemctl enable --now ollama 2>/dev/null || {
-  # Fallback: start in the background if systemd unit is not available.
-  nohup ollama serve &>/var/log/ollama.log &
-  sleep 3
+    nohup ollama serve &>/var/log/ollama.log &
+    sleep 3
 }
 
 # ---------------------------------------------------------------------------
-# 4. Pull a small LLM for testing
+# Phase 2: Pull a small LLM
 # ---------------------------------------------------------------------------
+
 step "Pull test LLM model"
-# qwen3:0.6b is small enough to run on CPU in reasonable time (~600 MB).
-# For more reliable planning, use qwen3:1.7b or gemma3:1b — but they are
-# slower on CPU-only VMs and require more RAM.
 LACS_TEST_MODEL="${LACS_TEST_MODEL:-qwen3:0.6b}"
-ollama pull "$LACS_TEST_MODEL" || fail "Model pull ($LACS_TEST_MODEL)"
-echo "Model $LACS_TEST_MODEL ready."
+ollama pull "$LACS_TEST_MODEL" || fail "Pull $LACS_TEST_MODEL"
 
 # ---------------------------------------------------------------------------
-# 5. Build LACS from synced folder
+# Phase 2: Build LACS
 # ---------------------------------------------------------------------------
-step "Build LACS"
-cd /vagrant
 
-# Build the daemon (release mode, but without --locked since the VM may
-# have a slightly different toolchain than the lockfile was generated with).
-cargo build --release -p lacs-daemon || fail "Build lacs-daemon"
+step "Build LACS from $REPO_DIR"
+[ -d "$REPO_DIR" ] || fail "Repo directory $REPO_DIR not found. Did you run 'silverblue-vm.sh provision'?"
+cd "$REPO_DIR"
 
-# Build the E2E test CLI.
-cargo build --release -p lacs-test-cli || fail "Build lacs-test-cli"
+cargo build --release -p lacs-daemon       || fail "Build lacs-daemon"
+cargo build --release -p lacs-test-cli     || fail "Build lacs-test-cli"
 
 echo "Binaries:"
 ls -lh target/release/lacs-daemon target/release/lacs-test-cli
 
 # ---------------------------------------------------------------------------
-# 6. Install the daemon
+# Phase 2: Install the daemon via Makefile
 # ---------------------------------------------------------------------------
+
 step "Install daemon"
 make install || fail "make install"
 
 # ---------------------------------------------------------------------------
-# 7. Create test user 'lacsdev'
+# Phase 2: Create test user 'lacsdev' (if not already present from installer)
 # ---------------------------------------------------------------------------
-step "Create test user lacsdev"
+
+step "Set up test user 'lacsdev'"
 if ! id lacsdev &>/dev/null; then
-  useradd -m -s /bin/bash lacsdev
+    useradd -m -s /bin/bash lacsdev
 fi
 
-# Seed an SSH public key for story 7 (SSH key inventory).
 LACSDEV_SSH_DIR="/home/lacsdev/.ssh"
 mkdir -p "$LACSDEV_SSH_DIR"
 chmod 700 "$LACSDEV_SSH_DIR"
 
-# Generate a deterministic test keypair if not already present.
 SEED_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILacsE2ETestKeyDoNotUseInProduction lacsdev@e2e-test"
 if ! grep -qF "$SEED_KEY" "$LACSDEV_SSH_DIR/authorized_keys" 2>/dev/null; then
-  echo "$SEED_KEY" >> "$LACSDEV_SSH_DIR/authorized_keys"
+    echo "$SEED_KEY" >> "$LACSDEV_SSH_DIR/authorized_keys"
 fi
 chmod 600 "$LACSDEV_SSH_DIR/authorized_keys"
 chown -R lacsdev:lacsdev "$LACSDEV_SSH_DIR"
-echo "lacsdev SSH key seeded."
 
 # ---------------------------------------------------------------------------
-# 8. Configure firewall
+# Phase 2: Firewall
 # ---------------------------------------------------------------------------
+
 step "Configure firewall"
 systemctl enable --now firewalld || fail "Start firewalld"
 firewall-cmd --permanent --add-service=ssh 2>/dev/null || true
 firewall-cmd --reload || true
-echo "Firewall active with ssh service."
 
 # ---------------------------------------------------------------------------
-# 9. Start the LACS daemon
+# Phase 2: Start the LACS daemon
 # ---------------------------------------------------------------------------
+
 step "Start LACS daemon"
 systemctl enable --now lacs-daemon || fail "Start lacs-daemon"
 sleep 1
 systemctl is-active lacs-daemon || fail "lacs-daemon not running"
-echo "lacs-daemon is running."
 
 # ---------------------------------------------------------------------------
-# 10. Install lacs-test-cli to PATH
+# Phase 2: Install lacs-test-cli to PATH
 # ---------------------------------------------------------------------------
+
 step "Install lacs-test-cli"
-install -m 755 /vagrant/target/release/lacs-test-cli /usr/local/bin/lacs-test-cli
-echo "lacs-test-cli installed to /usr/local/bin."
+install -m 755 "$REPO_DIR/target/release/lacs-test-cli" /usr/local/bin/lacs-test-cli
 
 # ---------------------------------------------------------------------------
-# 11. Write ready marker
+# Phase 2: Write ready marker
 # ---------------------------------------------------------------------------
+
 step "Write ready marker"
-mkdir -p /var/lib/lacs-e2e
 date --iso-8601=seconds > "$MARKER"
 echo ""
 echo "================================================================"
 echo "  PROVISIONING COMPLETE"
 echo "  Ready marker: $MARKER"
 echo "  Ollama model: $LACS_TEST_MODEL"
-echo "  Run stories:  cd /vagrant && sudo tests/e2e/run-stories.sh"
+echo "  Run stories:  cd $REPO_DIR && sudo -E tests/e2e/run-stories.sh"
 echo "================================================================"
