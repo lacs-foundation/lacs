@@ -33,6 +33,9 @@
 #                      Note: COSMIC Atomic is not yet in quickget.
 #   LACS_VM_DIR      — where to store the ISO + qcow2 (default: tests/e2e/vm)
 #   LACS_VM_USER     — VM user created by the installer (default: lacsdev)
+#   LACS_VM_MEM      — VM RAM (default: 6G; appended to .conf on download)
+#   LACS_VM_CPUS     — VM CPU count (default: 4; appended to .conf on download)
+#   LACS_VM_DISK     — VM disk size (default: 40G; appended to .conf on download)
 
 set -euo pipefail
 
@@ -56,11 +59,16 @@ case "$VARIANT" in
         ;;
 esac
 
-# quickget writes the config at <cwd>/fedora-<release>-<variant>.conf
-# and the VM disk + state under <cwd>/fedora-<release>-<variant>/.
-CONF_NAME="fedora-${RELEASE}-${VARIANT}.conf"
+# quickget builds VM_PATH as `${OS}-${RELEASE}-${EDITION}` with the
+# edition capitalization preserved (verified against quickget source line 4024).
+# So config and VM dir end up at:
+#   <cwd>/fedora-<release>-<Edition>.conf
+#   <cwd>/fedora-<release>-<Edition>/
+# where <Edition> is the canonical Capitalized name (Silverblue, Kinoite, ...).
+VM_NAME="fedora-${RELEASE}-${QUICKGET_EDITION}"
+CONF_NAME="${VM_NAME}.conf"
 CONF_PATH="${VM_DIR}/${CONF_NAME}"
-VM_SUBDIR="${VM_DIR}/fedora-${RELEASE}-${VARIANT}"
+VM_SUBDIR="${VM_DIR}/${VM_NAME}"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -85,7 +93,7 @@ require_tools() {
 # quickemu from the 22220-22229 range). The ports file is at
 # <vm-subdir>/<vm-name>.ports with one entry per line like "ssh,22220".
 vm_ssh_port() {
-    local ports_file="${VM_SUBDIR}/fedora-${RELEASE}-${VARIANT}.ports"
+    local ports_file="${VM_SUBDIR}/${VM_NAME}.ports"
     if [ -f "$ports_file" ]; then
         local port
         port="$(awk -F, '/^ssh,/ {print $2; exit}' "$ports_file" | tr -d '[:space:]')"
@@ -132,6 +140,17 @@ cmd_download() {
     log "Downloading Fedora $RELEASE $QUICKGET_EDITION ISO (may be 2-3 GB)..."
     # quickget writes relative to CWD — run it inside VM_DIR.
     (cd "$VM_DIR" && quickget fedora "$RELEASE" "$QUICKGET_EDITION")
+    # quickget produces a minimal config; append our resource overrides so
+    # the VM has enough RAM/CPU/disk to build LACS and run a small Ollama model.
+    if ! grep -q '^# LACS E2E overrides' "$CONF_PATH"; then
+        cat >> "$CONF_PATH" <<EOF
+
+# LACS E2E overrides — appended by silverblue-vm.sh download
+disk_size="${LACS_VM_DISK:-40G}"
+ram="${LACS_VM_MEM:-6G}"
+cpu_cores="${LACS_VM_CPUS:-4}"
+EOF
+    fi
     log "Done. Config: $CONF_PATH"
     log "Next: $0 install"
 }
