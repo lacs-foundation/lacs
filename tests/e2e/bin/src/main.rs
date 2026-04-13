@@ -84,7 +84,7 @@ impl StateClient for TestDaemonClient {
                     string_array(&s["containers"]),
                     string_array(&s["users"]),
                 )
-                .map_err(|e| PlanningError::StateUnavailable(e))
+                .map_err(PlanningError::StateUnavailable)
             }
             Some("error_response") => Err(PlanningError::StateUnavailable(format!(
                 "daemon error: {}",
