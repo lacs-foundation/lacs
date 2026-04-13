@@ -125,7 +125,20 @@ ls -lh target/release/lacs-daemon target/release/lacs-test-cli
 # ---------------------------------------------------------------------------
 
 step "Install daemon"
-make install || fail "make install"
+# On rpm-ostree systems (Silverblue, Kinoite, Sericea, Onyx) /usr is
+# read-only, so the default Makefile paths fail. Detect ostree and redirect
+# the systemd / polkit / sysusers / tmpfiles fragments into /etc instead.
+if command -v rpm-ostree &>/dev/null && rpm-ostree status --booted &>/dev/null; then
+    echo "Detected rpm-ostree host — installing with /etc overrides."
+    make install \
+        SYSUSERS=/etc/sysusers.d \
+        TMPFILES=/etc/tmpfiles.d \
+        SYSTEMD=/etc/systemd/system \
+        POLKIT=/etc/polkit-1/rules.d \
+        || fail "make install (rpm-ostree paths)"
+else
+    make install || fail "make install"
+fi
 
 # ---------------------------------------------------------------------------
 # Phase 2: Create test user 'lacsdev' (if not already present from installer)
