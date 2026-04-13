@@ -111,10 +111,7 @@ impl DaemonIpcClient {
                     .get("host_name")
                     .and_then(|v| v.as_str())
                     .ok_or("state.host_name missing or not a string")?;
-                let deployment = s
-                    .get("deployment")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
+                let deployment = s.get("deployment").and_then(|v| v.as_str()).unwrap_or("");
                 CuratedState::new(
                     host_name,
                     deployment,
@@ -147,8 +144,8 @@ impl DaemonIpcClient {
         action_name: &str,
         params: &serde_json::Value,
     ) -> Result<String, String> {
-        let mut stream = UnixStream::connect(&self.socket_path)
-            .map_err(|e| format!("daemon connect: {e}"))?;
+        let mut stream =
+            UnixStream::connect(&self.socket_path).map_err(|e| format!("daemon connect: {e}"))?;
         stream.set_read_timeout(Some(SOCKET_TIMEOUT)).ok();
         stream.set_write_timeout(Some(SOCKET_TIMEOUT)).ok();
 
@@ -160,25 +157,17 @@ impl DaemonIpcClient {
         }))
         .map_err(|e| format!("serialize: {e}"))?;
 
-        write_framed(&mut stream, &request)
-            .map_err(|e| format!("send: {e}"))?;
-        let msg = read_framed(&mut stream)
-            .map_err(|e| format!("read: {e}"))?;
-        let resp: Value = serde_json::from_slice(&msg)
-            .map_err(|e| format!("parse: {e}"))?;
+        write_framed(&mut stream, &request).map_err(|e| format!("send: {e}"))?;
+        let msg = read_framed(&mut stream).map_err(|e| format!("read: {e}"))?;
+        let resp: Value = serde_json::from_slice(&msg).map_err(|e| format!("parse: {e}"))?;
 
         match resp["type"].as_str() {
-            Some("query_action_response") => {
-                Ok(resp["output"].as_str().unwrap_or("").to_string())
-            }
+            Some("query_action_response") => Ok(resp["output"].as_str().unwrap_or("").to_string()),
             Some("error_response") => Err(format!(
                 "daemon error: {}",
                 resp["message"].as_str().unwrap_or("unknown")
             )),
-            other => Err(format!(
-                "unexpected: {}",
-                other.unwrap_or("<missing>")
-            )),
+            other => Err(format!("unexpected: {}", other.unwrap_or("<missing>"))),
         }
     }
 }

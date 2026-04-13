@@ -160,10 +160,7 @@ fn parse_deployment_summary(json_output: &str) -> String {
         .get("origin")
         .and_then(|v| v.as_str())
         .unwrap_or("unknown");
-    let is_booted = dep
-        .get("booted")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
+    let is_booted = dep.get("booted").and_then(|v| v.as_bool()).unwrap_or(false);
     let version = dep.get("version").and_then(|v| v.as_str());
 
     let mut summary = origin.to_string();

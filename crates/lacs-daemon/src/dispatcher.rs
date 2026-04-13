@@ -473,9 +473,7 @@ async fn handle_query_action(
             framed,
             request_id,
             "authorization_failure",
-            format!(
-                "query_action requires at least Observer role; caller has {caller_role:?}"
-            ),
+            format!("query_action requires at least Observer role; caller has {caller_role:?}"),
         )
         .await;
     }
@@ -499,9 +497,7 @@ async fn handle_query_action(
             framed,
             request_id,
             "authorization_failure",
-            format!(
-                "{action_name} is not a read-only action; use preview+execute instead"
-            ),
+            format!("{action_name} is not a read-only action; use preview+execute instead"),
         )
         .await;
     }

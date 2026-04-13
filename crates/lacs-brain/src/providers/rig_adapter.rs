@@ -9,9 +9,7 @@
 //! Groq, DeepSeek, Mistral, xAI, etc.) for free without hand-rolling HTTP clients.
 
 use async_trait::async_trait;
-use rig::completion::{
-    CompletionModel, CompletionRequest, ToolDefinition as RigToolDefinition,
-};
+use rig::completion::{CompletionModel, CompletionRequest, ToolDefinition as RigToolDefinition};
 use rig::message::{
     AssistantContent, Message as RigMessage, Text, ToolCall, ToolFunction, ToolResult,
     ToolResultContent, UserContent,
@@ -19,8 +17,7 @@ use rig::message::{
 use rig::OneOrMany;
 
 use crate::provider::{
-    Completion, ContentBlock, LlmProvider, Message, ProviderError, StopReason,
-    ToolDefinition,
+    Completion, ContentBlock, LlmProvider, Message, ProviderError, StopReason, ToolDefinition,
 };
 
 // ---------------------------------------------------------------------------
@@ -173,9 +170,8 @@ fn to_rig_messages(system: &str, messages: &[Message]) -> Vec<RigMessage> {
                 for block in &msg.content {
                     match block {
                         ContentBlock::Text { text } => {
-                            assistant_content.push(AssistantContent::Text(Text {
-                                text: text.clone(),
-                            }));
+                            assistant_content
+                                .push(AssistantContent::Text(Text { text: text.clone() }));
                         }
                         ContentBlock::ToolUse { id, name, input } => {
                             assistant_content.push(AssistantContent::ToolCall(ToolCall::new(
@@ -192,10 +188,7 @@ fn to_rig_messages(system: &str, messages: &[Message]) -> Vec<RigMessage> {
                 if !assistant_content.is_empty() {
                     match OneOrMany::many(assistant_content) {
                         Ok(content) => {
-                            result.push(RigMessage::Assistant {
-                                id: None,
-                                content,
-                            });
+                            result.push(RigMessage::Assistant { id: None, content });
                         }
                         Err(_) => {
                             eprintln!(
@@ -466,7 +459,10 @@ mod tests {
             }),
             AssistantContent::ToolCall(ToolCall::new(
                 "tu_1".into(),
-                ToolFunction::new("propose_plan".into(), serde_json::json!({"summary": "test"})),
+                ToolFunction::new(
+                    "propose_plan".into(),
+                    serde_json::json!({"summary": "test"}),
+                ),
             )),
         ];
         let choice = OneOrMany::many(items).unwrap();

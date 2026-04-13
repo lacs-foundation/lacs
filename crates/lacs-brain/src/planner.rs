@@ -519,14 +519,10 @@ impl LlmPlanner {
                             other_name => {
                                 if let Some((action_name, params)) =
                                     crate::planning_tools::query_tools::query_tool_to_action(
-                                        other_name,
-                                        input,
+                                        other_name, input,
                                     )
                                 {
-                                    match self
-                                        .state_client
-                                        .query_action(action_name, &params)
-                                    {
+                                    match self.state_client.query_action(action_name, &params) {
                                         Ok(output) => {
                                             tool_results.push(ToolResultBlock {
                                                 tool_use_id: id.clone(),
