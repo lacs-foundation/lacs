@@ -156,6 +156,12 @@ sudo chmod +r /boot/vmlinuz-*
 > `libguestfs`. The `enable-ssh` subcommand is still there as a fallback
 > if your Anaconda install did create a usable user.
 
+> What `bootstrap` does, in one shot: create user `lacsdev`, set the
+> password (`lacsdev`), set root password (`lacs`), install your VM
+> SSH key, NOPASSWD-sudoers `lacsdev`, enable `sshd`, set SELinux to
+> permissive, and pre-mark `gnome-initial-setup` as done. Idempotent —
+> safe to re-run after `install`.
+
 **Run the tests:**
 
 ```sh
