@@ -1,19 +1,21 @@
 # Testing LACS
 
-This guide explains how to run LACS tests at every level — from the
-fast unit tests you run locally on every change to the VM-based end-to-end
+This guide explains how to run LACS tests at every level — from the fast
+unit tests you run locally on every change to the VM-based end-to-end
 validation before a release.
 
 ## Test pyramid
 
-| Level | What it tests | Speed | Run on |
+| Level | What it tests | Speed | When |
 |---|---|---|---|
 | Unit tests (Rust) | Individual functions, parsers, traits | <5s | Every commit, every CI run |
 | Unit tests (TypeScript) | React components, reducers, IPC shims | <5s | Every commit, every CI run |
 | Integration (Rust) | Daemon IPC, safety fence, policy | <10s | Every commit, every CI run |
-| E2E CI smoke | Daemon + Ollama + read-only stories in a container | 5-10 min | Opt-in (PR label `e2e` or manual trigger) |
-| E2E Vagrant | Full VM with systemd, real Ollama model | 10-30 min | Local dev / self-hosted / pre-release |
-| Manual QA | Real Silverblue/Kinoite hardware, destructive actions, GUI | 30-60 min | Before releases |
+| CI smoke (container) | Daemon + Ollama + read-only stories in a Linux runner | 5-10 min | Opt-in (PR label `e2e` or manual trigger) |
+| E2E Silverblue VM | **Real Silverblue** in QEMU/KVM, full stack, all 10 stories | 15-30 min first boot; 2-3 min subsequent | Local / pre-release |
+| Manual QA | Real Silverblue/Kinoite hardware, destructive actions, GUI | 30-60 min | Before releases + demo video |
+
+No single layer is enough on its own. Use the ones that match your change.
 
 ## Running unit and integration tests (required)
 
@@ -32,117 +34,148 @@ pnpm test
 pnpm exec tsc --noEmit
 ```
 
-## Running the E2E CI smoke test (opt-in)
+## Running the CI smoke test (opt-in)
 
 The smoke test boots Ollama and the daemon directly in a GitHub Actions
-runner (no VM), pulls a small tool-capable model (`gemma3:1b`), and runs
-the 7 read-only user stories.
+runner (no VM, no real atomic desktop), pulls a small tool-capable model
+(`gemma3:1b`), and runs the 7 read-only user stories.
 
-**Trigger it one of two ways:**
+**Triggers:**
 
 1. Label a PR with `e2e` — the workflow runs automatically
-2. Manual dispatch via the GitHub Actions UI (Actions → e2e → Run workflow)
+2. Manual dispatch via Actions → **e2e** → Run workflow
 
-Results appear as the `container-smoke` job in the `e2e` workflow. Story
-logs are uploaded as a build artifact so you can inspect individual
-plan outputs.
+Results appear as the `container-smoke` job. Story logs are uploaded as
+build artifacts.
 
-The smoke test cannot cover:
+**What the smoke test covers:**
 
-- rpm-ostree actions (no ostree deployment in the runner)
-- GUI rendering (no display server)
-- Reboot / kernel-argument flows
+- Daemon startup, IPC framing, policy enforcement
+- Brain ↔ Ollama integration, tool-use loop, safety fence
+- All 7 read-only query tools and read-only action stories (1–7)
 
-## Running the full VM test suite (local)
+**What it does NOT cover** (that's the VM path below):
 
-For a higher-fidelity test you can boot a Fedora VM on your own hardware
-via Vagrant. This works on Linux, macOS, and Windows.
+- rpm-ostree actions, real systemd host management
+- Reboot / kernel-argument flows, rollback execution
+- Tauri GUI rendering
 
-### Prerequisites
+## Running the full E2E suite in a Silverblue VM
 
-**Linux (recommended):**
+This is the **high-fidelity** path. The VM is a real Fedora Silverblue
+(or Kinoite / Sway Atomic / Budgie Atomic / COSMIC Atomic) install with
+rpm-ostree, systemd, flatpak, podman, and toolbox. All 10 user stories
+— including destructive ones — execute authentically.
 
-```sh
-# Fedora/RHEL/atomic
-sudo dnf install vagrant vagrant-libvirt libvirt-daemon-system qemu-kvm
+### Linux and macOS hosts (recommended)
 
-# Ubuntu/Debian
-sudo apt install vagrant vagrant-libvirt libvirt-daemon-system qemu-kvm
-```
-
-**Linux (VirtualBox fallback) or macOS / Windows:**
-
-1. Install [VirtualBox 7+](https://www.virtualbox.org/wiki/Downloads)
-2. Install [Vagrant](https://developer.hashicorp.com/vagrant/downloads)
-
-### Boot the VM and run the stories
-
-```sh
-# From the repo root. Uses libvirt by default; set VAGRANT_PROVIDER to switch.
-vagrant up
-
-# Or explicitly:
-VAGRANT_PROVIDER=virtualbox vagrant up
-
-# Read-only stories (1-7)
-vagrant ssh -c 'cd /vagrant && sudo -E tests/e2e/run-stories.sh'
-
-# All stories including destructive ones (requires a VM snapshot if you
-# want to revert changes). Stories 8-10 WILL modify the VM state.
-vagrant ssh -c 'cd /vagrant && sudo -E LACS_ALLOW_DESTRUCTIVE=1 tests/e2e/run-stories.sh'
-
-# Shutdown (keeps the VM) / destroy (removes the VM)
-vagrant halt
-vagrant destroy -f
-```
-
-### What the VM includes
-
-The provisioner script (`tests/e2e/provision.sh`) installs:
-
-- Rust stable (for building the daemon)
-- Ollama + a small model (`qwen3:0.6b` by default; override with
-  `LACS_E2E_MODEL` env var)
-- firewalld, podman, toolbox, flatpak (for the query tools)
-- A test user `lacsdev` with a pre-seeded SSH public key
-- The LACS daemon running as a systemd service
-
-### Important: not a faithful Silverblue
-
-The Vagrantfile uses `fedora/42-cloud-base` as the base image because
-official Vagrant boxes for Silverblue/Kinoite are sparse and outdated.
-The cloud base image has the same rpm-ostree tooling installed, but it
-is **not** actually deployed via ostree. This means:
-
-| What the VM CAN test | What it CAN'T test |
-|---|---|
-| Read-only query tools | `rpm-ostree install` mutations |
-| IPC and safety fence | `rpm-ostree rebase` / upgrade flows |
-| Policy and role checks | `RebootSystem` (meaningless in a transient VM) |
-| Plan generation via Ollama | Automatic rollback after ostree failure |
-| SSH key management | Tauri GUI rendering |
-| Systemd service queries | Real kernel-argument changes |
-
-For full Silverblue-specific testing, install Silverblue in a VM from
-the official ISO. Tools like [quickemu] make this a 2-command install:
-
-```sh
-quickget fedora 42 silverblue
-quickemu --vm fedora-42-silverblue.conf
-```
+We use [quickemu] to download the official Fedora ISO and boot it in
+QEMU/KVM with SSH forwarding pre-configured. One-time setup, then a
+reproducible VM you can snapshot and restore.
 
 [quickemu]: https://github.com/quickemu-project/quickemu
 
-Once the Silverblue VM is running, follow the same provisioning steps
-manually (`tests/e2e/provision.sh` is portable) or adapt the `Vagrantfile`.
+**Install quickemu:**
+
+```sh
+# Fedora / Fedora Atomic
+sudo dnf install quickemu                  # (or layer via rpm-ostree on atomic)
+
+# Ubuntu / Debian
+sudo apt install quickemu
+
+# macOS (Homebrew)
+brew install quickemu
+```
+
+**One-time VM setup:**
+
+```sh
+# From the repo root
+
+# 1. Download the Silverblue 42 ISO (~2.5 GB, cached under tests/e2e/vm/)
+./tests/e2e/silverblue-vm.sh download
+
+# 2. Run the Fedora installer interactively (GUI window opens).
+#    When prompted, create user 'lacsdev' with password 'lacsdev'.
+#    Enable sshd from the Services screen during install.
+#    Shut the VM down when installation finishes.
+./tests/e2e/silverblue-vm.sh install
+```
+
+**Run the tests:**
+
+```sh
+# Boot the VM headlessly (in the background)
+./tests/e2e/silverblue-vm.sh start
+
+# First-ever provision: rsyncs the repo into the VM, layers build tools
+# via rpm-ostree, reboots the VM, then builds LACS and starts the daemon.
+# Expect ~15 minutes the first time; ~2 minutes on subsequent provisions.
+./tests/e2e/silverblue-vm.sh provision
+
+# Take a snapshot BEFORE running destructive stories
+./tests/e2e/silverblue-vm.sh stop
+./tests/e2e/silverblue-vm.sh snapshot pre-destructive
+./tests/e2e/silverblue-vm.sh start
+
+# Run the read-only stories (1-7)
+./tests/e2e/silverblue-vm.sh run
+
+# Run ALL stories including destructive (8-10)
+LACS_ALLOW_DESTRUCTIVE=1 ./tests/e2e/silverblue-vm.sh run
+
+# Roll back destructive changes via the snapshot
+./tests/e2e/silverblue-vm.sh stop
+./tests/e2e/silverblue-vm.sh restore pre-destructive
+```
+
+**Other useful commands:**
+
+```sh
+./tests/e2e/silverblue-vm.sh ssh            # interactive shell in the VM
+./tests/e2e/silverblue-vm.sh stop           # clean shutdown
+./tests/e2e/silverblue-vm.sh destroy        # delete VM disk (ISO kept)
+./tests/e2e/silverblue-vm.sh help
+```
+
+**Try a different atomic variant:**
+
+```sh
+LACS_VM_VARIANT=kinoite ./tests/e2e/silverblue-vm.sh download
+LACS_VM_VARIANT=kinoite ./tests/e2e/silverblue-vm.sh install
+# ... all management commands respect LACS_VM_VARIANT.
+```
+
+Supported variants: `silverblue`, `kinoite`, `sway-atomic`, `budgie-atomic`,
+`cosmic-atomic` (when the ISO is published by Fedora).
+
+### Windows hosts
+
+quickemu does not support Windows as a host. Contributors on Windows
+should use WSL2 (with KVM nested virtualization) or VirtualBox with a
+manual ISO install:
+
+1. Download the Silverblue ISO from
+   [fedoraproject.org/atomic-desktops/silverblue](https://fedoraproject.org/atomic-desktops/silverblue/)
+2. Create a VirtualBox VM (4 GB RAM, 2 vCPUs, 20 GB disk) with SSH port
+   forwarded from host 22220 → guest 22
+3. Attach the ISO, boot, and run the Fedora installer. Create user
+   `lacsdev`. Enable sshd during install.
+4. SSH into the VM: `ssh -p 22220 lacsdev@127.0.0.1`
+5. Clone the repo into `/home/lacsdev/lacs` and run
+   `sudo bash tests/e2e/provision.sh` inside the VM
+6. Run stories with `sudo -E tests/e2e/run-stories.sh`
+
+The `silverblue-vm.sh` helper does not automate VirtualBox — that's a
+follow-up if Windows contributor interest warrants it.
 
 ## Running individual stories
 
-Each of the 10 stories is a self-contained shell script:
+Inside the VM (or on any provisioned Fedora Atomic Desktop):
 
 ```sh
-# Inside the VM or on a provisioned machine
-cd /vagrant  # or wherever the repo lives
+cd /home/lacsdev/lacs
 
 # Run a specific story by number
 sudo -E tests/e2e/run-stories.sh 3
@@ -155,69 +188,82 @@ Per-story logs are written to `tests/e2e/logs/story-N.log`.
 
 ## Before opening a PR
 
-1. Run `cargo test --workspace` and `pnpm test` — these must pass
-2. Run `cargo clippy --workspace --all-features --locked -- -D warnings`
-3. Run `cargo fmt --all --check`
-4. For substantial changes to the brain/daemon/IPC layer, also run
-   the VM tests locally: `vagrant up && vagrant ssh -c 'cd /vagrant && sudo -E tests/e2e/run-stories.sh'`
-5. If your PR touches action definitions, policy, or the planning loop,
-   add the `e2e` label to trigger the CI smoke test
+1. `cargo test --workspace && pnpm test` — required, fast
+2. `cargo clippy --workspace --all-features --locked -- -D warnings`
+3. `cargo fmt --all --check`
+4. For changes to the brain, daemon, IPC, or action catalogue:
+   - Run the VM tests locally (`silverblue-vm.sh` flow)
+   - Add the `e2e` label to trigger the CI smoke test on your PR
 
 ## Before a release
 
 The maintainer runs these in order:
 
 1. All automated tests green on main
-2. VM tests (both providers) pass locally
+2. VM tests (at least Silverblue + one other atomic variant) pass locally
 3. Manual QA on real Silverblue hardware using
    [docs/testing/user-stories.md](../testing/user-stories.md) as the
    checklist — all 10 stories including destructive ones
-4. Record the demo video (#32) on real hardware
+4. Record the demo video on real hardware (issue #32)
 
 ## Troubleshooting
 
-### `vagrant up` fails with `libvirt: no bridge interface`
+### `quickget fedora 42 silverblue` fails
 
-Install `vagrant-libvirt`'s required packages:
+Check the [quickemu wiki](https://github.com/quickemu-project/quickemu/wiki)
+for current supported editions. Older or newer Silverblue releases may
+also be available; adjust `LACS_VM_RELEASE`.
 
-```sh
-sudo dnf install libvirt-daemon-kvm libvirt-daemon-driver-qemu
-sudo systemctl enable --now libvirtd
-sudo usermod -aG libvirt $USER
-# Log out and back in
-```
+### VM boots but `silverblue-vm.sh ssh` times out
 
-### Ollama model pulls too slowly in the VM
-
-The provisioner defaults to `qwen3:0.6b` (~500 MB). For faster setup:
+The Fedora installer doesn't enable sshd by default. Either enable
+`sshd` during the interactive install, or boot the VM's GUI console
+once to run:
 
 ```sh
-LACS_E2E_MODEL=qwen3:0.6b vagrant provision   # tiny, less reliable planning
-LACS_E2E_MODEL=gemma3:1b  vagrant provision   # ~700 MB, better planning
-LACS_E2E_MODEL=qwen3:8b   vagrant provision   # production default; slow on CPU
+sudo systemctl enable --now sshd
 ```
+
+### `provision` step fails during rpm-ostree install
+
+rpm-ostree install requires a reboot. The provision script auto-reboots
+and asks you to re-run it. If it got stuck, just run `provision` again —
+it's idempotent.
+
+### Ollama model pulls too slowly
+
+The provisioner defaults to `qwen3:0.6b` (~500 MB). Override with:
+
+```sh
+LACS_TEST_MODEL=gemma3:1b ./tests/e2e/silverblue-vm.sh provision
+LACS_TEST_MODEL=qwen3:8b  ./tests/e2e/silverblue-vm.sh provision   # slow on CPU
+```
+
+Larger models give more reliable planning but take longer to load and
+run on CPU. For daily testing, `qwen3:0.6b` is fast enough.
 
 ### CPU-only inference is too slow
 
-If you have an NVIDIA GPU and are using libvirt, add GPU passthrough to
-the Vagrantfile. For most testing, CPU is fast enough — stories take
-10-30 seconds each instead of 1-3 seconds with GPU.
+Stories take 10-30 seconds each instead of 1-3 seconds with GPU.
+GPU passthrough to QEMU/KVM is possible but requires VFIO setup, which
+is out of scope for this guide.
 
 ### Stories fail with "daemon socket not found"
 
-Check the daemon status inside the VM:
+Check the daemon inside the VM:
 
 ```sh
-vagrant ssh
-sudo systemctl status lacs-daemon
-sudo journalctl -u lacs-daemon -n 50
+./tests/e2e/silverblue-vm.sh ssh -- sudo systemctl status lacs-daemon
+./tests/e2e/silverblue-vm.sh ssh -- sudo journalctl -u lacs-daemon -n 100
 ```
 
-If the daemon didn't start, the provisioner log at
-`/var/log/lacs-provision.log` usually has the cause.
+The provision log at `/var/log/lacs-e2e-provision.log` usually has the
+root cause.
 
 ### Getting help
 
 - Check [existing issues](https://github.com/lacs-foundation/lacs/issues)
-- Open a new issue with the failing story log (`tests/e2e/logs/story-N.log`)
-  and the daemon journal output
+- Open a new issue with:
+  - The failing story log (`tests/e2e/logs/story-N.log`)
+  - The daemon journal: `sudo journalctl -u lacs-daemon -n 200`
+  - Your Fedora variant and release (from `rpm-ostree status`)

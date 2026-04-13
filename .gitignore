@@ -7,8 +7,10 @@ dist/
 *.swo
 .DS_Store
 
-# Vagrant
-.vagrant/
+# quickemu VM artifacts (Silverblue ISO + .qcow2 + logs)
+tests/e2e/vm/
+/*.iso
+/*.qcow2
 
 # E2E test logs (generated at runtime)
 tests/e2e/logs/*.log

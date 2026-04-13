@@ -3,19 +3,18 @@
 #
 # Two jobs:
 #
-# 1. `scripts-lint`: always runs. Validates that the Vagrantfile parses,
-#    the shell scripts are syntactically correct, and the test CLI
-#    compiles. Fast (~1 min), safe on every PR.
+# 1. `scripts-lint`: always runs. ShellCheck on tests/e2e/, and compile
+#    lacs-test-cli. Fast (~1 min), safe on every PR.
 #
 # 2. `container-smoke`: runs on workflow_dispatch or when a PR is labeled
-#    `e2e`. Boots a Fedora container, installs Ollama, pulls a small
-#    tool-capable model, builds the daemon, and runs read-only stories
-#    1-7. Slow (~5-10 min, most of it Ollama model load + inference).
+#    `e2e`. Boots Ollama and the daemon directly in the runner, pulls a
+#    small tool-capable model (gemma3:1b), and runs the 7 read-only user
+#    stories. Slow (~5-10 min, most of it Ollama model load + inference).
 #
-# The full Vagrant flow (with a real rpm-ostree atomic desktop) is
-# documented for local / self-hosted runs — see docs/contributing/testing.md.
+# The full high-fidelity flow — real Fedora Silverblue in QEMU/KVM via
+# quickemu — is documented for local runs (see docs/contributing/testing.md).
 # GitHub-hosted Linux runners do not support nested virtualization, so
-# Vagrant is not practical in this workflow.
+# booting a Silverblue VM is not practical in this workflow.
 
 name: e2e
 
@@ -34,17 +33,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: ShellCheck story scripts and harness
+      - name: ShellCheck story scripts, harness, and silverblue-vm helper
         uses: ludeeus/action-shellcheck@master
         with:
           scandir: tests/e2e
           severity: warning
-
-      - name: Validate Vagrantfile syntax
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y ruby
-          ruby -c Vagrantfile
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
