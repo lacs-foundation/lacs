@@ -169,24 +169,29 @@ sudo chmod +r /boot/vmlinuz-*
 ./tests/e2e/silverblue-vm.sh start
 
 # First-ever provision: rsyncs the repo into the VM, layers build tools
-# via rpm-ostree, reboots the VM, then builds LACS and starts the daemon.
-# Expect ~15 minutes the first time; ~2 minutes on subsequent provisions.
+# via rpm-ostree, reboots the VM, then runs again to build LACS and
+# pull the Ollama model. Re-run after the auto-reboot (the script tells
+# you when). Expect 30-60 minutes total on first run (mostly waiting
+# for Ollama tarball + Rust deps download). ~2 minutes on subsequent
+# provisions.
 ./tests/e2e/silverblue-vm.sh provision
 
-# Take a snapshot BEFORE running destructive stories
+# RECOMMENDED: take a "baseline" snapshot now, before any test run.
+# Future test runs can `restore baseline` instead of re-provisioning.
 ./tests/e2e/silverblue-vm.sh stop
-./tests/e2e/silverblue-vm.sh snapshot pre-destructive
+./tests/e2e/silverblue-vm.sh snapshot baseline
 ./tests/e2e/silverblue-vm.sh start
 
 # Run the read-only stories (1-7)
 ./tests/e2e/silverblue-vm.sh run
 
-# Run ALL stories including destructive (8-10)
+# Run ALL stories including destructive (8-10) — the destructive ones
+# layer packages, create toolboxes, etc. Restore the baseline afterwards.
 LACS_ALLOW_DESTRUCTIVE=1 ./tests/e2e/silverblue-vm.sh run
 
-# Roll back destructive changes via the snapshot
+# Roll back to the clean baseline so the next run is fast
 ./tests/e2e/silverblue-vm.sh stop
-./tests/e2e/silverblue-vm.sh restore pre-destructive
+./tests/e2e/silverblue-vm.sh restore baseline
 ```
 
 **Other useful commands:**
