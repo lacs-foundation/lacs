@@ -42,7 +42,10 @@
 #                      Note: COSMIC Atomic is not yet in quickget.
 #   LACS_VM_DIR      — where to store the ISO + qcow2 (default: tests/e2e/vm)
 #   LACS_VM_USER     — VM user created by the installer (default: lacsdev)
-#   LACS_VM_MEM      — VM RAM (default: 6G; appended to .conf on download)
+#   LACS_VM_MEM      — VM RAM (default: 14G; appended to .conf on download).
+#                      Needs to fit the qwen3:14b test model (~9 GB) + OS
+#                      overhead (~2 GB) + planning headroom. Reduce to 8G
+#                      if you use qwen3:8b, or 16G for qwen3:30b-a3b.
 #   LACS_VM_CPUS     — VM CPU count (default: 4; appended to .conf on download)
 #   LACS_VM_DISK     — VM disk size (default: 40G; appended to .conf on download)
 
@@ -165,7 +168,7 @@ cmd_download() {
 
 # LACS E2E overrides — appended by silverblue-vm.sh download
 disk_size="${LACS_VM_DISK:-40G}"
-ram="${LACS_VM_MEM:-6G}"
+ram="${LACS_VM_MEM:-14G}"
 cpu_cores="${LACS_VM_CPUS:-4}"
 # gl="off" — disable virtio-vga-gl/virgl. Fedora 42's gnome-initial-setup
 # crashes the QEMU window with a flicker-then-freeze on hosts with hybrid

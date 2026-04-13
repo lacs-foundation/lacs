@@ -92,18 +92,52 @@ if ! command -v ollama &>/dev/null; then
     curl -fsSL https://ollama.com/install.sh | sh || fail "Ollama install"
 fi
 
-# Start Ollama. The installer typically creates a systemd unit.
-systemctl enable --now ollama 2>/dev/null || {
-    nohup ollama serve &>/var/log/ollama.log &
-    sleep 3
-}
+# The official installer tries to create a systemd unit + ollama system
+# user. On rpm-ostree systems (Silverblue, Kinoite, Sericea, Onyx) that
+# can fail because /usr is read-only, or because the install was
+# interrupted. Write a minimal unit ourselves if it's missing. Idempotent.
+if [ ! -f /etc/systemd/system/ollama.service ] \
+    && [ ! -f /usr/lib/systemd/system/ollama.service ]; then
+    echo "Ollama systemd unit not found — writing one to /etc/systemd/system/"
+    install -d -m 755 -o "$VM_USER" -g "$VM_USER" /var/lib/ollama 2>/dev/null \
+        || install -d -m 755 -o lacsdev -g lacsdev /var/lib/ollama
+    cat > /etc/systemd/system/ollama.service <<UNIT
+[Unit]
+Description=Ollama Service
+After=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/ollama serve
+Environment=HOME=/var/lib/ollama
+Environment=OLLAMA_HOST=127.0.0.1:11434
+Restart=always
+User=${VM_USER:-lacsdev}
+Group=${VM_USER:-lacsdev}
+
+[Install]
+WantedBy=default.target
+UNIT
+    systemctl daemon-reload
+fi
+
+systemctl enable --now ollama || fail "Start Ollama systemd unit"
+# Wait up to 15s for the server to accept connections.
+for i in $(seq 1 15); do
+    if curl -sf http://127.0.0.1:11434/api/tags > /dev/null; then break; fi
+    sleep 1
+done
+curl -sf http://127.0.0.1:11434/api/tags > /dev/null || fail "Ollama not responding on 11434"
 
 # ---------------------------------------------------------------------------
 # Phase 2: Pull a small LLM
 # ---------------------------------------------------------------------------
 
 step "Pull test LLM model"
-LACS_TEST_MODEL="${LACS_TEST_MODEL:-qwen3:0.6b}"
+# qwen3:14b is the sweet spot for CPU-only tool calling inside the VM:
+# ~9 GB disk, reliable tool calling, ~30-60 s/story on 4 vCPUs.
+# Override with LACS_TEST_MODEL (e.g. qwen3:8b for faster/dumber,
+# qwen3:30b-a3b for premium MoE).
+LACS_TEST_MODEL="${LACS_TEST_MODEL:-qwen3:14b}"
 ollama pull "$LACS_TEST_MODEL" || fail "Pull $LACS_TEST_MODEL"
 
 # ---------------------------------------------------------------------------
