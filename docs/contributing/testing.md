@@ -62,10 +62,10 @@ build artifacts.
 
 ## Running the full E2E suite in a Silverblue VM
 
-This is the **high-fidelity** path. The VM is a real Fedora Silverblue
-(or Kinoite / Sway Atomic / Budgie Atomic / COSMIC Atomic) install with
-rpm-ostree, systemd, flatpak, podman, and toolbox. All 10 user stories
-— including destructive ones — execute authentically.
+This is the **high-fidelity** path. The VM is a real Fedora Atomic Desktop
+(Silverblue / Kinoite / Sericea / Onyx) install with rpm-ostree, systemd,
+flatpak, podman, and toolbox. All 10 user stories — including destructive
+ones — execute authentically.
 
 ### Linux and macOS hosts (recommended)
 
@@ -77,15 +77,35 @@ reproducible VM you can snapshot and restore.
 
 **Install quickemu:**
 
-```sh
-# Fedora / Fedora Atomic
-sudo dnf install quickemu                  # (or layer via rpm-ostree on atomic)
+You also need `qemu-system-x86_64`, `qemu-utils` (for `qemu-img`), `rsync`,
+`netcat`, and `ssh` — these are all standard packages on every supported
+distro.
 
-# Ubuntu / Debian
-sudo apt install quickemu
+```sh
+# Fedora 41+ (default repos have a current quickemu)
+sudo dnf install quickemu qemu qemu-img
+
+# Fedora Atomic Desktops (Silverblue / Kinoite / Sericea / Onyx host)
+sudo rpm-ostree install quickemu qemu qemu-img
+# Reboot to activate, then proceed.
+
+# Ubuntu 24.04 / Debian — the version in default Ubuntu repos may be too
+# old (missing the Nov 2024 .ociarchive fix for Fedora Atomic). Use the PPA:
+sudo add-apt-repository -y ppa:flexiondotorg/quickemu
+sudo apt-get update
+sudo apt-get install -y quickemu qemu-system-x86 qemu-utils \
+    qemu-system-modules-spice rsync netcat-openbsd
 
 # macOS (Homebrew)
-brew install quickemu
+brew install --cask quickemu
+```
+
+After installing, verify your user can access KVM (Linux only):
+
+```sh
+ls -l /dev/kvm           # should exist
+groups | grep -q kvm \
+    || sudo usermod -aG kvm "$USER"   # then log out and back in
 ```
 
 **One-time VM setup:**
@@ -147,8 +167,17 @@ LACS_VM_VARIANT=kinoite ./tests/e2e/silverblue-vm.sh install
 # ... all management commands respect LACS_VM_VARIANT.
 ```
 
-Supported variants: `silverblue`, `kinoite`, `sway-atomic`, `budgie-atomic`,
-`cosmic-atomic` (when the ISO is published by Fedora).
+Supported variants (these are the names quickget uses):
+
+| `LACS_VM_VARIANT` | Atomic Desktop | Desktop |
+|---|---|---|
+| `silverblue` (default) | Fedora Silverblue | GNOME |
+| `kinoite` | Fedora Kinoite | KDE Plasma |
+| `sericea` | Fedora Sway Atomic | Sway |
+| `onyx` | Fedora Budgie Atomic | Budgie |
+
+COSMIC Atomic is not yet packaged by quickget; install it manually from
+the ISO if needed.
 
 ### Windows hosts
 

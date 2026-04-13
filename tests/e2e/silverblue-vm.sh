@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# silverblue-vm.sh — boot a real Fedora Silverblue VM for LACS E2E testing.
+# silverblue-vm.sh — boot a real Fedora Atomic Desktop VM for LACS E2E testing.
 #
-# Uses quickemu to download the official Silverblue ISO and run it as a
+# Uses quickemu to download the official Fedora ISO and run it as a
 # QEMU/KVM VM with SSH port forwarding. Works on Linux and macOS hosts.
 # Windows contributors: see docs/contributing/testing.md for the manual
 # VirtualBox path.
@@ -12,35 +12,55 @@
 # (including destructive ones) execute authentically.
 #
 # Subcommands:
-#   download   — fetch the Silverblue ISO (idempotent)
+#   download   — fetch the Fedora Atomic ISO (idempotent)
 #   install    — start the VM to run the Fedora installer once
 #   start      — boot the installed VM headlessly with SSH forwarding
-#   ssh        — open an SSH shell into the VM
-#   provision  — copy the repo, run tests/e2e/provision.sh
+#   ssh        — open an SSH shell into the VM (or run a command)
+#   provision  — rsync the repo, run tests/e2e/provision.sh inside the VM
 #   run        — run the story harness (reads LACS_ALLOW_DESTRUCTIVE)
 #   snapshot   — create a named qcow2 snapshot before destructive tests
 #   restore    — restore the VM to the named snapshot
 #   stop       — shut down the VM
 #   destroy    — remove the VM disk image (ISO is kept)
+#   help       — print this help
 #
 # Environment:
-#   LACS_VM_RELEASE    — Fedora release number (default: 42)
-#   LACS_VM_VARIANT    — atomic variant: silverblue | kinoite | sway-atomic |
-#                        budgie-atomic | cosmic-atomic (default: silverblue)
-#   LACS_VM_DIR        — where to store the ISO + qcow2 (default: tests/e2e/vm)
-#   LACS_VM_MEM        — VM RAM, e.g. "4G" (default: 4G)
-#   LACS_VM_CPUS       — VM CPU count (default: 2)
+#   LACS_VM_RELEASE  — Fedora release number (default: 42)
+#   LACS_VM_VARIANT  — atomic variant. Accepted values (case-insensitive):
+#                      silverblue (GNOME), kinoite (KDE),
+#                      sericea (Sway), onyx (Budgie).
+#                      Default: silverblue.
+#                      Note: COSMIC Atomic is not yet in quickget.
+#   LACS_VM_DIR      — where to store the ISO + qcow2 (default: tests/e2e/vm)
+#   LACS_VM_USER     — VM user created by the installer (default: lacsdev)
 
 set -euo pipefail
 
 RELEASE="${LACS_VM_RELEASE:-42}"
-VARIANT="${LACS_VM_VARIANT:-silverblue}"
+# Normalize to lowercase for path consistency; quickget accepts any case.
+VARIANT="$(printf '%s' "${LACS_VM_VARIANT:-silverblue}" | tr '[:upper:]' '[:lower:]')"
 VM_DIR="${LACS_VM_DIR:-tests/e2e/vm}"
-VM_MEM="${LACS_VM_MEM:-4G}"
-VM_CPUS="${LACS_VM_CPUS:-2}"
+VM_USER="${LACS_VM_USER:-lacsdev}"
 
+# quickget's canonical capitalized edition name for the `quickget` CLI.
+# quickget writes the config file with the edition lowercased.
+case "$VARIANT" in
+    silverblue) QUICKGET_EDITION="Silverblue" ;;
+    kinoite)    QUICKGET_EDITION="Kinoite" ;;
+    sericea)    QUICKGET_EDITION="Sericea" ;;   # Sway Atomic
+    onyx)       QUICKGET_EDITION="Onyx" ;;      # Budgie Atomic
+    *)
+        echo "[silverblue-vm] ERROR: unknown LACS_VM_VARIANT='$VARIANT'." >&2
+        echo "  Accepted: silverblue | kinoite | sericea | onyx" >&2
+        exit 1
+        ;;
+esac
+
+# quickget writes the config at <cwd>/fedora-<release>-<variant>.conf
+# and the VM disk + state under <cwd>/fedora-<release>-<variant>/.
 CONF_NAME="fedora-${RELEASE}-${VARIANT}.conf"
 CONF_PATH="${VM_DIR}/${CONF_NAME}"
+VM_SUBDIR="${VM_DIR}/fedora-${RELEASE}-${VARIANT}"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -61,28 +81,41 @@ require_tools() {
     fi
 }
 
+# Return the host TCP port forwarded to the guest's SSH (auto-assigned by
+# quickemu from the 22220-22229 range). The ports file is at
+# <vm-subdir>/<vm-name>.ports with one entry per line like "ssh,22220".
 vm_ssh_port() {
-    # quickemu writes ssh_port to <vm-dir>/<vm-name>.ports after first boot.
-    local ports_file="${VM_DIR}/fedora-${RELEASE}-${VARIANT}/fedora-${RELEASE}-${VARIANT}.ports"
+    local ports_file="${VM_SUBDIR}/fedora-${RELEASE}-${VARIANT}.ports"
     if [ -f "$ports_file" ]; then
-        grep -E '^ssh,' "$ports_file" | head -n1 | cut -d, -f2
-    else
-        echo "22220"
+        local port
+        port="$(awk -F, '/^ssh,/ {print $2; exit}' "$ports_file" | tr -d '[:space:]')"
+        if [ -n "$port" ]; then
+            echo "$port"
+            return
+        fi
     fi
+    # Fall back to the first port of quickemu's default range.
+    echo "22220"
 }
 
 wait_for_ssh() {
     local port="$1"
-    local max_wait=60
+    local max_wait=120
     local waited=0
     while ! nc -z 127.0.0.1 "$port" 2>/dev/null; do
         if [ "$waited" -ge "$max_wait" ]; then
-            die "SSH port $port did not open within ${max_wait}s. Is the VM up? Is sshd installed?"
+            die "SSH port $port did not open within ${max_wait}s. Is the VM up? Is sshd enabled in the guest?"
         fi
-        sleep 2
-        waited=$((waited + 2))
+        sleep 3
+        waited=$((waited + 3))
     done
     log "SSH reachable on port $port"
+}
+
+# Resolve the VM's qcow2 disk path. quickemu names it "disk.qcow2" inside
+# the VM subdirectory.
+vm_disk_path() {
+    echo "${VM_SUBDIR}/disk.qcow2"
 }
 
 # ---------------------------------------------------------------------------
@@ -92,13 +125,13 @@ wait_for_ssh() {
 cmd_download() {
     require_tools quickget
     mkdir -p "$VM_DIR"
-    cd "$VM_DIR"
-    if [ -f "$CONF_NAME" ]; then
-        log "Config $CONF_NAME already present, skipping download"
+    if [ -f "$CONF_PATH" ]; then
+        log "Config $CONF_PATH already present, skipping download"
         return
     fi
-    log "Downloading Fedora $RELEASE $VARIANT ISO (may be 2-3 GB)..."
-    quickget fedora "$RELEASE" "$VARIANT"
+    log "Downloading Fedora $RELEASE $QUICKGET_EDITION ISO (may be 2-3 GB)..."
+    # quickget writes relative to CWD — run it inside VM_DIR.
+    (cd "$VM_DIR" && quickget fedora "$RELEASE" "$QUICKGET_EDITION")
     log "Done. Config: $CONF_PATH"
     log "Next: $0 install"
 }
@@ -106,22 +139,21 @@ cmd_download() {
 cmd_install() {
     require_tools quickemu
     [ -f "$CONF_PATH" ] || die "Config not found at $CONF_PATH. Run: $0 download"
-    log "Starting VM to run the Fedora installer (GUI window will open)."
-    log "Complete the installation interactively, then shut down the VM."
-    log "Suggested: create user 'lacsdev' with password 'lacsdev' to match test expectations."
+    log "Starting VM with the Fedora installer (GUI window will open)."
+    log "During install, create user '${VM_USER}' and enable the sshd service."
+    log "Shut the VM down when the installer finishes."
     (cd "$VM_DIR" && quickemu --vm "$CONF_NAME")
 }
 
 cmd_start() {
     require_tools quickemu
     [ -f "$CONF_PATH" ] || die "Config not found at $CONF_PATH. Run: $0 download && $0 install"
-    log "Booting VM headlessly (display=none)..."
-    # Use --display none for headless boot after initial install is done.
+    log "Booting VM headlessly (display=none) in the background..."
     (cd "$VM_DIR" && quickemu --vm "$CONF_NAME" --display none) &
     local port
     port="$(vm_ssh_port)"
     wait_for_ssh "$port"
-    log "VM running. SSH via: ssh -p $port lacsdev@127.0.0.1"
+    log "VM running. SSH via: ssh -p $port ${VM_USER}@127.0.0.1"
 }
 
 cmd_ssh() {
@@ -130,8 +162,9 @@ cmd_ssh() {
     exec ssh \
         -o StrictHostKeyChecking=no \
         -o UserKnownHostsFile=/dev/null \
+        -o LogLevel=ERROR \
         -p "$port" \
-        "lacsdev@127.0.0.1" "$@"
+        "${VM_USER}@127.0.0.1" "$@"
 }
 
 cmd_provision() {
@@ -141,27 +174,29 @@ cmd_provision() {
     repo_root="$(git rev-parse --show-toplevel)"
     log "Copying repo to VM via rsync on port $port..."
     rsync -az --exclude=target --exclude=node_modules --exclude=.git \
-        -e "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $port" \
-        "$repo_root/" "lacsdev@127.0.0.1:/home/lacsdev/lacs/"
+        --exclude="$VM_DIR" \
+        -e "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -p $port" \
+        "$repo_root/" "${VM_USER}@127.0.0.1:/home/${VM_USER}/lacs/"
     log "Running provisioner inside the VM..."
-    cmd_ssh "cd /home/lacsdev/lacs && sudo bash tests/e2e/provision.sh"
+    cmd_ssh "cd /home/${VM_USER}/lacs && sudo bash tests/e2e/provision.sh"
 }
 
 cmd_run() {
-    local flags=""
+    local env_prefix=""
     if [ "${LACS_ALLOW_DESTRUCTIVE:-}" = "1" ]; then
-        flags="LACS_ALLOW_DESTRUCTIVE=1"
+        env_prefix="LACS_ALLOW_DESTRUCTIVE=1"
         log "Running ALL stories (1-10). Make sure you have a VM snapshot."
     else
         log "Running read-only stories (1-7). Set LACS_ALLOW_DESTRUCTIVE=1 for 8-10."
     fi
-    cmd_ssh "cd /home/lacsdev/lacs && sudo -E $flags bash tests/e2e/run-stories.sh"
+    cmd_ssh "cd /home/${VM_USER}/lacs && sudo -E $env_prefix bash tests/e2e/run-stories.sh"
 }
 
 cmd_snapshot() {
     require_tools qemu-img
     local name="${1:-pre-destructive}"
-    local disk="${VM_DIR}/fedora-${RELEASE}-${VARIANT}/disk.qcow2"
+    local disk
+    disk="$(vm_disk_path)"
     [ -f "$disk" ] || die "VM disk not found at $disk. Has the VM been installed?"
     log "Creating internal qcow2 snapshot '$name' (VM must be stopped)..."
     qemu-img snapshot -c "$name" "$disk"
@@ -171,7 +206,8 @@ cmd_snapshot() {
 cmd_restore() {
     require_tools qemu-img
     local name="${1:-pre-destructive}"
-    local disk="${VM_DIR}/fedora-${RELEASE}-${VARIANT}/disk.qcow2"
+    local disk
+    disk="$(vm_disk_path)"
     [ -f "$disk" ] || die "VM disk not found at $disk."
     log "Restoring snapshot '$name' (VM must be stopped)..."
     qemu-img snapshot -a "$name" "$disk"
@@ -183,11 +219,11 @@ cmd_stop() {
     port="$(vm_ssh_port)"
     log "Requesting clean shutdown via SSH..."
     cmd_ssh "sudo systemctl poweroff" || true
-    # Wait for the SSH port to close
+    # Wait for the SSH port to close.
     local waited=0
     while nc -z 127.0.0.1 "$port" 2>/dev/null; do
         if [ "$waited" -ge 60 ]; then
-            log "VM did not shut down cleanly within 60s — may need manual kill"
+            log "VM did not shut down cleanly within 60s. You may need to kill the qemu process manually."
             break
         fi
         sleep 2
@@ -197,15 +233,17 @@ cmd_stop() {
 }
 
 cmd_destroy() {
-    local vm_subdir="${VM_DIR}/fedora-${RELEASE}-${VARIANT}"
-    [ -d "$vm_subdir" ] || die "VM directory not found at $vm_subdir"
-    log "Removing VM disk and state (keeping the downloaded ISO)..."
-    rm -rf "$vm_subdir"
+    [ -d "$VM_SUBDIR" ] || die "VM directory not found at $VM_SUBDIR"
+    log "Removing VM disk and state (the downloaded ISO is kept)..."
+    rm -rf "$VM_SUBDIR"
     log "Destroyed. Run '$0 install' to start fresh."
 }
 
 cmd_help() {
-    sed -n '3,36p' "$0" | sed 's/^# \?//'
+    # Print the header comment block (lines 3 through the first blank line
+    # before `set -euo pipefail`). Strip the leading "# " comment marker.
+    sed -n '3,/^set -euo pipefail$/p' "$0" \
+        | sed -e 's/^# \?//' -e '/^set -euo pipefail$/d' -e '/^$/d'
 }
 
 # ---------------------------------------------------------------------------
@@ -216,16 +254,16 @@ cmd="${1:-help}"
 shift || true
 
 case "$cmd" in
-    download)  cmd_download "$@" ;;
-    install)   cmd_install "$@" ;;
-    start)     cmd_start "$@" ;;
-    ssh)       cmd_ssh "$@" ;;
-    provision) cmd_provision "$@" ;;
-    run)       cmd_run "$@" ;;
-    snapshot)  cmd_snapshot "$@" ;;
-    restore)   cmd_restore "$@" ;;
-    stop)      cmd_stop "$@" ;;
-    destroy)   cmd_destroy "$@" ;;
+    download)       cmd_download "$@" ;;
+    install)        cmd_install "$@" ;;
+    start)          cmd_start "$@" ;;
+    ssh)            cmd_ssh "$@" ;;
+    provision)      cmd_provision "$@" ;;
+    run)            cmd_run "$@" ;;
+    snapshot)       cmd_snapshot "$@" ;;
+    restore)        cmd_restore "$@" ;;
+    stop)           cmd_stop "$@" ;;
+    destroy)        cmd_destroy "$@" ;;
     help|--help|-h) cmd_help ;;
-    *) die "unknown command: $cmd. Try: $0 help" ;;
+    *)              die "unknown command: $cmd. Try: $0 help" ;;
 esac
