@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Story 10 (destructive): Add SSH authorized key
+# Intent: "authorize this SSH key for user lacsdev: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeTestKeyForE2ETesting testkey@example"
+# Pass criteria:
+#   - Plan has exactly AddAuthorizedKey step
+#   - params.public_key matches the input verbatim
+#   - Plan marked approvalRequired true, risk medium
+set -euo pipefail
+
+if [[ "${LACS_ALLOW_DESTRUCTIVE:-0}" != "1" ]]; then
+  echo "SKIPPED (set LACS_ALLOW_DESTRUCTIVE=1 to run)"
+  exit 0
+fi
+
+TEST_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeTestKeyForE2ETesting testkey@example"
+INTENT="authorize this SSH key for user lacsdev: $TEST_KEY"
+
+echo "=== Story 10: Add SSH authorized key ==="
+echo "Intent: $INTENT"
+
+PLAN=$(echo "$INTENT" | lacs-test-cli 2>/tmp/lacs-story-10-stderr.log)
+echo "Plan JSON:"
+echo "$PLAN" | jq .
+
+# --- Assertions ---
+
+ADD_KEY_STEP=$(echo "$PLAN" | jq '.steps[] | select(.action_name == "AddAuthorizedKey")')
+
+if [[ -z "$ADD_KEY_STEP" || "$ADD_KEY_STEP" == "null" ]]; then
+  echo "FAIL: no AddAuthorizedKey step found"
+  echo "Actions: $(echo "$PLAN" | jq -r '.steps[].action_name')"
+  exit 1
+fi
+
+# Check risk level is medium.
+RISK=$(echo "$ADD_KEY_STEP" | jq -r '.risk_level')
+if [[ "$RISK" != "medium" ]]; then
+  echo "FAIL: expected risk medium, got $RISK"
+  exit 1
+fi
+
+# Check public_key matches verbatim.
+PUB_KEY=$(echo "$ADD_KEY_STEP" | jq -r '.params.public_key // ""')
+if [[ "$PUB_KEY" != "$TEST_KEY" ]]; then
+  echo "FAIL: public_key mismatch"
+  echo "  expected: $TEST_KEY"
+  echo "  got:      $PUB_KEY"
+  exit 1
+fi
+
+# Check username is lacsdev.
+USERNAME=$(echo "$ADD_KEY_STEP" | jq -r '.params.username // .params.user // ""')
+if [[ "$USERNAME" != "lacsdev" ]]; then
+  echo "FAIL: expected username=lacsdev, got '$USERNAME'"
+  exit 1
+fi
+
+echo "PASS: Story 10 — plan has AddAuthorizedKey for lacsdev with correct key"

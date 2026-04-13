@@ -6,3 +6,9 @@ dist/
 *.swp
 *.swo
 .DS_Store
+
+# Vagrant
+.vagrant/
+
+# E2E test logs (generated at runtime)
+tests/e2e/logs/*.log

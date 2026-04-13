@@ -1,0 +1,205 @@
+#!/usr/bin/env bash
+# LACS E2E test harness — runs user stories against a provisioned VM.
+#
+# Usage:
+#   sudo tests/e2e/run-stories.sh          # run read-only stories 1-7
+#   sudo LACS_ALLOW_DESTRUCTIVE=1 tests/e2e/run-stories.sh   # all 10
+#   sudo tests/e2e/run-stories.sh 3 5 7    # run specific stories
+#
+# Prerequisites:
+#   - /var/lib/lacs-e2e/ready exists (provisioning complete)
+#   - lacs-daemon systemd service is running
+#   - lacs-test-cli is installed in PATH
+#   - Ollama is running with a model pulled
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+LOG_DIR="$SCRIPT_DIR/logs"
+STORY_DIR="$SCRIPT_DIR/stories"
+
+mkdir -p "$LOG_DIR"
+
+# ---------------------------------------------------------------------------
+# Preflight checks
+# ---------------------------------------------------------------------------
+
+preflight_ok=true
+
+if [[ ! -f /var/lib/lacs-e2e/ready ]]; then
+  echo "ERROR: /var/lib/lacs-e2e/ready not found. Run provisioning first."
+  preflight_ok=false
+fi
+
+if ! systemctl is-active --quiet lacs-daemon 2>/dev/null; then
+  echo "ERROR: lacs-daemon is not running."
+  preflight_ok=false
+fi
+
+if ! command -v lacs-test-cli &>/dev/null; then
+  echo "ERROR: lacs-test-cli not found in PATH."
+  preflight_ok=false
+fi
+
+if ! command -v jq &>/dev/null; then
+  echo "ERROR: jq not found in PATH."
+  preflight_ok=false
+fi
+
+if [[ "$preflight_ok" != "true" ]]; then
+  echo ""
+  echo "Preflight checks failed. Aborting."
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Determine which stories to run
+# ---------------------------------------------------------------------------
+
+ALLOW_DESTRUCTIVE="${LACS_ALLOW_DESTRUCTIVE:-0}"
+
+# Timeout per story (seconds). Small models on CPU can be slow.
+STORY_TIMEOUT="${LACS_STORY_TIMEOUT:-120}"
+
+declare -A STORY_NAMES
+STORY_NAMES[1]="Check disk usage"
+STORY_NAMES[2]="Memory pressure diagnosis"
+STORY_NAMES[3]="Service health check"
+STORY_NAMES[4]="Firewall inspection"
+STORY_NAMES[5]="List layered packages"
+STORY_NAMES[6]="Running containers overview"
+STORY_NAMES[7]="SSH key inventory"
+STORY_NAMES[8]="Layer vim via rpm-ostree (destructive)"
+STORY_NAMES[9]="Create a toolbox (destructive)"
+STORY_NAMES[10]="Add SSH authorized key (destructive)"
+
+declare -A RESULTS
+declare -A DURATIONS
+declare -A MESSAGES
+
+if [[ $# -gt 0 ]]; then
+  # Run specific stories passed as arguments.
+  STORIES=("$@")
+else
+  if [[ "$ALLOW_DESTRUCTIVE" == "1" ]]; then
+    STORIES=(1 2 3 4 5 6 7 8 9 10)
+  else
+    STORIES=(1 2 3 4 5 6 7)
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# Runner
+# ---------------------------------------------------------------------------
+
+run_story() {
+  local n="$1"
+  local script="$STORY_DIR/story-${n}.sh"
+  local log="$LOG_DIR/story-${n}.log"
+  local name="${STORY_NAMES[$n]:-Story $n}"
+
+  if [[ ! -f "$script" ]]; then
+    RESULTS[$n]="SKIP"
+    MESSAGES[$n]="script not found: $script"
+    DURATIONS[$n]="0.0"
+    return
+  fi
+
+  # Destructive stories (8-10) require explicit opt-in.
+  if [[ "$n" -ge 8 ]] && [[ "$ALLOW_DESTRUCTIVE" != "1" ]]; then
+    RESULTS[$n]="SKIP"
+    MESSAGES[$n]="set LACS_ALLOW_DESTRUCTIVE=1 to run"
+    DURATIONS[$n]="0.0"
+    return
+  fi
+
+  echo -n "  Story $n ($name): "
+
+  local start_time
+  start_time=$(date +%s.%N)
+
+  if timeout "$STORY_TIMEOUT" bash "$script" > "$log" 2>&1; then
+    RESULTS[$n]="PASS"
+    MESSAGES[$n]=""
+  else
+    local exit_code=$?
+    RESULTS[$n]="FAIL"
+    # Extract the last non-empty line as the failure message.
+    MESSAGES[$n]=$(tail -n 5 "$log" | grep -v '^$' | tail -n 1)
+    if [[ $exit_code -eq 124 ]]; then
+      MESSAGES[$n]="timed out after ${STORY_TIMEOUT}s"
+    fi
+  fi
+
+  local end_time
+  end_time=$(date +%s.%N)
+  DURATIONS[$n]=$(echo "$end_time - $start_time" | bc 2>/dev/null || echo "?")
+
+  echo "${RESULTS[$n]} (${DURATIONS[$n]}s)"
+}
+
+# ---------------------------------------------------------------------------
+# Execute
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "LACS E2E Test Run"
+echo "================="
+echo "Date:        $(date --iso-8601=seconds)"
+echo "Stories:     ${STORIES[*]}"
+echo "Destructive: $ALLOW_DESTRUCTIVE"
+echo "Timeout:     ${STORY_TIMEOUT}s per story"
+echo ""
+
+for n in "${STORIES[@]}"; do
+  run_story "$n"
+done
+
+# ---------------------------------------------------------------------------
+# Summary
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "================================================================"
+echo "  RESULTS"
+echo "================================================================"
+
+pass_count=0
+fail_count=0
+skip_count=0
+
+for n in "${STORIES[@]}"; do
+  local_name="${STORY_NAMES[$n]:-Story $n}"
+  local_result="${RESULTS[$n]}"
+  local_duration="${DURATIONS[$n]}"
+  local_msg="${MESSAGES[$n]}"
+
+  # Pad the story label for alignment.
+  printf "  Story %2d (%-40s) " "$n" "$local_name"
+
+  case "$local_result" in
+    PASS)
+      echo "PASS (${local_duration}s)"
+      ((pass_count++)) || true
+      ;;
+    FAIL)
+      echo "FAIL (${local_duration}s) — $local_msg"
+      ((fail_count++)) || true
+      ;;
+    SKIP)
+      echo "SKIP — $local_msg"
+      ((skip_count++)) || true
+      ;;
+  esac
+done
+
+total=${#STORIES[@]}
+echo ""
+echo "Summary: $pass_count/$total passed, $fail_count failed, $skip_count skipped"
+echo "Logs:    $LOG_DIR/"
+echo ""
+
+if [[ $fail_count -gt 0 ]]; then
+  exit 1
+fi
+exit 0
