@@ -303,9 +303,21 @@ rpm-ostree install requires a reboot. The provision script auto-reboots
 and asks you to re-run it. If it got stuck, just run `provision` again —
 it's idempotent.
 
-### Ollama model pulls too slowly
+### Ollama download or model pull is very slow
 
-The provisioner defaults to `qwen3:0.6b` (~500 MB). Override with:
+Two distinct downloads can be slow:
+
+1. **The Ollama tarball itself** (~1.5 GB, downloaded by `install.sh` from
+   `ollama.com/download/ollama-linux-amd64.tgz`). On some networks /
+   geos / times of day this CDN serves at <100 KB/s. There's no
+   workaround inside the script — wait it out, or pre-stage the binary
+   on the host and copy it in via SSH if you're going to re-provision
+   often.
+
+2. **The model pull** (~500 MB for `qwen3:0.6b`). Happens after Ollama
+   is installed, via `ollama pull`. Goes through Ollama's registry.
+
+Override the model size with `LACS_TEST_MODEL`:
 
 ```sh
 LACS_TEST_MODEL=gemma3:1b ./tests/e2e/silverblue-vm.sh provision
@@ -314,6 +326,10 @@ LACS_TEST_MODEL=qwen3:8b  ./tests/e2e/silverblue-vm.sh provision   # slow on CPU
 
 Larger models give more reliable planning but take longer to load and
 run on CPU. For daily testing, `qwen3:0.6b` is fast enough.
+
+**Tip:** once provision succeeds end-to-end, immediately `stop` the VM
+and `snapshot baseline`. Then every subsequent test cycle becomes
+`restore baseline → start → run`, skipping all the slow downloads.
 
 ### CPU-only inference is too slow
 
