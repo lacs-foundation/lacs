@@ -144,7 +144,9 @@ pub enum ConfigError {
     #[error("ANTHROPIC_API_KEY is required when provider is 'anthropic' and must not be empty")]
     MissingAnthropicKey,
 
-    #[error("API key environment variable '{0}' is required for provider '{1}' and must not be empty")]
+    #[error(
+        "API key environment variable '{0}' is required for provider '{1}' and must not be empty"
+    )]
     MissingApiKey(String, String),
 
     #[error("unknown provider '{0}': expected one of: anthropic, ollama, openai, gemini, groq, deepseek, mistral, xai")]

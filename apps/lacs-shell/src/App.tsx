@@ -86,22 +86,21 @@ export default function App() {
       },
       (outcome) => {
         if (cancelled) return;
-        // For succeeded/needs_reboot, transition to reviewing if we have the execution result
-        if (outcome === "succeeded" || outcome === "needs_reboot") {
-          const result = pendingExecutionResult.current;
-          if (result) {
-            pendingExecutionResult.current = null;
-            dispatch({ type: "execution_review_ready", executionResult: result });
-            // Kick off the summary generation in the background
-            reviewExecution(result, intentRef.current).catch((err: unknown) => {
-              console.warn("[LACS] reviewExecution failed:", err);
-            }).then((summary) => {
+        // ALL outcomes that produced an execution result get a review
+        const result = pendingExecutionResult.current;
+        if (result && (outcome === "succeeded" || outcome === "needs_reboot" || outcome === "failed" || outcome === "rolled_back")) {
+          pendingExecutionResult.current = null;
+          dispatch({ type: "execution_review_ready", executionResult: result });
+          reviewExecution(result, intentRef.current)
+            .then((summary) => {
               if (!cancelled && summary) {
                 dispatch({ type: "summary_ready", summary });
               }
+            })
+            .catch((err: unknown) => {
+              console.warn("[LACS] reviewExecution failed:", err);
             });
-            return;
-          }
+          return;
         }
         dispatch({ type: "job_completed", outcome });
       },

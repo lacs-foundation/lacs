@@ -11,8 +11,8 @@ use std::collections::BTreeSet;
 
 use lacs_brain::planning_tools::propose_plan::KNOWN_ACTIONS;
 use lacs_daemon::actions::{
-    containers, deployment, flatpak, identity, layering, network, package_repos, services, toolbox,
-    users,
+    containers, deployment, filesystem, flatpak, identity, layering, network, package_repos,
+    processes, services, ssh, system_info, toolbox, users,
 };
 use lacs_daemon::executor::build_action_spec;
 use lacs_daemon::policy::min_role_for_action;
@@ -22,6 +22,9 @@ use serde_json::json;
 fn all_spec_action_names() -> BTreeSet<&'static str> {
     let mut names = BTreeSet::new();
     for spec in deployment::specs() {
+        names.insert(spec.action_name);
+    }
+    for spec in filesystem::specs() {
         names.insert(spec.action_name);
     }
     for spec in flatpak::specs() {
@@ -45,7 +48,16 @@ fn all_spec_action_names() -> BTreeSet<&'static str> {
     for spec in network::specs() {
         names.insert(spec.action_name);
     }
+    for spec in processes::specs() {
+        names.insert(spec.action_name);
+    }
     for spec in identity::specs() {
+        names.insert(spec.action_name);
+    }
+    for spec in ssh::specs() {
+        names.insert(spec.action_name);
+    }
+    for spec in system_info::specs() {
         names.insert(spec.action_name);
     }
     for spec in users::specs() {

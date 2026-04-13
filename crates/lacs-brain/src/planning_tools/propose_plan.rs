@@ -68,6 +68,13 @@ pub const KNOWN_ACTIONS: &[&str] = &[
     "SetDnsServers",
     "ConfigureFirewall",
     "GetFirewallState",
+    "GetNetworkStatus",
+    // Filesystem
+    "GetDiskUsage",
+    // Processes
+    "ListProcesses",
+    // System info
+    "GetMemoryInfo",
     // Identity / time / locale
     "SetHostname",
     "SetTimezone",
@@ -93,6 +100,10 @@ pub const KNOWN_ACTIONS: &[&str] = &[
     "DeleteUser",
     "AddUserToGroup",
     "RemoveUserFromGroup",
+    // SSH
+    "GetAuthorizedKeys",
+    "AddAuthorizedKey",
+    "RemoveAuthorizedKey",
 ];
 
 pub fn propose_plan_tool_def() -> ToolDefinition {

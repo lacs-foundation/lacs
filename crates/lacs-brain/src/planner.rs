@@ -304,7 +304,7 @@ impl LlmPlanner {
                     .api_key(api_key)
                     .base_url(base_url)
                     .build()
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| format!("failed to initialize anthropic provider: {e}"))?;
                 let completion_model = client.completion_model(&model);
                 Box::new(RigCompletionAdapter::new(completion_model))
             }
@@ -313,7 +313,7 @@ impl LlmPlanner {
                     .api_key(rig::client::Nothing)
                     .base_url(base_url)
                     .build()
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| format!("failed to initialize ollama provider: {e}"))?;
                 let completion_model = client.completion_model(&model);
                 Box::new(RigCompletionAdapter::new(completion_model))
             }
@@ -321,7 +321,7 @@ impl LlmPlanner {
                 let client = rig::providers::openai::Client::builder()
                     .api_key(api_key)
                     .build()
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| format!("failed to initialize openai provider: {e}"))?;
                 let completion_model = client.completion_model(&model);
                 Box::new(RigCompletionAdapter::new(completion_model))
             }
@@ -329,7 +329,7 @@ impl LlmPlanner {
                 let client = rig::providers::gemini::Client::builder()
                     .api_key(api_key)
                     .build()
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| format!("failed to initialize gemini provider: {e}"))?;
                 let completion_model = client.completion_model(&model);
                 Box::new(RigCompletionAdapter::new(completion_model))
             }
@@ -337,7 +337,7 @@ impl LlmPlanner {
                 let client = rig::providers::groq::Client::builder()
                     .api_key(api_key)
                     .build()
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| format!("failed to initialize groq provider: {e}"))?;
                 let completion_model = client.completion_model(&model);
                 Box::new(RigCompletionAdapter::new(completion_model))
             }
@@ -345,7 +345,7 @@ impl LlmPlanner {
                 let client = rig::providers::deepseek::Client::builder()
                     .api_key(api_key)
                     .build()
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| format!("failed to initialize deepseek provider: {e}"))?;
                 let completion_model = client.completion_model(&model);
                 Box::new(RigCompletionAdapter::new(completion_model))
             }
@@ -353,7 +353,7 @@ impl LlmPlanner {
                 let client = rig::providers::mistral::Client::builder()
                     .api_key(api_key)
                     .build()
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| format!("failed to initialize mistral provider: {e}"))?;
                 let completion_model = client.completion_model(&model);
                 Box::new(RigCompletionAdapter::new(completion_model))
             }
@@ -361,7 +361,7 @@ impl LlmPlanner {
                 let client = rig::providers::xai::Client::builder()
                     .api_key(api_key)
                     .build()
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| format!("failed to initialize xai provider: {e}"))?;
                 let completion_model = client.completion_model(&model);
                 Box::new(RigCompletionAdapter::new(completion_model))
             }
@@ -375,6 +375,45 @@ impl LlmPlanner {
     /// `PlanResponse` without requiring a second network call.
     pub fn curated_state(&self) -> Result<crate::state_client::CuratedState, PlanningError> {
         self.state_client.curated_state()
+    }
+
+    /// Generate a plain-language summary of a short prompt, bypassing the
+    /// tool-use loop. Used for post-execution review.
+    ///
+    /// Returns the raw text content from the LLM. No tools are provided, so
+    /// the LLM is constrained to text-only output.
+    pub async fn summarize(&self, prompt: &str) -> Result<String, PlanningError> {
+        let messages = vec![Message::user_text(prompt)];
+        let completion = self
+            .provider
+            .complete(
+                "You are a concise technical writer. Respond with a short plain-language summary. Do not use markdown formatting.",
+                &messages,
+                &[], // no tools
+                512, // short response
+            )
+            .await
+            .map_err(PlanningError::from)?;
+
+        // Extract text from the completion
+        let text = completion
+            .content
+            .iter()
+            .filter_map(|b| {
+                if let ContentBlock::Text { text } = b {
+                    Some(text.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        if text.is_empty() {
+            Err(PlanningError::NoPlanProposed)
+        } else {
+            Ok(text)
+        }
     }
 
     /// Run the planning loop for the given natural-language intent.
@@ -445,27 +484,6 @@ impl LlmPlanner {
                                     is_error: false,
                                 });
                             }
-                            name if crate::planning_tools::query_tools::query_tool_to_action(name).is_some() => {
-                                let (action_name, params) =
-                                    crate::planning_tools::query_tools::query_tool_to_action(name)
-                                        .unwrap();
-                                match self.state_client.query_action(action_name, &params) {
-                                    Ok(output) => {
-                                        tool_results.push(ToolResultBlock {
-                                            tool_use_id: id.clone(),
-                                            content: output,
-                                            is_error: false,
-                                        });
-                                    }
-                                    Err(e) => {
-                                        tool_results.push(ToolResultBlock {
-                                            tool_use_id: id.clone(),
-                                            content: format!("Query failed: {e}"),
-                                            is_error: true,
-                                        });
-                                    }
-                                }
-                            }
                             "propose_plan" => {
                                 // Parse and validate before returning.
                                 // If validation fails, log the rejection (safety fence
@@ -498,21 +516,46 @@ impl LlmPlanner {
                                     }
                                 }
                             }
-                            unknown => {
-                                // An unknown tool call is a protocol violation — log it
-                                // as a safety event and feed the error back so the LLM
-                                // has a chance to recover within the remaining turns.
-                                eprintln!(
-                                    "[LACS WARNING] LLM called unknown tool '{unknown}' \
-                                     (turn {}/{max}); sending error feedback.",
-                                    turn + 1,
-                                    max = self.max_turns
-                                );
-                                tool_results.push(ToolResultBlock {
-                                    tool_use_id: id.clone(),
-                                    content: format!("unknown tool: {unknown}"),
-                                    is_error: true,
-                                });
+                            other_name => {
+                                if let Some((action_name, params)) =
+                                    crate::planning_tools::query_tools::query_tool_to_action(
+                                        other_name, input,
+                                    )
+                                {
+                                    match self.state_client.query_action(action_name, &params) {
+                                        Ok(output) => {
+                                            tool_results.push(ToolResultBlock {
+                                                tool_use_id: id.clone(),
+                                                content: output,
+                                                is_error: false,
+                                            });
+                                        }
+                                        Err(e) => {
+                                            tool_results.push(ToolResultBlock {
+                                                tool_use_id: id.clone(),
+                                                content: format!("Query failed: {e}"),
+                                                is_error: true,
+                                            });
+                                        }
+                                    }
+                                } else {
+                                    // An unknown tool call is a protocol violation — log
+                                    // it as a safety event and feed the error back so the
+                                    // LLM has a chance to recover within the remaining
+                                    // turns.
+                                    eprintln!(
+                                        "[LACS WARNING] LLM called unknown tool \
+                                         '{other_name}' (turn {}/{max}); sending error \
+                                         feedback.",
+                                        turn + 1,
+                                        max = self.max_turns
+                                    );
+                                    tool_results.push(ToolResultBlock {
+                                        tool_use_id: id.clone(),
+                                        content: format!("unknown tool: {other_name}"),
+                                        is_error: true,
+                                    });
+                                }
                             }
                         }
                     }

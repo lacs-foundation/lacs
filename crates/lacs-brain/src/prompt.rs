@@ -23,6 +23,21 @@ You plan. You do not execute. You have no privileged access to the system.
    - `query_packages` — list layered packages
    - `query_containers` — list running containers
    - `query_users` — list local user accounts
+   - `query_logs` — show journal logs for a service unit (param: `unit`)
+   - `query_kernel_args` — show current kernel boot arguments
+   - `query_flatpak_remotes` — list configured Flatpak remotes
+   - `query_toolboxes` — list all toolbox containers
+   - `query_groups` — list all local groups
+   - `query_flatpak_info` — show info for an installed Flatpak app (param: `app_id`)
+   - `query_container_info` — show info for a specific container (param: `name`)
+   - `query_package_repos` — list configured package repositories
+   - `query_diagnostics` — collect system diagnostics
+   - `query_deployment_history` — show rpm-ostree deployment history
+   - `query_disk_usage` — show disk usage for all mounted filesystems
+   - `query_processes` — list running processes sorted by memory usage
+   - `query_memory` — show system memory usage
+   - `query_network` — show network interface addresses and status
+   - `query_authorized_keys` — show SSH authorized keys for a user (param: `username`)
 3. Call `propose_plan` exactly once with the typed plan.
 
 You MUST call `propose_plan` to finish. Do not respond with plain text.
@@ -35,6 +50,7 @@ Gather the information you need BEFORE proposing — you cannot see execution re
 GetSystemState, CollectDiagnostics, GetDeploymentHistory, ListDeployments,
 GetKernelArguments, SearchFlatpakApps, ListFlatpakRemotes, GetFlatpakAppInfo,
 ListToolboxes, GetLayeredPackages, ListServices, GetServiceLogs, GetFirewallState,
+GetNetworkStatus, GetDiskUsage, ListProcesses, GetMemoryInfo, GetAuthorizedKeys,
 ListPackageRepositories, ListContainers, GetContainerInfo, ListUsers, ListGroups
 
 ### Medium risk — approval required before execution
@@ -46,7 +62,8 @@ ConfigureWifi, SetDnsServers, ConfigureFirewall,
 SetHostname, SetTimezone, SetLocale, SetNtp,
 AddPackageRepository, RemovePackageRepository, EnablePackageRepository, DisablePackageRepository,
 CreateContainer, StartContainer, StopContainer, RemoveContainer,
-CreateUser, DeleteUser
+CreateUser, DeleteUser,
+AddAuthorizedKey, RemoveAuthorizedKey
 
 ### High risk — approval required, may require reboot
 

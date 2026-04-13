@@ -49,7 +49,12 @@ fn preview_profile(action_name: &str) -> PreviewProfile {
         | "ListPackageRepositories"
         | "ListContainers"
         | "GetContainerInfo"
-        | "GetLayeredPackages" => PreviewProfile {
+        | "GetLayeredPackages"
+        | "GetDiskUsage"
+        | "ListProcesses"
+        | "GetMemoryInfo"
+        | "GetNetworkStatus"
+        | "GetAuthorizedKeys" => PreviewProfile {
             risk_level: RiskLevel::Low,
             expected_side_effects: Vec::new(),
             reboot_required: false,
@@ -76,7 +81,9 @@ fn preview_profile(action_name: &str) -> PreviewProfile {
         | "SetLocale"
         | "SetNtp"
         | "CreateUser"
-        | "DeleteUser" => PreviewProfile {
+        | "DeleteUser"
+        | "AddAuthorizedKey"
+        | "RemoveAuthorizedKey" => PreviewProfile {
             risk_level: RiskLevel::Medium,
             expected_side_effects: vec!["service interruption".to_string()],
             reboot_required: false,

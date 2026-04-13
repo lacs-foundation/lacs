@@ -7,6 +7,7 @@ pub fn specs() -> Vec<ActionSpec> {
         set_dns_servers("wlp1s0", &["1.1.1.1", "8.8.8.8"]),
         configure_firewall("public", "ssh", true),
         get_firewall_state(),
+        get_network_status(),
     ]
 }
 
@@ -59,6 +60,16 @@ pub fn get_firewall_state() -> ActionSpec {
     ActionSpec {
         action_name: "GetFirewallState",
         mechanism: command_mechanism("firewall-cmd", ["--state"]),
+        risk_level: RiskLevel::Low,
+        reboot_required: false,
+        rollback_available: false,
+    }
+}
+
+pub fn get_network_status() -> ActionSpec {
+    ActionSpec {
+        action_name: "GetNetworkStatus",
+        mechanism: command_mechanism("ip", ["-brief", "addr"]),
         risk_level: RiskLevel::Low,
         reboot_required: false,
         rollback_available: false,
