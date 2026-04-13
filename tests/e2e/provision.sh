@@ -48,11 +48,12 @@ fail() {
 
 if [ ! -f "$LAYERED_MARKER" ]; then
     step "Layer build tools via rpm-ostree"
-    # jq, rsync, nc usually present; add what's missing.
-    # rustup handles rust itself; we only need build prereqs.
-    # podman, toolbox, flatpak are already present on atomic desktops.
+    # jq, rsync, nc, podman, toolbox, flatpak are present on atomic desktops.
+    # rustup handles rust itself; we only need build prereqs (gcc, etc.).
+    # zstd is needed by the Ollama installer script (it ships its tarball
+    # zstd-compressed and the install.sh extracts via `unzstd`).
     rpm-ostree install --idempotent --allow-inactive \
-        gcc gcc-c++ make openssl-devel pkg-config \
+        gcc gcc-c++ make openssl-devel pkg-config zstd \
         || fail "Layer build tools"
     touch "$LAYERED_MARKER"
     echo ""
