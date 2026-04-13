@@ -18,8 +18,11 @@
 #                 enable sshd + firewalld (Silverblue ships sshd disabled)
 #   keygen      — generate a passphrase-less SSH key dedicated to the VM
 #                 (default location: ~/.ssh/lacs-vm)
-#   install-key — copy that key into the guest's authorized_keys via
-#                 guestfish (VM must be stopped)
+#   bootstrap   — patch the freshly-installed disk offline (VM must be
+#                 stopped): create user, set passwords + sudoers, install
+#                 SSH key, enable sshd, set SELinux permissive, skip
+#                 gnome-initial-setup. Idempotent.
+#   install-key — alias for `bootstrap` (kept for older docs)
 #   start       — boot the installed VM headlessly with SSH forwarding
 #   ssh        — open an SSH shell into the VM (or run a command)
 #   provision  — rsync the repo, run tests/e2e/provision.sh inside the VM
@@ -289,30 +292,116 @@ cmd_keygen() {
     chmod 600 "$SSH_KEY"
 }
 
-# Install the VM SSH key into the guest's authorized_keys via guestfish
-# (works while VM is stopped; no need for a password). Idempotent.
-cmd_install_key() {
-    require_tools guestfish
+# Apply all the offline patches the VM needs after Anaconda's install
+# but before our headless workflow can touch it. Done via guestfish (no
+# need to boot the VM or know any password). Idempotent.
+#
+# What it does:
+#   - Find the rpm-ostree deployment directory (path includes a commit
+#     hash that varies per install).
+#   - Create user '${VM_USER}' (uid 1000, gid 1000, /bin/bash, wheel group).
+#   - Set a password (default '${VM_USER}') so console / serial login works.
+#   - Set root password too (default 'lacs') as a fallback.
+#   - Install the dedicated SSH key into ~${VM_USER}/.ssh/authorized_keys.
+#   - Enable sshd (Silverblue ships it disabled).
+#   - NOPASSWD sudoers for ${VM_USER}.
+#   - Set SELinux to permissive (we're not testing SELinux).
+#   - Pre-mark gnome-initial-setup as done so it doesn't run on first boot.
+cmd_bootstrap() {
+    require_tools guestfish openssl
     [ -f "$SSH_KEY" ] || die "SSH key $SSH_KEY not found. Run '$0 keygen' first."
     if pgrep -f "qemu-system.*${VM_NAME}" >/dev/null; then
-        die "VM is running. Run '$0 stop' first (or kill the qemu process)."
+        die "VM is running. Stop it first ('$0 stop' or kill the qemu process)."
     fi
     [ -f "$(vm_disk_path)" ] || die "VM disk not found. Run '$0 install' first."
-    local pubkey
+
+    local pubkey lacs_hash root_hash
     pubkey="$(cat "${SSH_KEY}.pub")"
-    log "Installing $SSH_KEY.pub into ${VM_USER}'s ~/.ssh/authorized_keys via guestfish..."
-    # Use a heredoc with command-substituted pubkey embedded.
+    lacs_hash="$(openssl passwd -6 "$VM_USER")"
+    root_hash="$(openssl passwd -6 lacs)"
+
+    log "Locating rpm-ostree deployment in disk image..."
+    local deploy
+    deploy=$(guestfish --ro -a "$(vm_disk_path)" <<EOF | tail -n +1 | tr -d '\r' | head -1
+run
+mount-options subvol=root /dev/sda3 /
+ls /ostree/deploy/fedora/deploy
+EOF
+)
+    # The first line returned should be the commit dir; .origin lines are siblings
+    deploy=$(echo "$deploy" | grep -v '\.origin$' | head -1)
+    [ -n "$deploy" ] || die "Could not find rpm-ostree deployment under /ostree/deploy/fedora/deploy"
+    local deploy_path="/ostree/deploy/fedora/deploy/${deploy}"
+    log "Deployment: $deploy_path"
+
+    log "Applying offline patches..."
     guestfish -a "$(vm_disk_path)" <<EOF
 run
-mount-options subvol=home /dev/sda3 /
-mkdir-p /${VM_USER}/.ssh
-write /${VM_USER}/.ssh/authorized_keys "${pubkey}\n"
-chmod 0700 /${VM_USER}/.ssh
-chmod 0600 /${VM_USER}/.ssh/authorized_keys
-chown 1000 1000 /${VM_USER}/.ssh
-chown 1000 1000 /${VM_USER}/.ssh/authorized_keys
+mount-options subvol=root /dev/sda3 /
+mount-options subvol=home /dev/sda3 /home
+
+# 1. /etc/passwd — append ${VM_USER} if not present
+copy-out ${deploy_path}/etc/passwd /tmp
+! grep -q "^${VM_USER}:" /tmp/passwd || true
+! grep -q "^${VM_USER}:" /tmp/passwd || sed -i "/^${VM_USER}:/d" /tmp/passwd
+! echo "${VM_USER}:x:1000:1000:LACS Dev:/home/${VM_USER}:/bin/bash" >> /tmp/passwd
+upload /tmp/passwd ${deploy_path}/etc/passwd
+
+# 2. /etc/shadow — set root + ${VM_USER} passwords
+copy-out ${deploy_path}/etc/shadow /tmp
+! sed -i 's|^root:[^:]*:|root:${root_hash}:|' /tmp/shadow
+! sed -i "/^${VM_USER}:/d" /tmp/shadow
+! echo "${VM_USER}:${lacs_hash}:20000:0:99999:7:::" >> /tmp/shadow
+upload /tmp/shadow ${deploy_path}/etc/shadow
+
+# 3. /etc/group — primary group + wheel
+copy-out ${deploy_path}/etc/group /tmp
+! grep -q "^${VM_USER}:" /tmp/group || sed -i "/^${VM_USER}:/d" /tmp/group
+! echo "${VM_USER}:x:1000:" >> /tmp/group
+! sed -i "s|^wheel:x:10:.*|wheel:x:10:${VM_USER}|" /tmp/group
+upload /tmp/group ${deploy_path}/etc/group
+
+# 4. NOPASSWD sudoers
+write ${deploy_path}/etc/sudoers.d/${VM_USER} "${VM_USER} ALL=(ALL) NOPASSWD: ALL\n"
+chmod 0440 ${deploy_path}/etc/sudoers.d/${VM_USER}
+
+# 5. Enable sshd via systemd preset symlink
+mkdir-p ${deploy_path}/etc/systemd/system/multi-user.target.wants
+ln-sf /usr/lib/systemd/system/sshd.service ${deploy_path}/etc/systemd/system/multi-user.target.wants/sshd.service
+
+# 6. SELinux permissive — we don't test SELinux semantics, and our offline
+# /etc edits skip the relabel that selinux-enforcing mode requires.
+copy-out ${deploy_path}/etc/selinux/config /tmp
+! sed -i 's|^SELINUX=enforcing|SELINUX=permissive|' /tmp/selinux-config
+! mv /tmp/config /tmp/selinux-config 2>/dev/null || true
+upload /tmp/selinux-config ${deploy_path}/etc/selinux/config
+
+# 7. Home + .ssh + authorized_keys
+mkdir-p /home/${VM_USER}/.ssh
+write /home/${VM_USER}/.ssh/authorized_keys "${pubkey}\n"
+chmod 0700 /home/${VM_USER}/.ssh
+chmod 0600 /home/${VM_USER}/.ssh/authorized_keys
+chown 1000 1000 /home/${VM_USER}
+chown 1000 1000 /home/${VM_USER}/.ssh
+chown 1000 1000 /home/${VM_USER}/.ssh/authorized_keys
+
+# 8. Skip gnome-initial-setup
+mkdir-p /home/${VM_USER}/.config
+write /home/${VM_USER}/.config/gnome-initial-setup-done "yes\n"
+chown 1000 1000 /home/${VM_USER}/.config
+chown 1000 1000 /home/${VM_USER}/.config/gnome-initial-setup-done
+
+# 9. Verify
+echo "--- bootstrapped /etc/passwd ${VM_USER} entry ---"
+read-file ${deploy_path}/etc/passwd | grep "^${VM_USER}:"
 EOF
-    log "Key installed. Boot the VM with '$0 start'."
+    log "Bootstrap complete. Boot the VM with '$0 start'."
+}
+
+# Backwards-compatible alias (older docs/cmd).
+cmd_install_key() {
+    log "Note: 'install-key' is now a subset of 'bootstrap'. Running bootstrap..."
+    cmd_bootstrap "$@"
 }
 
 cmd_run() {

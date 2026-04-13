@@ -104,32 +104,57 @@ After installing, verify your user can access KVM (Linux only):
 
 ```sh
 ls -l /dev/kvm           # should exist
-groups | grep -q kvm \
+test -r /dev/kvm \
     || sudo usermod -aG kvm "$USER"   # then log out and back in
+                                       # (or use ACL: setfacl -m u:$USER:rw /dev/kvm)
+```
+
+You also need `libguestfs-tools` for the offline disk patches we apply
+between Anaconda's install and the first SSH login (set passwords,
+install our SSH key, enable sshd). Ubuntu 24.04 keeps kernel images at
+mode 0600 by default, which prevents libguestfs from running
+unprivileged — fix once with `sudo chmod +r /boot/vmlinuz-*`.
+
+```sh
+sudo apt-get install -y libguestfs-tools
+sudo chmod +r /boot/vmlinuz-*
 ```
 
 **One-time VM setup:**
 
 ```sh
-# From the repo root
+# From the repo root.
 
-# 1. Download the Silverblue 42 ISO (~2.5 GB, cached under tests/e2e/vm/)
+# 1. Generate a passphrase-less SSH key dedicated to the VM (you do
+#    not want to reuse your personal id_ed25519 — rsync/non-interactive
+#    ssh cannot prompt for a passphrase). Idempotent.
+./tests/e2e/silverblue-vm.sh keygen
+
+# 2. Download the Silverblue 42 ISO (~2.5 GB, cached under tests/e2e/vm/).
 ./tests/e2e/silverblue-vm.sh download
 
-# 2. Run the Fedora installer interactively (GUI window opens).
-#    When prompted, create user 'lacsdev' with password 'lacsdev'.
-#    Shut the VM down when installation finishes (don't click "Reboot").
+# 3. Run the Fedora installer interactively (GUI window opens).
+#    Just click through it — you don't need to set a password or create
+#    a user; we patch all of that into the disk image afterwards via
+#    libguestfs. Shut the VM down when the installer finishes (close
+#    the QEMU window or pick "Power Off" in the post-install screen —
+#    DO NOT click "Reboot": the ISO will re-mount as CD-ROM).
 ./tests/e2e/silverblue-vm.sh install
 
-# 3. One-time step: Silverblue ships sshd DISABLED. Boot the VM visibly
-#    once, log in as 'lacsdev', open a terminal, and run:
-#        sudo systemctl enable --now sshd
-#        sudo firewall-cmd --permanent --add-service=ssh
-#        sudo firewall-cmd --reload
-#        sudo poweroff
-#    This wrapper command gives you the same VM with a GUI window.
-./tests/e2e/silverblue-vm.sh enable-ssh
+# 4. Patch the disk image with our test user, password, sudoers, sshd,
+#    and SSH key. (Implemented via guestfish so it works offline,
+#    bypassing Silverblue's interactive first-boot wizard which has
+#    bugs in F42.)
+./tests/e2e/silverblue-vm.sh install-key
 ```
+
+> Why no `enable-ssh` step? Earlier versions of this script tried to
+> boot the VM visibly so the contributor could enable sshd by hand.
+> That ran into Fedora 42's gnome-initial-setup crashing on the
+> third-party-repo screen with virgl/Wayland bugs. The current flow
+> sidesteps the GUI entirely by configuring the VM offline via
+> `libguestfs`. The `enable-ssh` subcommand is still there as a fallback
+> if your Anaconda install did create a usable user.
 
 **Run the tests:**
 
