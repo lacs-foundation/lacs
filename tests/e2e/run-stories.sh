@@ -60,7 +60,7 @@ fi
 # provisioned VM. Force the right values here so individual story scripts
 # don't need to know or care.
 export LACS_LLM_PROVIDER="${LACS_LLM_PROVIDER:-ollama}"
-export LACS_LLM_MODEL="${LACS_LLM_MODEL:-${LACS_TEST_MODEL:-qwen3:0.6b}}"
+export LACS_LLM_MODEL="${LACS_LLM_MODEL:-${LACS_TEST_MODEL:-qwen3:8b}}"
 export LACS_OLLAMA_URL="${LACS_OLLAMA_URL:-http://127.0.0.1:11434}"
 # lacs-daemon's packaged systemd unit binds /run/lacs/daemon.sock. The
 # test CLI defaults to /tmp/lacs-daemon.sock — force the real path via

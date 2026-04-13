@@ -42,10 +42,10 @@
 #                      Note: COSMIC Atomic is not yet in quickget.
 #   LACS_VM_DIR      — where to store the ISO + qcow2 (default: tests/e2e/vm)
 #   LACS_VM_USER     — VM user created by the installer (default: lacsdev)
-#   LACS_VM_MEM      — VM RAM (default: 14G; appended to .conf on download).
-#                      Needs to fit the qwen3:14b test model (~9 GB) + OS
-#                      overhead (~2 GB) + planning headroom. Reduce to 8G
-#                      if you use qwen3:8b, or 16G for qwen3:30b-a3b.
+#   LACS_VM_MEM      — VM RAM (default: 10G; appended to .conf on download).
+#                      Sized for qwen3:8b (~5 GB) + OS overhead (~2 GB) +
+#                      planning headroom. Bump to 14G for qwen3:14b or 16G
+#                      for qwen3:30b-a3b MoE.
 #   LACS_VM_CPUS     — VM CPU count (default: 4; appended to .conf on download)
 #   LACS_VM_DISK     — VM disk size (default: 40G; appended to .conf on download)
 
@@ -168,7 +168,7 @@ cmd_download() {
 
 # LACS E2E overrides — appended by silverblue-vm.sh download
 disk_size="${LACS_VM_DISK:-40G}"
-ram="${LACS_VM_MEM:-14G}"
+ram="${LACS_VM_MEM:-10G}"
 cpu_cores="${LACS_VM_CPUS:-4}"
 # gl="off" — disable virtio-vga-gl/virgl. Fedora 42's gnome-initial-setup
 # crashes the QEMU window with a flicker-then-freeze on hosts with hybrid
@@ -408,14 +408,26 @@ cmd_install_key() {
 }
 
 cmd_run() {
-    local env_prefix=""
     if [ "${LACS_ALLOW_DESTRUCTIVE:-}" = "1" ]; then
-        env_prefix="LACS_ALLOW_DESTRUCTIVE=1"
         log "Running ALL stories (1-10). Make sure you have a VM snapshot."
     else
         log "Running read-only stories (1-7). Set LACS_ALLOW_DESTRUCTIVE=1 for 8-10."
     fi
-    cmd_ssh "cd /home/${VM_USER}/lacs && sudo -E $env_prefix bash tests/e2e/run-stories.sh"
+
+    # Forward relevant env vars through SSH → sudo. Passing them as
+    # `sudo VAR=val VAR2=val2 cmd` injects them into the command's env
+    # regardless of sudoers env_reset/env_keep settings.
+    local sudo_env=""
+    for var in LACS_ALLOW_DESTRUCTIVE LACS_LLM_PROVIDER LACS_LLM_MODEL \
+               LACS_TEST_MODEL LACS_OLLAMA_URL LACS_LISTEN_URI \
+               LACS_STORY_TIMEOUT; do
+        eval "val=\${$var:-}"
+        if [ -n "$val" ]; then
+            sudo_env+=" $var='$val'"
+        fi
+    done
+
+    cmd_ssh "cd /home/${VM_USER}/lacs && sudo${sudo_env} bash tests/e2e/run-stories.sh"
 }
 
 cmd_snapshot() {

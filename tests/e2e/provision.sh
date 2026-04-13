@@ -133,11 +133,16 @@ curl -sf http://127.0.0.1:11434/api/tags > /dev/null || fail "Ollama not respond
 # ---------------------------------------------------------------------------
 
 step "Pull test LLM model"
-# qwen3:14b is the sweet spot for CPU-only tool calling inside the VM:
-# ~9 GB disk, reliable tool calling, ~30-60 s/story on 4 vCPUs.
-# Override with LACS_TEST_MODEL (e.g. qwen3:8b for faster/dumber,
-# qwen3:30b-a3b for premium MoE).
-LACS_TEST_MODEL="${LACS_TEST_MODEL:-qwen3:14b}"
+# qwen3:8b is the sweet spot for CPU-only tool calling inside the VM:
+# ~5 GB disk, reliable tool calling, ~20-45 s/story on 4 vCPUs.
+# We learned this the hard way — qwen3:14b loaded fine but Qwen3's
+# default thinking mode pushes CPU-only latency to minutes per story,
+# and qwen3:0.6b was too small to emit correct tool calls at all.
+#
+# Override with LACS_TEST_MODEL:
+#   LACS_TEST_MODEL=qwen3:14b    # needs GPU passthrough
+#   LACS_TEST_MODEL=qwen3:30b-a3b # MoE, needs 16 GB+ VM RAM
+LACS_TEST_MODEL="${LACS_TEST_MODEL:-qwen3:8b}"
 ollama pull "$LACS_TEST_MODEL" || fail "Pull $LACS_TEST_MODEL"
 
 # ---------------------------------------------------------------------------

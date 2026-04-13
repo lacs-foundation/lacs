@@ -314,18 +314,26 @@ Two distinct downloads can be slow:
    on the host and copy it in via SSH if you're going to re-provision
    often.
 
-2. **The model pull** (~500 MB for `qwen3:0.6b`). Happens after Ollama
-   is installed, via `ollama pull`. Goes through Ollama's registry.
+2. **The model pull** (~5 GB for the default `qwen3:8b`). Happens
+   after Ollama is installed, via `ollama pull`. Goes through Ollama's
+   registry (usually faster than the ollama.com CDN).
 
 Override the model size with `LACS_TEST_MODEL`:
 
 ```sh
-LACS_TEST_MODEL=gemma3:1b ./tests/e2e/silverblue-vm.sh provision
-LACS_TEST_MODEL=qwen3:8b  ./tests/e2e/silverblue-vm.sh provision   # slow on CPU
+LACS_TEST_MODEL=qwen3:8b  ./tests/e2e/silverblue-vm.sh provision   # default
+LACS_TEST_MODEL=qwen3:14b ./tests/e2e/silverblue-vm.sh provision   # needs GPU passthrough
+LACS_TEST_MODEL=qwen3:30b-a3b ./tests/e2e/silverblue-vm.sh provision  # MoE, needs 16G VM
 ```
 
-Larger models give more reliable planning but take longer to load and
-run on CPU. For daily testing, `qwen3:0.6b` is fast enough.
+We default to **`qwen3:8b`** after empirical testing on CPU-only VMs:
+it produces correct tool calls reliably at ~20-45 s/story. Smaller
+models (qwen3:0.6b / qwen3:1.7b) emit garbled tool calls; larger
+models (qwen3:14b) are minutes per story on CPU because Qwen3's
+"thinking mode" generates thousands of preamble tokens.
+
+For the full history of what we tried and why, see
+[HACKING.md](../../HACKING.md) §8.
 
 **Tip:** once provision succeeds end-to-end, immediately `stop` the VM
 and `snapshot baseline`. Then every subsequent test cycle becomes
