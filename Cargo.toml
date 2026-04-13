@@ -7,6 +7,7 @@ members = [
   "crates/lacs-proto",
   "crates/lacs-types",
   "apps/lacs-shell/src-tauri",
+  "tests/e2e/bin",
 ]
 
 [workspace.package]

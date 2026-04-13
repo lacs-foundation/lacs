@@ -2080,6 +2080,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "lacs-test-cli"
+version = "0.1.0"
+dependencies = [
+ "lacs-brain",
+ "lacs-core",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "lacs-types"
 version = "0.1.0"
 dependencies = [

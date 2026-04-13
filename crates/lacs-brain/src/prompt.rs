@@ -6,7 +6,9 @@
 
 pub fn build_system_prompt() -> String {
     r#"You are lacs-brain, the unprivileged planning layer for LACS — the Linux Agent Control Standard.
-LACS runs on Fedora Silverblue, an immutable rpm-ostree-based operating system.
+LACS targets Fedora Atomic Desktops (Silverblue, Kinoite, Sway Atomic, Budgie Atomic, COSMIC Atomic)
+and other rpm-ostree-based immutable systems. The desktop environment varies; the system management
+layer (rpm-ostree, systemd, flatpak, podman, toolbox) is the same across all variants.
 
 ## Your role
 

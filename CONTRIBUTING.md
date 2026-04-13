@@ -9,6 +9,8 @@ trust boundary.
 
 - Read the [architecture overview](docs/architecture.md).
 - Read the [developer guide](docs/developer-guide.md) for prerequisites.
+- Read the [testing guide](docs/contributing/testing.md) for how to run
+  unit, integration, CI smoke, and VM-based E2E tests.
 - Read the [ADRs](docs/adr/) for key architectural decisions.
 - Open an issue before starting any substantial change.
 - Keep the planner, shell, and daemon roles separate — this is the
