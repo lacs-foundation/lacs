@@ -118,9 +118,17 @@ groups | grep -q kvm \
 
 # 2. Run the Fedora installer interactively (GUI window opens).
 #    When prompted, create user 'lacsdev' with password 'lacsdev'.
-#    Enable sshd from the Services screen during install.
-#    Shut the VM down when installation finishes.
+#    Shut the VM down when installation finishes (don't click "Reboot").
 ./tests/e2e/silverblue-vm.sh install
+
+# 3. One-time step: Silverblue ships sshd DISABLED. Boot the VM visibly
+#    once, log in as 'lacsdev', open a terminal, and run:
+#        sudo systemctl enable --now sshd
+#        sudo firewall-cmd --permanent --add-service=ssh
+#        sudo firewall-cmd --reload
+#        sudo poweroff
+#    This wrapper command gives you the same VM with a GUI window.
+./tests/e2e/silverblue-vm.sh enable-ssh
 ```
 
 **Run the tests:**

@@ -14,6 +14,8 @@
 # Subcommands:
 #   download   — fetch the Fedora Atomic ISO (idempotent)
 #   install    — start the VM to run the Fedora installer once
+#   enable-ssh — one-time step after install: boot visibly so you can
+#                enable sshd + firewalld (Silverblue ships sshd disabled)
 #   start      — boot the installed VM headlessly with SSH forwarding
 #   ssh        — open an SSH shell into the VM (or run a command)
 #   provision  — rsync the repo, run tests/e2e/provision.sh inside the VM
@@ -149,6 +151,11 @@ cmd_download() {
 disk_size="${LACS_VM_DISK:-40G}"
 ram="${LACS_VM_MEM:-6G}"
 cpu_cores="${LACS_VM_CPUS:-4}"
+# gl="off" — disable virtio-vga-gl/virgl. Fedora 42's gnome-initial-setup
+# crashes the QEMU window with a flicker-then-freeze on hosts with hybrid
+# graphics (Intel iGPU + NVIDIA dGPU is the common case). Software
+# rendering inside the guest is plenty fast for our use.
+gl="off"
 EOF
     fi
     log "Done. Config: $CONF_PATH"
@@ -158,9 +165,45 @@ EOF
 cmd_install() {
     require_tools quickemu
     [ -f "$CONF_PATH" ] || die "Config not found at $CONF_PATH. Run: $0 download"
-    log "Starting VM with the Fedora installer (GUI window will open)."
-    log "During install, create user '${VM_USER}' and enable the sshd service."
-    log "Shut the VM down when the installer finishes."
+    cat >&2 <<NOTE
+[silverblue-vm] Starting VM with the Fedora installer (GUI window will open).
+
+  During the Anaconda installer:
+    1. Pick language → Continue
+    2. Root password: set anything (or leave disabled)
+    3. User Creation: username '${VM_USER}', password '${VM_USER}',
+       ✅ 'Make this user administrator'
+    4. Begin Installation → wait ~5-10 min
+
+  After 'Complete!' screen:
+    - Close the QEMU window (or run \`sudo poweroff\` in the VM)
+    - Do NOT click 'Reboot' — the ISO will re-mount as CD-ROM
+
+  After the installer window closes, run '$0 enable-ssh' to boot the VM
+  visibly one more time and turn on sshd + the firewall rule. Silverblue
+  ships sshd DISABLED by default; we need it on for provisioning.
+NOTE
+    (cd "$VM_DIR" && quickemu --vm "$CONF_NAME")
+}
+
+# Boots the VM visibly (GTK display) so the user can enable sshd.
+# Silverblue ships sshd installed but disabled; we need it on for our
+# headless provisioning flow.
+cmd_enable_ssh() {
+    require_tools quickemu
+    [ -f "$CONF_PATH" ] || die "Config not found at $CONF_PATH. Run: $0 install first."
+    cat >&2 <<NOTE
+[silverblue-vm] Booting VM visibly so you can enable sshd.
+
+  Log in as '${VM_USER}', open a terminal, and run:
+
+    sudo systemctl enable --now sshd
+    sudo firewall-cmd --permanent --add-service=ssh
+    sudo firewall-cmd --reload
+    sudo poweroff
+
+  Then run '$0 start' to boot headless and '$0 provision' to continue.
+NOTE
     (cd "$VM_DIR" && quickemu --vm "$CONF_NAME")
 }
 
@@ -171,8 +214,31 @@ cmd_start() {
     (cd "$VM_DIR" && quickemu --vm "$CONF_NAME" --display none) &
     local port
     port="$(vm_ssh_port)"
-    wait_for_ssh "$port"
-    log "VM running. SSH via: ssh -p $port ${VM_USER}@127.0.0.1"
+    # Wait for real SSH handshake, not just TCP (qemu SLIRP accepts TCP
+    # before sshd is up). A Connection-reset RST at kex_exchange means
+    # the guest has no process listening on port 22 — usually because
+    # sshd was never enabled. Run '$0 enable-ssh' first if so.
+    local max_wait=180 waited=0
+    while [ $waited -lt $max_wait ]; do
+        if ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+               -o BatchMode=yes -o ConnectTimeout=5 -o LogLevel=ERROR \
+               -p "$port" "${VM_USER}@127.0.0.1" true 2>/dev/null; then
+            log "SSH handshake OK on port $port"
+            return 0
+        fi
+        # BatchMode=yes will fail with "Permission denied (publickey)" when
+        # sshd is up but our key isn't authorized — still counts as "ready".
+        if ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+               -o BatchMode=yes -o ConnectTimeout=5 -o LogLevel=ERROR \
+               -p "$port" "${VM_USER}@127.0.0.1" true 2>&1 \
+               | grep -qE 'Permission denied|publickey|password'; then
+            log "sshd responding on port $port (key auth may need 'ssh-copy-id')"
+            return 0
+        fi
+        sleep 5
+        waited=$((waited + 5))
+    done
+    die "sshd did not respond on port $port within ${max_wait}s. If the VM is booted but SSH is refusing, run '$0 enable-ssh' to turn sshd on inside the guest."
 }
 
 cmd_ssh() {
@@ -275,6 +341,7 @@ shift || true
 case "$cmd" in
     download)       cmd_download "$@" ;;
     install)        cmd_install "$@" ;;
+    enable-ssh)     cmd_enable_ssh "$@" ;;
     start)          cmd_start "$@" ;;
     ssh)            cmd_ssh "$@" ;;
     provision)      cmd_provision "$@" ;;
