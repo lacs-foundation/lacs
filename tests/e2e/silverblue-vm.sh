@@ -12,11 +12,15 @@
 # (including destructive ones) execute authentically.
 #
 # Subcommands:
-#   download   — fetch the Fedora Atomic ISO (idempotent)
-#   install    — start the VM to run the Fedora installer once
-#   enable-ssh — one-time step after install: boot visibly so you can
-#                enable sshd + firewalld (Silverblue ships sshd disabled)
-#   start      — boot the installed VM headlessly with SSH forwarding
+#   download    — fetch the Fedora Atomic ISO (idempotent)
+#   install     — start the VM to run the Fedora installer once
+#   enable-ssh  — one-time step after install: boot visibly so you can
+#                 enable sshd + firewalld (Silverblue ships sshd disabled)
+#   keygen      — generate a passphrase-less SSH key dedicated to the VM
+#                 (default location: ~/.ssh/lacs-vm)
+#   install-key — copy that key into the guest's authorized_keys via
+#                 guestfish (VM must be stopped)
+#   start       — boot the installed VM headlessly with SSH forwarding
 #   ssh        — open an SSH shell into the VM (or run a command)
 #   provision  — rsync the repo, run tests/e2e/provision.sh inside the VM
 #   run        — run the story harness (reads LACS_ALLOW_DESTRUCTIVE)
@@ -71,6 +75,15 @@ VM_NAME="fedora-${RELEASE}-${QUICKGET_EDITION}"
 CONF_NAME="${VM_NAME}.conf"
 CONF_PATH="${VM_DIR}/${CONF_NAME}"
 VM_SUBDIR="${VM_DIR}/${VM_NAME}"
+
+# Dedicated passphrase-less SSH key for the VM. We do NOT reuse the
+# contributor's personal ~/.ssh/id_* keys because those are typically
+# passphrase-protected, which breaks rsync/non-interactive ssh.
+SSH_KEY="${LACS_VM_SSH_KEY:-$HOME/.ssh/lacs-vm}"
+
+ssh_opts() {
+    printf -- '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i %s -o IdentitiesOnly=yes' "$SSH_KEY"
+}
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -210,29 +223,30 @@ NOTE
 cmd_start() {
     require_tools quickemu
     [ -f "$CONF_PATH" ] || die "Config not found at $CONF_PATH. Run: $0 download && $0 install"
+    [ -f "$SSH_KEY" ] || die "SSH key $SSH_KEY not found. Run '$0 keygen' first."
     log "Booting VM headlessly (display=none) in the background..."
     (cd "$VM_DIR" && quickemu --vm "$CONF_NAME" --display none) &
     local port
     port="$(vm_ssh_port)"
-    # Wait for real SSH handshake, not just TCP (qemu SLIRP accepts TCP
-    # before sshd is up). A Connection-reset RST at kex_exchange means
-    # the guest has no process listening on port 22 — usually because
-    # sshd was never enabled. Run '$0 enable-ssh' first if so.
+    # Wait for real SSH key handshake. qemu's SLIRP hostfwd accepts TCP
+    # before sshd is up, so a TCP probe is misleading. We need an actual
+    # ssh key auth handshake. Two passes:
+    #   1) Try our dedicated key — succeeds when authorized_keys is set up.
+    #   2) Fall back to recognising "Permission denied" responses, which
+    #      mean sshd is up but our key isn't installed — still counts as
+    #      "VM ready", just provisioning hasn't run.
     local max_wait=180 waited=0
+    # shellcheck disable=SC2046
     while [ $waited -lt $max_wait ]; do
-        if ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-               -o BatchMode=yes -o ConnectTimeout=5 -o LogLevel=ERROR \
+        if ssh $(ssh_opts) -o BatchMode=yes -o ConnectTimeout=5 \
                -p "$port" "${VM_USER}@127.0.0.1" true 2>/dev/null; then
-            log "SSH handshake OK on port $port"
+            log "SSH key auth OK on port $port"
             return 0
         fi
-        # BatchMode=yes will fail with "Permission denied (publickey)" when
-        # sshd is up but our key isn't authorized — still counts as "ready".
-        if ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-               -o BatchMode=yes -o ConnectTimeout=5 -o LogLevel=ERROR \
+        if ssh $(ssh_opts) -o BatchMode=yes -o ConnectTimeout=5 \
                -p "$port" "${VM_USER}@127.0.0.1" true 2>&1 \
                | grep -qE 'Permission denied|publickey|password'; then
-            log "sshd responding on port $port (key auth may need 'ssh-copy-id')"
+            log "sshd responding on port $port (key not installed; run '$0 install-key')"
             return 0
         fi
         sleep 5
@@ -244,26 +258,61 @@ cmd_start() {
 cmd_ssh() {
     local port
     port="$(vm_ssh_port)"
-    exec ssh \
-        -o StrictHostKeyChecking=no \
-        -o UserKnownHostsFile=/dev/null \
-        -o LogLevel=ERROR \
-        -p "$port" \
-        "${VM_USER}@127.0.0.1" "$@"
+    # shellcheck disable=SC2046
+    exec ssh $(ssh_opts) -p "$port" "${VM_USER}@127.0.0.1" "$@"
 }
 
 cmd_provision() {
     require_tools rsync
+    [ -f "$SSH_KEY" ] || die "SSH key $SSH_KEY not found. Run '$0 keygen' then '$0 install-key' first."
     local port repo_root
     port="$(vm_ssh_port)"
     repo_root="$(git rev-parse --show-toplevel)"
     log "Copying repo to VM via rsync on port $port..."
     rsync -az --exclude=target --exclude=node_modules --exclude=.git \
         --exclude="$VM_DIR" \
-        -e "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -p $port" \
+        -e "ssh $(ssh_opts) -p $port" \
         "$repo_root/" "${VM_USER}@127.0.0.1:/home/${VM_USER}/lacs/"
     log "Running provisioner inside the VM..."
     cmd_ssh "cd /home/${VM_USER}/lacs && sudo bash tests/e2e/provision.sh"
+}
+
+# Generate a dedicated SSH key for the VM (no passphrase). Idempotent.
+cmd_keygen() {
+    if [ -f "$SSH_KEY" ]; then
+        log "SSH key $SSH_KEY already exists, skipping"
+        return
+    fi
+    log "Generating dedicated VM SSH key at $SSH_KEY (no passphrase)..."
+    mkdir -p "$(dirname "$SSH_KEY")"
+    ssh-keygen -t ed25519 -N '' -C 'lacs-e2e-vm-only' -f "$SSH_KEY"
+    chmod 600 "$SSH_KEY"
+}
+
+# Install the VM SSH key into the guest's authorized_keys via guestfish
+# (works while VM is stopped; no need for a password). Idempotent.
+cmd_install_key() {
+    require_tools guestfish
+    [ -f "$SSH_KEY" ] || die "SSH key $SSH_KEY not found. Run '$0 keygen' first."
+    if pgrep -f "qemu-system.*${VM_NAME}" >/dev/null; then
+        die "VM is running. Run '$0 stop' first (or kill the qemu process)."
+    fi
+    [ -f "$(vm_disk_path)" ] || die "VM disk not found. Run '$0 install' first."
+    local pubkey
+    pubkey="$(cat "${SSH_KEY}.pub")"
+    log "Installing $SSH_KEY.pub into ${VM_USER}'s ~/.ssh/authorized_keys via guestfish..."
+    # Use a heredoc with command-substituted pubkey embedded.
+    guestfish -a "$(vm_disk_path)" <<EOF
+run
+mount-options subvol=home /dev/sda3 /
+mkdir-p /${VM_USER}/.ssh
+write /${VM_USER}/.ssh/authorized_keys "${pubkey}\n"
+chmod 0700 /${VM_USER}/.ssh
+chmod 0600 /${VM_USER}/.ssh/authorized_keys
+chown 1000 1000 /${VM_USER}/.ssh
+chown 1000 1000 /${VM_USER}/.ssh/authorized_keys
+EOF
+    log "Key installed. Boot the VM with '$0 start'."
 }
 
 cmd_run() {
@@ -342,6 +391,8 @@ case "$cmd" in
     download)       cmd_download "$@" ;;
     install)        cmd_install "$@" ;;
     enable-ssh)     cmd_enable_ssh "$@" ;;
+    keygen)         cmd_keygen "$@" ;;
+    install-key)    cmd_install_key "$@" ;;
     start)          cmd_start "$@" ;;
     ssh)            cmd_ssh "$@" ;;
     provision)      cmd_provision "$@" ;;
