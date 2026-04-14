@@ -2276,7 +2276,6 @@ dependencies = [
  "clap_complete",
  "lacs-brain",
  "lacs-types",
- "serde",
  "serde_json",
  "strip-ansi-escapes",
  "thiserror 2.0.18",
