@@ -1,0 +1,23 @@
+[package]
+name = "lacs-cli"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "lacs"
+path = "src/main.rs"
+
+[dependencies]
+lacs-brain = { path = "../../crates/lacs-brain" }
+lacs-core = { path = "../../crates/lacs-core" }
+lacs-types = { path = "../../crates/lacs-types" }
+
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "signal"] }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
