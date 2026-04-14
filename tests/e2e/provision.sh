@@ -18,6 +18,7 @@
 set -euo pipefail
 
 REPO_DIR="${REPO_DIR:-/home/lacsdev/lacs}"
+VM_USER="${VM_USER:-lacsdev}"
 MARKER="/var/lib/lacs-e2e/ready"
 LAYERED_MARKER="/var/lib/lacs-e2e/layered"
 LOG="/var/log/lacs-e2e-provision.log"
@@ -48,11 +49,12 @@ fail() {
 
 if [ ! -f "$LAYERED_MARKER" ]; then
     step "Layer build tools via rpm-ostree"
-    # jq, rsync, nc usually present; add what's missing.
-    # rustup handles rust itself; we only need build prereqs.
-    # podman, toolbox, flatpak are already present on atomic desktops.
+    # jq, rsync, nc, podman, toolbox, flatpak are present on atomic desktops.
+    # rustup handles rust itself; we only need build prereqs (gcc, etc.).
+    # zstd is needed by the Ollama installer script (it ships its tarball
+    # zstd-compressed and the install.sh extracts via `unzstd`).
     rpm-ostree install --idempotent --allow-inactive \
-        gcc gcc-c++ make openssl-devel pkg-config \
+        gcc gcc-c++ make openssl-devel pkg-config zstd \
         || fail "Layer build tools"
     touch "$LAYERED_MARKER"
     echo ""
@@ -91,18 +93,84 @@ if ! command -v ollama &>/dev/null; then
     curl -fsSL https://ollama.com/install.sh | sh || fail "Ollama install"
 fi
 
-# Start Ollama. The installer typically creates a systemd unit.
-systemctl enable --now ollama 2>/dev/null || {
-    nohup ollama serve &>/var/log/ollama.log &
-    sleep 3
-}
+# The official installer tries to create a systemd unit + ollama system
+# user. On rpm-ostree systems (Silverblue, Kinoite, Sericea, Onyx) that
+# can fail because /usr is read-only, or because the install was
+# interrupted. Write a minimal unit ourselves if it's missing. Idempotent.
+if [ ! -f /etc/systemd/system/ollama.service ] \
+    && [ ! -f /usr/lib/systemd/system/ollama.service ]; then
+    echo "Ollama systemd unit not found — writing one to /etc/systemd/system/"
+    install -d -m 755 -o "$VM_USER" -g "$VM_USER" /var/lib/ollama 2>/dev/null \
+        || install -d -m 755 -o lacsdev -g lacsdev /var/lib/ollama
+    cat > /etc/systemd/system/ollama.service <<UNIT
+[Unit]
+Description=Ollama Service
+After=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/ollama serve
+Environment=HOME=/var/lib/ollama
+Environment=OLLAMA_HOST=127.0.0.1:11434
+Restart=always
+User=${VM_USER:-lacsdev}
+Group=${VM_USER:-lacsdev}
+
+[Install]
+WantedBy=default.target
+UNIT
+    systemctl daemon-reload
+fi
+
+# Performance tuning drop-in. Ollama defaults to NumCPU/2 threads which
+# is 2 on a 4-vCPU VM — too few. OLLAMA_KEEP_ALIVE=30m keeps the model
+# resident between stories instead of unloading after 5 minutes of
+# inactivity (that unload costs 5-10 s on every subsequent story).
+install -d -m 755 /etc/systemd/system/ollama.service.d
+cat > /etc/systemd/system/ollama.service.d/override.conf <<'DROP'
+[Service]
+Environment=OLLAMA_NUM_THREADS=4
+Environment=OLLAMA_KEEP_ALIVE=30m
+DROP
+systemctl daemon-reload
+
+systemctl enable --now ollama || fail "Start Ollama systemd unit"
+systemctl restart ollama     # ensure the drop-in is applied
+# Wait up to 15s for the server to accept connections.
+for i in $(seq 1 15); do
+    if curl -sf http://127.0.0.1:11434/api/tags > /dev/null; then break; fi
+    sleep 1
+done
+curl -sf http://127.0.0.1:11434/api/tags > /dev/null || fail "Ollama not responding on 11434"
 
 # ---------------------------------------------------------------------------
-# Phase 2: Pull a small LLM
+# Phase 2: Pull the LLM
 # ---------------------------------------------------------------------------
 
 step "Pull test LLM model"
-LACS_TEST_MODEL="${LACS_TEST_MODEL:-qwen3:0.6b}"
+# qwen3:8b is the default because it produces the most reliable tool
+# calls in LACS's planning loop. 5.2 GB disk, thinking-capable, tool-
+# capable. LACS auto-detects the `qwen3` prefix and enables thinking
+# mode via `options` (see THINKING_MODEL_PREFIXES in
+# crates/lacs-brain/src/planner.rs).
+#
+# Performance expectations:
+#   - Host GPU via LACS_OLLAMA_URL=http://10.0.2.2:11434 — <60 s/story
+#   - GPU passthrough (VFIO) — similar
+#   - CPU-only on a 4 vCPU VM — impractical: thinking exceeds Ollama's
+#     ~120 s request timeout. Either disable thinking
+#     (`ollama_think = false` in config.toml or
+#     LACS_OLLAMA_THINK=false), or switch to a non-thinking model
+#     via LACS_TEST_MODEL (see below). See HACKING.md §8.
+#
+# Override with LACS_TEST_MODEL. Known-good alternatives:
+#   LACS_TEST_MODEL=llama3.2:3b      # CPU fallback: 2 GB, no thinking,
+#                                    # ~2–4 min/story on 4 vCPUs.
+#   LACS_TEST_MODEL=qwen2.5:3b       # lighter CPU fallback, no thinking
+#   LACS_TEST_MODEL=qwen3:30b-a3b    # MoE, needs 16 GB+ VM RAM + GPU
+#
+# Known-bad (returned 400 "does not support tools" or similar):
+#   gemma3:1b, gemma3:4b, qwen3:0.6b, qwen3:1.7b.
+LACS_TEST_MODEL="${LACS_TEST_MODEL:-qwen3:8b}"
 ollama pull "$LACS_TEST_MODEL" || fail "Pull $LACS_TEST_MODEL"
 
 # ---------------------------------------------------------------------------
@@ -124,7 +192,20 @@ ls -lh target/release/lacs-daemon target/release/lacs-test-cli
 # ---------------------------------------------------------------------------
 
 step "Install daemon"
-make install || fail "make install"
+# On rpm-ostree systems (Silverblue, Kinoite, Sericea, Onyx) /usr is
+# read-only, so the default Makefile paths fail. Detect ostree and redirect
+# the systemd / polkit / sysusers / tmpfiles fragments into /etc instead.
+if command -v rpm-ostree &>/dev/null && rpm-ostree status --booted &>/dev/null; then
+    echo "Detected rpm-ostree host — installing with /etc overrides."
+    make install \
+        SYSUSERS=/etc/sysusers.d \
+        TMPFILES=/etc/tmpfiles.d \
+        SYSTEMD=/etc/systemd/system \
+        POLKIT=/etc/polkit-1/rules.d \
+        || fail "make install (rpm-ostree paths)"
+else
+    make install || fail "make install"
+fi
 
 # ---------------------------------------------------------------------------
 # Phase 2: Create test user 'lacsdev' (if not already present from installer)

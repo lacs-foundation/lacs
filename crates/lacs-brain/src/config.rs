@@ -15,6 +15,12 @@ use std::fmt;
 
 pub const DEFAULT_ANTHROPIC_MODEL: &str = "claude-sonnet-4-6";
 pub const DEFAULT_ANTHROPIC_BASE_URL: &str = "https://api.anthropic.com";
+/// Default Ollama model. qwen3:8b produces the most reliable tool
+/// calls in the planning loop; the planner auto-enables thinking mode
+/// for it via `THINKING_MODEL_PREFIXES` in `planner.rs`. CPU-only
+/// hosts should either disable thinking (`ollama_think = false` in
+/// `config.toml`) or pick a smaller non-thinking model —
+/// see `HACKING.md` §8 for the full matrix.
 pub const DEFAULT_OLLAMA_MODEL: &str = "qwen3:8b";
 pub const DEFAULT_OLLAMA_BASE_URL: &str = "http://localhost:11434";
 pub const DEFAULT_OPENAI_MODEL: &str = "gpt-4o";
@@ -173,7 +179,7 @@ impl BrainConfig {
     /// Load from environment variables.
     ///
     /// Returns `Err(ConfigError::InvalidMaxTurns)` if `LACS_BRAIN_MAX_TURNS` is
-    /// set to a non-positive integer or an unparseable value. Unset → default of 5.
+    /// set to a non-positive integer or an unparseable value. Unset → default of 10.
     ///
     /// Returns `Err(ConfigError::MissingAnthropicKey)` if the provider is
     /// `anthropic` and `ANTHROPIC_API_KEY` is absent or empty.

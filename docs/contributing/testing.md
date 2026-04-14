@@ -11,6 +11,7 @@ validation before a release.
 | Unit tests (Rust) | Individual functions, parsers, traits | <5s | Every commit, every CI run |
 | Unit tests (TypeScript) | React components, reducers, IPC shims | <5s | Every commit, every CI run |
 | Integration (Rust) | Daemon IPC, safety fence, policy | <10s | Every commit, every CI run |
+| **Dev stories (local, no VM)** | LLM plan structure for stories 1-7; runs on any Linux host | 1-3 min | After brain/prompt changes |
 | CI smoke (container) | Daemon + Ollama + read-only stories in a Linux runner | 5-10 min | Opt-in (PR label `e2e` or manual trigger) |
 | E2E Silverblue VM | **Real Silverblue** in QEMU/KVM, full stack, all 10 stories | 15-30 min first boot; 2-3 min subsequent | Local / pre-release |
 | Manual QA | Real Silverblue/Kinoite hardware, destructive actions, GUI | 30-60 min | Before releases + demo video |
@@ -34,11 +35,72 @@ pnpm test
 pnpm exec tsc --noEmit
 ```
 
+## Running stories on your dev machine (no VM required)
+
+`tests/e2e/dev-stories.sh` runs the 7 read-only user stories directly on
+your workstation. It builds the daemon and test CLI, starts the daemon on
+`/tmp/lacs-daemon.sock`, runs the stories, and then stops the daemon.
+
+**What it validates:** the LLM proposes the correct plan (right action
+names, risk levels, parameters). It does **not** execute the actions — it
+tests plan structure only. This works on any Linux host because the story
+scripts check the JSON plan output, not the results of `df`, `ps`, etc.
+
+**LLM provider:** auto-detected from environment variables (same logic as
+the product's `BrainConfig::from_env`):
+
+| Variable set | Provider used | Model |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | `anthropic` | `claude-sonnet-4-6` |
+| `OPENAI_API_KEY` | `openai` | `gpt-4o` |
+| `GEMINI_API_KEY` | `gemini` | `gemini-2.0-flash` |
+| neither | `ollama` | `qwen3:8b` (must be pulled; CPU-only is impractical — use `LACS_LLM_MODEL=llama3.2:3b` on CPU) |
+
+Override with `LACS_LLM_PROVIDER` and `LACS_LLM_MODEL`.
+
+```sh
+# Run stories 1-7 with an Anthropic key
+ANTHROPIC_API_KEY=sk-ant-... tests/e2e/dev-stories.sh
+
+# Run stories 1-7 with OpenAI
+OPENAI_API_KEY=sk-proj-... tests/e2e/dev-stories.sh
+
+# Run with local Ollama (must have qwen3:8b or llama3.2:3b pulled)
+tests/e2e/dev-stories.sh
+
+# Run specific stories
+OPENAI_API_KEY=sk-... tests/e2e/dev-stories.sh 3 6 7
+
+# Stories 8-10 require LACS_ALLOW_DESTRUCTIVE=1 — they will fail on a
+# non-Fedora-Atomic host because query_packages / query_authorized_keys
+# call rpm-ostree and SSH tools that are not installed. This is expected.
+# Run them on a provisioned VM for real coverage.
+LACS_ALLOW_DESTRUCTIVE=1 OPENAI_API_KEY=sk-... tests/e2e/dev-stories.sh
+```
+
+**When to use this tier:**
+- After any change to `crates/lacs-brain/src/prompt.rs`
+- After adding or changing a `query_*` tool or `Get*`/`List*` action
+- As a quick sanity check for brain/planner changes before pushing
+
+**Expected results on a dev machine:**
+- Stories 1-7: all pass
+- Story 8 (install vim): fails — model calls `query_packages`, daemon
+  can't run `rpm-ostree`, model escalates to `get_system_state` →
+  `StateUnavailable`. Passes on a real VM where `rpm-ostree` is present.
+- Story 9 (create toolbox): may pass plan-structure check (plan
+  structure only, no toolbox is created).
+- Story 10 (add SSH key): fails for the same reason as story 8 —
+  `query_authorized_keys` fails without the SSH tooling. Passes on a
+  real VM.
+
+For full story 8 and 10 coverage, use the VM path.
+
 ## Running the CI smoke test (opt-in)
 
 The smoke test boots Ollama and the daemon directly in a GitHub Actions
 runner (no VM, no real atomic desktop), pulls a small tool-capable model
-(`gemma3:1b`), and runs the 7 read-only user stories.
+(`llama3.2:3b`), and runs the 7 read-only user stories.
 
 **Triggers:**
 
@@ -62,10 +124,10 @@ build artifacts.
 
 ## Running the full E2E suite in a Silverblue VM
 
-This is the **high-fidelity** path. The VM is a real Fedora Silverblue
-(or Kinoite / Sway Atomic / Budgie Atomic / COSMIC Atomic) install with
-rpm-ostree, systemd, flatpak, podman, and toolbox. All 10 user stories
-— including destructive ones — execute authentically.
+This is the **high-fidelity** path. The VM is a real Fedora Atomic Desktop
+(Silverblue / Kinoite / Sericea / Onyx) install with rpm-ostree, systemd,
+flatpak, podman, and toolbox. All 10 user stories — including destructive
+ones — execute authentically.
 
 ### Linux and macOS hosts (recommended)
 
@@ -77,31 +139,90 @@ reproducible VM you can snapshot and restore.
 
 **Install quickemu:**
 
-```sh
-# Fedora / Fedora Atomic
-sudo dnf install quickemu                  # (or layer via rpm-ostree on atomic)
+You also need `qemu-system-x86_64`, `qemu-utils` (for `qemu-img`), `rsync`,
+`netcat`, and `ssh` — these are all standard packages on every supported
+distro.
 
-# Ubuntu / Debian
-sudo apt install quickemu
+```sh
+# Fedora 41+ (default repos have a current quickemu)
+sudo dnf install quickemu qemu qemu-img
+
+# Fedora Atomic Desktops (Silverblue / Kinoite / Sericea / Onyx host)
+sudo rpm-ostree install quickemu qemu qemu-img
+# Reboot to activate, then proceed.
+
+# Ubuntu 24.04 / Debian — the version in default Ubuntu repos may be too
+# old (missing the Nov 2024 .ociarchive fix for Fedora Atomic). Use the PPA:
+sudo add-apt-repository -y ppa:flexiondotorg/quickemu
+sudo apt-get update
+sudo apt-get install -y quickemu qemu-system-x86 qemu-utils \
+    qemu-system-modules-spice rsync netcat-openbsd
 
 # macOS (Homebrew)
-brew install quickemu
+brew install --cask quickemu
+```
+
+After installing, verify your user can access KVM (Linux only):
+
+```sh
+ls -l /dev/kvm           # should exist
+test -r /dev/kvm \
+    || sudo usermod -aG kvm "$USER"   # then log out and back in
+                                       # (or use ACL: setfacl -m u:$USER:rw /dev/kvm)
+```
+
+You also need `libguestfs-tools` for the offline disk patches we apply
+between Anaconda's install and the first SSH login (set passwords,
+install our SSH key, enable sshd). Ubuntu 24.04 keeps kernel images at
+mode 0600 by default, which prevents libguestfs from running
+unprivileged — fix once with `sudo chmod +r /boot/vmlinuz-*`.
+
+```sh
+sudo apt-get install -y libguestfs-tools
+sudo chmod +r /boot/vmlinuz-*
 ```
 
 **One-time VM setup:**
 
 ```sh
-# From the repo root
+# From the repo root.
 
-# 1. Download the Silverblue 42 ISO (~2.5 GB, cached under tests/e2e/vm/)
+# 1. Generate a passphrase-less SSH key dedicated to the VM (you do
+#    not want to reuse your personal id_ed25519 — rsync/non-interactive
+#    ssh cannot prompt for a passphrase). Idempotent.
+./tests/e2e/silverblue-vm.sh keygen
+
+# 2. Download the Silverblue 42 ISO (~2.5 GB, cached under tests/e2e/vm/).
 ./tests/e2e/silverblue-vm.sh download
 
-# 2. Run the Fedora installer interactively (GUI window opens).
-#    When prompted, create user 'lacsdev' with password 'lacsdev'.
-#    Enable sshd from the Services screen during install.
-#    Shut the VM down when installation finishes.
+# 3. Run the Fedora installer interactively (GUI window opens).
+#    Just click through it — you don't need to set a password or create
+#    a user; we patch all of that into the disk image afterwards via
+#    libguestfs. Shut the VM down when the installer finishes (close
+#    the QEMU window or pick "Power Off" in the post-install screen —
+#    DO NOT click "Reboot": the ISO will re-mount as CD-ROM).
 ./tests/e2e/silverblue-vm.sh install
+
+# 4. Patch the disk image with our test user, password, sudoers, sshd,
+#    and SSH key. (Implemented via guestfish so it works offline,
+#    bypassing Silverblue's interactive first-boot wizard which has
+#    bugs in F42.)
+./tests/e2e/silverblue-vm.sh install-key
 ```
+
+> Why no `enable-ssh` step? Earlier versions of this script tried to
+> boot the VM visibly so the contributor could enable sshd by hand.
+> That ran into Fedora 42's gnome-initial-setup crashing on the
+> third-party-repo screen with virgl/Wayland bugs. The current flow
+> sidesteps the GUI entirely by configuring the VM offline via
+> `libguestfs`. The `enable-ssh` subcommand is still there as a fallback
+> if your Anaconda install did create a usable user.
+
+> What `bootstrap` does, in one shot: create user `lacsdev`, set the
+> password (`lacsdev`), set root password (`lacs`), install your VM
+> SSH key, NOPASSWD-sudoers `lacsdev`, enable `sshd`, set SELinux to
+> permissive, and pre-mark `gnome-initial-setup` as done. Idempotent —
+> safe to re-run after `install`.
 
 **Run the tests:**
 
@@ -110,24 +231,29 @@ brew install quickemu
 ./tests/e2e/silverblue-vm.sh start
 
 # First-ever provision: rsyncs the repo into the VM, layers build tools
-# via rpm-ostree, reboots the VM, then builds LACS and starts the daemon.
-# Expect ~15 minutes the first time; ~2 minutes on subsequent provisions.
+# via rpm-ostree, reboots the VM, then runs again to build LACS and
+# pull the Ollama model. Re-run after the auto-reboot (the script tells
+# you when). Expect 30-60 minutes total on first run (mostly waiting
+# for Ollama tarball + Rust deps download). ~2 minutes on subsequent
+# provisions.
 ./tests/e2e/silverblue-vm.sh provision
 
-# Take a snapshot BEFORE running destructive stories
+# RECOMMENDED: take a "baseline" snapshot now, before any test run.
+# Future test runs can `restore baseline` instead of re-provisioning.
 ./tests/e2e/silverblue-vm.sh stop
-./tests/e2e/silverblue-vm.sh snapshot pre-destructive
+./tests/e2e/silverblue-vm.sh snapshot baseline
 ./tests/e2e/silverblue-vm.sh start
 
 # Run the read-only stories (1-7)
 ./tests/e2e/silverblue-vm.sh run
 
-# Run ALL stories including destructive (8-10)
+# Run ALL stories including destructive (8-10) — the destructive ones
+# layer packages, create toolboxes, etc. Restore the baseline afterwards.
 LACS_ALLOW_DESTRUCTIVE=1 ./tests/e2e/silverblue-vm.sh run
 
-# Roll back destructive changes via the snapshot
+# Roll back to the clean baseline so the next run is fast
 ./tests/e2e/silverblue-vm.sh stop
-./tests/e2e/silverblue-vm.sh restore pre-destructive
+./tests/e2e/silverblue-vm.sh restore baseline
 ```
 
 **Other useful commands:**
@@ -147,8 +273,17 @@ LACS_VM_VARIANT=kinoite ./tests/e2e/silverblue-vm.sh install
 # ... all management commands respect LACS_VM_VARIANT.
 ```
 
-Supported variants: `silverblue`, `kinoite`, `sway-atomic`, `budgie-atomic`,
-`cosmic-atomic` (when the ISO is published by Fedora).
+Supported variants (these are the names quickget uses):
+
+| `LACS_VM_VARIANT` | Atomic Desktop | Desktop |
+|---|---|---|
+| `silverblue` (default) | Fedora Silverblue | GNOME |
+| `kinoite` | Fedora Kinoite | KDE Plasma |
+| `sericea` | Fedora Sway Atomic | Sway |
+| `onyx` | Fedora Budgie Atomic | Budgie |
+
+COSMIC Atomic is not yet packaged by quickget; install it manually from
+the ISO if needed.
 
 ### Windows hosts
 
@@ -230,17 +365,51 @@ rpm-ostree install requires a reboot. The provision script auto-reboots
 and asks you to re-run it. If it got stuck, just run `provision` again —
 it's idempotent.
 
-### Ollama model pulls too slowly
+### Ollama download or model pull is very slow
 
-The provisioner defaults to `qwen3:0.6b` (~500 MB). Override with:
+Two distinct downloads can be slow:
+
+1. **The Ollama tarball itself** (~1.5 GB, downloaded by `install.sh` from
+   `ollama.com/download/ollama-linux-amd64.tgz`). On some networks /
+   geos / times of day this CDN serves at <100 KB/s. There's no
+   workaround inside the script — wait it out, or pre-stage the binary
+   on the host and copy it in via SSH if you're going to re-provision
+   often.
+
+2. **The model pull** (~2 GB for the default `llama3.2:3b`, or ~5 GB
+   for `qwen3:8b` if you override). Happens after Ollama is installed,
+   via `ollama pull`. Goes through Ollama's registry (usually faster
+   than the ollama.com CDN).
+
+Override the model size with `LACS_TEST_MODEL`:
 
 ```sh
-LACS_TEST_MODEL=gemma3:1b ./tests/e2e/silverblue-vm.sh provision
-LACS_TEST_MODEL=qwen3:8b  ./tests/e2e/silverblue-vm.sh provision   # slow on CPU
+LACS_TEST_MODEL=llama3.2:3b ./tests/e2e/silverblue-vm.sh provision  # default, CPU-only friendly
+LACS_TEST_MODEL=qwen2.5:3b  ./tests/e2e/silverblue-vm.sh provision  # alt tool-capable 3B
+LACS_TEST_MODEL=qwen3:8b    ./tests/e2e/silverblue-vm.sh provision  # GPU passthrough only
 ```
 
-Larger models give more reliable planning but take longer to load and
-run on CPU. For daily testing, `qwen3:0.6b` is fast enough.
+We default to **`llama3.2:3b`** after empirical live testing on a
+CPU-only 4-vCPU / 10 GB VM: ~2 GB download, no thinking mode, tool
+calling works reliably, ~2-4 min/story.
+
+Qwen3 models (including `qwen3:8b`) default to "thinking mode" which
+emits thousands of hidden reasoning tokens before the real answer. On
+CPU this blows past Ollama's internal 120-second request timeout and
+every `/api/chat` call fails with HTTP 500 before a plan is emitted.
+`qwen3:8b` is only a viable default if you have GPU passthrough
+configured. Gemma 3 (1b / 4b) is fast but Ollama currently rejects
+tool calls with `400: does not support tools`.
+
+Per-story timeout defaults to 10 minutes (`LACS_STORY_TIMEOUT=600`) —
+small tool-capable models on 4 vCPUs need that much headroom.
+
+For the full history of what we tried and why, see
+[HACKING.md](../../HACKING.md) §8.
+
+**Tip:** once provision succeeds end-to-end, immediately `stop` the VM
+and `snapshot baseline`. Then every subsequent test cycle becomes
+`restore baseline → start → run`, skipping all the slow downloads.
 
 ### CPU-only inference is too slow
 

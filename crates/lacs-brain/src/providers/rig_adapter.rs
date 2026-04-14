@@ -9,6 +9,7 @@
 //! Groq, DeepSeek, Mistral, xAI, etc.) for free without hand-rolling HTTP clients.
 
 use async_trait::async_trait;
+use futures::StreamExt;
 use rig::completion::{CompletionModel, CompletionRequest, ToolDefinition as RigToolDefinition};
 use rig::message::{
     AssistantContent, Message as RigMessage, Text, ToolCall, ToolFunction, ToolResult,
@@ -30,11 +31,23 @@ use crate::provider::{
 /// `rig::providers::ollama::CompletionModel`, etc.).
 pub struct RigCompletionAdapter<M: CompletionModel> {
     model: M,
+    /// Extra parameters merged verbatim into every `CompletionRequest`. Used to
+    /// pass provider-specific knobs that Rig does not expose as first-class
+    /// fields (e.g. `{"keep_alive": "30m"}` for Ollama).
+    additional_params: Option<serde_json::Value>,
 }
 
 impl<M: CompletionModel> RigCompletionAdapter<M> {
     pub fn new(model: M) -> Self {
-        Self { model }
+        Self {
+            model,
+            additional_params: None,
+        }
+    }
+
+    pub fn with_additional_params(mut self, params: serde_json::Value) -> Self {
+        self.additional_params = Some(params);
+        self
     }
 }
 
@@ -70,17 +83,25 @@ where
             temperature: None,
             max_tokens: Some(max_tokens as u64),
             tool_choice: None,
-            additional_params: None,
+            additional_params: self.additional_params.clone(),
             output_schema: None,
         };
 
-        let response = self
-            .model
-            .completion(request)
-            .await
-            .map_err(map_rig_error)?;
+        // Use the streaming path so that thinking-mode models (e.g. Qwen3)
+        // are handled correctly. Rig's non-streaming Ollama path drops the
+        // `thinking` field entirely and fails with "No content provided" when
+        // a model returns thinking content alongside an empty `content` field.
+        // The streaming path accumulates reasoning + text + tool_calls into
+        // `choice` correctly. We drain the stream here and read `choice` once
+        // it is populated (at stream end). The `LlmProvider` interface stays
+        // single-shot — callers see no difference.
+        let mut stream = self.model.stream(request).await.map_err(map_rig_error)?;
 
-        from_rig_response(response.choice)
+        while let Some(item) = stream.next().await {
+            item.map_err(map_rig_error)?;
+        }
+
+        from_rig_response(stream.choice)
     }
 }
 
@@ -114,6 +135,7 @@ fn to_rig_messages(system: &str, messages: &[Message]) -> Vec<RigMessage> {
                         .filter_map(|b| {
                             if let ContentBlock::ToolResult {
                                 tool_use_id,
+                                call_id,
                                 content,
                                 is_error,
                             } = b
@@ -125,7 +147,13 @@ fn to_rig_messages(system: &str, messages: &[Message]) -> Vec<RigMessage> {
                                 };
                                 Some(UserContent::ToolResult(ToolResult {
                                     id: tool_use_id.clone(),
-                                    call_id: None,
+                                    // OpenAI Responses API: call_id (call_xxx) is the
+                                    // function-call match key for function_call_output.
+                                    // Fall back to tool_use_id for providers without a
+                                    // separate call ID (Anthropic, Ollama, Gemini).
+                                    call_id: Some(
+                                        call_id.clone().unwrap_or_else(|| tool_use_id.clone()),
+                                    ),
                                     content: OneOrMany::one(ToolResultContent::text(&text)),
                                 }))
                             } else {
@@ -173,11 +201,23 @@ fn to_rig_messages(system: &str, messages: &[Message]) -> Vec<RigMessage> {
                             assistant_content
                                 .push(AssistantContent::Text(Text { text: text.clone() }));
                         }
-                        ContentBlock::ToolUse { id, name, input } => {
-                            assistant_content.push(AssistantContent::ToolCall(ToolCall::new(
+                        ContentBlock::ToolUse {
+                            id,
+                            call_id,
+                            name,
+                            input,
+                        } => {
+                            let mut tc = ToolCall::new(
                                 id.clone(),
                                 ToolFunction::new(name.clone(), input.clone()),
-                            )));
+                            );
+                            // For the OpenAI Responses API, call_id (call_xxx) is required
+                            // to match the function_call_output in the next turn. For
+                            // providers without a separate call ID (Anthropic, Ollama,
+                            // Gemini), fall back to id so the ToolResult.call_id still
+                            // has a value.
+                            tc.call_id = Some(call_id.clone().unwrap_or_else(|| id.clone()));
+                            assistant_content.push(AssistantContent::ToolCall(tc));
                         }
                         ContentBlock::ToolResult { .. } => {
                             // Tool results don't appear in assistant messages
@@ -222,14 +262,43 @@ fn to_rig_tools(tools: &[ToolDefinition]) -> Vec<RigToolDefinition> {
 // ---------------------------------------------------------------------------
 
 /// Convert a Rig completion response into our `Completion` type.
+///
+/// Per-turn diagnostics (block counts, text preview, tool-call details)
+/// are emitted at TRACE level under the `lacs_brain::rig_adapter`
+/// target. Turn them on with
+/// `RUST_LOG=lacs_brain::rig_adapter=trace` when debugging planner
+/// behaviour; normal runs stay silent.
 fn from_rig_response(choice: OneOrMany<AssistantContent>) -> Result<Completion, ProviderError> {
     let mut content = Vec::new();
     let mut has_tool_calls = false;
+
+    if tracing::enabled!(target: "lacs_brain::rig_adapter", tracing::Level::TRACE) {
+        let mut counts = (0usize, 0usize, 0usize, 0usize);
+        for item in choice.iter() {
+            match item {
+                AssistantContent::Text(_) => counts.0 += 1,
+                AssistantContent::ToolCall(_) => counts.1 += 1,
+                AssistantContent::Reasoning(_) => counts.2 += 1,
+                AssistantContent::Image(_) => counts.3 += 1,
+            }
+        }
+        tracing::trace!(
+            target: "lacs_brain::rig_adapter",
+            "response blocks: text={}, tool_call={}, reasoning={}, image={}",
+            counts.0, counts.1, counts.2, counts.3
+        );
+    }
 
     for item in choice.iter() {
         match item {
             AssistantContent::Text(text) => {
                 if !text.text.is_empty() {
+                    tracing::trace!(
+                        target: "lacs_brain::rig_adapter",
+                        "text content ({} chars): {:?}",
+                        text.text.len(),
+                        text.text.chars().take(200).collect::<String>()
+                    );
                     content.push(ContentBlock::Text {
                         text: text.text.clone(),
                     });
@@ -237,19 +306,33 @@ fn from_rig_response(choice: OneOrMany<AssistantContent>) -> Result<Completion, 
             }
             AssistantContent::ToolCall(tc) => {
                 has_tool_calls = true;
+                tracing::trace!(
+                    target: "lacs_brain::rig_adapter",
+                    "tool_call: name={}, args={}",
+                    tc.function.name, tc.function.arguments
+                );
                 content.push(ContentBlock::ToolUse {
+                    // OpenAI Responses API dual-ID:
+                    //   id      = fc_xxx  (response-item ID, echoed in the next input array)
+                    //   call_id = call_xxx (function-call match key for function_call_output)
+                    // Anthropic/Ollama/Gemini set only `id` and leave `call_id` as None.
                     id: tc.id.clone(),
+                    call_id: tc.call_id.clone().filter(|s| !s.is_empty()),
                     name: tc.function.name.clone(),
                     input: tc.function.arguments.clone(),
                 });
             }
             AssistantContent::Reasoning(_) => {
-                eprintln!(
-                    "[lacs-brain] WARNING: skipping Reasoning block \
-                     (not supported by planning loop)"
+                // Expected from thinking models (qwen3, qwq, deepseek-r);
+                // not surfaced unless explicitly traced.
+                tracing::trace!(
+                    target: "lacs_brain::rig_adapter",
+                    "skipping Reasoning block"
                 );
             }
             AssistantContent::Image(_) => {
+                // Image blocks during planning mean something is wrong —
+                // surface unconditionally.
                 eprintln!(
                     "[lacs-brain] WARNING: skipping Image block \
                      (not supported by planning loop)"
@@ -371,6 +454,7 @@ mod tests {
         let messages = vec![Message::tool_results(vec![
             crate::provider::ToolResultBlock {
                 tool_use_id: "tu_1".into(),
+                call_id: None,
                 content: r#"{"ok":true}"#.into(),
                 is_error: false,
             },
@@ -381,7 +465,11 @@ mod tests {
             RigMessage::User { content } => {
                 let first = content.first();
                 match first {
-                    UserContent::ToolResult(tr) => assert_eq!(tr.id, "tu_1"),
+                    UserContent::ToolResult(tr) => {
+                        assert_eq!(tr.id, "tu_1");
+                        // call_id falls back to tool_use_id when None is provided.
+                        assert_eq!(tr.call_id, Some("tu_1".into()));
+                    }
                     _ => panic!("expected tool result, got {:?}", first),
                 }
             }
@@ -390,9 +478,35 @@ mod tests {
     }
 
     #[test]
+    fn to_rig_messages_tool_result_with_explicit_call_id() {
+        // When call_id is explicitly set (OpenAI Responses API), it must be
+        // forwarded as-is rather than falling back to tool_use_id.
+        let messages = vec![Message::tool_results(vec![
+            crate::provider::ToolResultBlock {
+                tool_use_id: "fc_abc".into(),
+                call_id: Some("call_xyz".into()),
+                content: "result".into(),
+                is_error: false,
+            },
+        ])];
+        let rig_msgs = to_rig_messages("sys", &messages);
+        match &rig_msgs[1] {
+            RigMessage::User { content } => match content.first() {
+                UserContent::ToolResult(tr) => {
+                    assert_eq!(tr.id, "fc_abc");
+                    assert_eq!(tr.call_id, Some("call_xyz".into()));
+                }
+                _ => panic!("expected tool result"),
+            },
+            _ => panic!("expected User message"),
+        }
+    }
+
+    #[test]
     fn to_rig_messages_converts_assistant_tool_use() {
         let messages = vec![Message::assistant(vec![ContentBlock::ToolUse {
             id: "tu_1".into(),
+            call_id: None,
             name: "get_system_state".into(),
             input: serde_json::json!({}),
         }])];
@@ -404,10 +518,34 @@ mod tests {
                 match first {
                     AssistantContent::ToolCall(tc) => {
                         assert_eq!(tc.function.name, "get_system_state");
+                        // call_id falls back to id when None is provided.
+                        assert_eq!(tc.call_id, Some("tu_1".into()));
                     }
                     _ => panic!("expected tool call"),
                 }
             }
+            _ => panic!("expected Assistant message"),
+        }
+    }
+
+    #[test]
+    fn to_rig_messages_assistant_tool_use_with_explicit_call_id() {
+        // OpenAI dual-ID: id=fc_xxx (response-item), call_id=call_xxx (match key).
+        let messages = vec![Message::assistant(vec![ContentBlock::ToolUse {
+            id: "fc_abc".into(),
+            call_id: Some("call_xyz".into()),
+            name: "propose_plan".into(),
+            input: serde_json::json!({}),
+        }])];
+        let rig_msgs = to_rig_messages("sys", &messages);
+        match &rig_msgs[1] {
+            RigMessage::Assistant { content, .. } => match content.first() {
+                AssistantContent::ToolCall(tc) => {
+                    assert_eq!(tc.id, "fc_abc");
+                    assert_eq!(tc.call_id, Some("call_xyz".into()));
+                }
+                _ => panic!("expected tool call"),
+            },
             _ => panic!("expected Assistant message"),
         }
     }

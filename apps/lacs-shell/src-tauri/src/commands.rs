@@ -710,6 +710,7 @@ mod tests {
         Ok(Completion {
             content: vec![ContentBlock::ToolUse {
                 id: "tu_1".into(),
+                call_id: None,
                 name: "propose_plan".into(),
                 input: serde_json::json!({
                     "summary": summary,

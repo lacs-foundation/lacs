@@ -8,12 +8,22 @@
 # PREFIX can be overridden: sudo make install PREFIX=/opt/lacs
 
 PREFIX      ?= /usr/local
-BINDIR      := $(PREFIX)/bin
-SYSUSERS    := /usr/lib/sysusers.d
-TMPFILES    := /usr/lib/tmpfiles.d
-SYSTEMD     := /usr/lib/systemd/system
-POLKIT      := /usr/share/polkit-1/rules.d
-SUDOERS     := /etc/sudoers.d
+BINDIR      ?= $(PREFIX)/bin
+
+# Default system paths. Override on rpm-ostree systems (Silverblue,
+# Kinoite, Sericea, Onyx) where /usr is read-only — use /etc instead:
+#
+#   sudo make install \
+#       SYSUSERS=/etc/sysusers.d \
+#       TMPFILES=/etc/tmpfiles.d \
+#       SYSTEMD=/etc/systemd/system \
+#       POLKIT=/etc/polkit-1/rules.d
+#
+SYSUSERS    ?= /usr/lib/sysusers.d
+TMPFILES    ?= /usr/lib/tmpfiles.d
+SYSTEMD     ?= /usr/lib/systemd/system
+POLKIT      ?= /usr/share/polkit-1/rules.d
+SUDOERS     ?= /etc/sudoers.d
 
 CARGO_BUILD_FLAGS ?= --release --locked
 

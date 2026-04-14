@@ -29,6 +29,13 @@ interface ModelOption {
   vramMb: number;
   description: string;
   recommended?: boolean;
+  /**
+   * Whether Ollama accepts the `think` field for this model. Keep in
+   * sync with `THINKING_MODEL_PREFIXES` in
+   * `crates/lacs-brain/src/planner.rs`. Currently: qwen3 family, qwq,
+   * deepseek-r1.
+   */
+  supportsThinking?: boolean;
 }
 
 const OLLAMA_MODELS: ModelOption[] = [
@@ -39,6 +46,7 @@ const OLLAMA_MODELS: ModelOption[] = [
     vramMb: 5_000,
     description: "Best tool-calling reliability",
     recommended: true,
+    supportsThinking: true,
   },
   {
     id: "gemma4-e4b",
@@ -60,6 +68,7 @@ const OLLAMA_MODELS: ModelOption[] = [
     ollamaTag: "qwen3:30b-a3b",
     vramMb: 17_000,
     description: "Premium quality, needs 24GB+ GPU",
+    supportsThinking: true,
   },
   {
     id: "gemma4-27b",
@@ -101,8 +110,13 @@ const DEFAULT_CLOUD_MODELS: Record<CloudProvider, string> = {
 // Config generators
 // ---------------------------------------------------------------------------
 
-function ollamaConfig(ollamaTag: string): string {
-  return `[llm]\nprovider = "ollama"\nmodel    = "${ollamaTag}"`;
+function ollamaConfig(ollamaTag: string, thinkOverride: boolean | null): string {
+  // `thinkOverride === null` means "use lacs-brain's auto-detection" —
+  // we emit no `ollama_think` line in that case so the default path
+  // is exercised and visible in `lacs-test-cli --doctor` output.
+  const base = `[llm]\nprovider = "ollama"\nmodel    = "${ollamaTag}"`;
+  if (thinkOverride === null) return base;
+  return `${base}\nollama_think = ${thinkOverride}`;
 }
 
 function cloudConfig(provider: CloudProvider): string {
@@ -146,6 +160,9 @@ export function SetupWizard({ onDismiss }: Props) {
   const [apiKey, setApiKey] = useState("");
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
+  // Thinking-mode override. `null` = defer to lacs-brain's auto-detection.
+  // Only exposed in the UI when the selected model supports thinking.
+  const [thinkOverride, setThinkOverride] = useState<boolean | null>(null);
 
   // Hardware & Ollama state (loaded when entering Ollama step)
   const [hardware, setHardware] = useState<HardwareInfo | null>(null);
@@ -205,10 +222,16 @@ export function SetupWizard({ onDismiss }: Props) {
     );
   };
 
-  // Derive config content based on current selections
+  // Derive config content based on current selections. Only pass a
+  // think override for models that actually support thinking — for
+  // non-thinking models it would be written but silently ignored, which
+  // just clutters config.toml.
   const configContent =
     category === "local"
-      ? ollamaConfig(selectedModel.ollamaTag)
+      ? ollamaConfig(
+          selectedModel.ollamaTag,
+          selectedModel.supportsThinking ? thinkOverride : null,
+        )
       : cloudProvider
         ? cloudConfig(cloudProvider)
         : "";
@@ -366,6 +389,47 @@ export function SetupWizard({ onDismiss }: Props) {
           <p className="setup-wizard__warning">
             This model requires more VRAM than detected. It may run slowly using CPU offloading.
           </p>
+        )}
+
+        {selectedModel.supportsThinking && (
+          <fieldset className="setup-wizard__thinking">
+            <legend>Thinking mode</legend>
+            <p className="setup-wizard__subtitle">
+              {selectedModel.label} can emit a hidden reasoning trace before
+              answering, which improves tool-calling reliability. The trace
+              counts against the generation budget and can take minutes on
+              CPU-only hosts.
+            </p>
+            <div className="setup-wizard__thinking-choices" role="radiogroup" aria-label="Thinking mode">
+              <label>
+                <input
+                  type="radio"
+                  name="think"
+                  checked={thinkOverride === null}
+                  onChange={() => setThinkOverride(null)}
+                />
+                Auto (recommended) — let LACS decide from the model name
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name="think"
+                  checked={thinkOverride === true}
+                  onChange={() => setThinkOverride(true)}
+                />
+                Force on — GPU hosts only
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name="think"
+                  checked={thinkOverride === false}
+                  onChange={() => setThinkOverride(false)}
+                />
+                Force off — CPU hosts or when you hit Ollama timeouts
+              </label>
+            </div>
+          </fieldset>
         )}
 
         <div className="setup-wizard__actions">

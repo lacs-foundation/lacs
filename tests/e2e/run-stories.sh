@@ -53,13 +53,31 @@ if [[ "$preflight_ok" != "true" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
+# LLM + daemon socket env for lacs-test-cli
+# ---------------------------------------------------------------------------
+# The test CLI's BrainConfig::from_env() defaults to Anthropic, and the
+# DaemonIpcClient defaults to /tmp/lacs-daemon.sock — neither matches our
+# provisioned VM. Force the right values here so individual story scripts
+# don't need to know or care.
+export LACS_LLM_PROVIDER="${LACS_LLM_PROVIDER:-ollama}"
+export LACS_LLM_MODEL="${LACS_LLM_MODEL:-${LACS_TEST_MODEL:-qwen3:8b}}"
+export LACS_OLLAMA_URL="${LACS_OLLAMA_URL:-http://127.0.0.1:11434}"
+# lacs-daemon's packaged systemd unit binds /run/lacs/daemon.sock. The
+# test CLI defaults to /tmp/lacs-daemon.sock — force the real path via
+# LACS_LISTEN_URI (the var the brain and shell clients both honour).
+export LACS_LISTEN_URI="${LACS_LISTEN_URI:-unix:///run/lacs/daemon.sock}"
+
+# ---------------------------------------------------------------------------
 # Determine which stories to run
 # ---------------------------------------------------------------------------
 
 ALLOW_DESTRUCTIVE="${LACS_ALLOW_DESTRUCTIVE:-0}"
 
-# Timeout per story (seconds). Small models on CPU can be slow.
-STORY_TIMEOUT="${LACS_STORY_TIMEOUT:-120}"
+# Timeout per story (seconds). With qwen3:8b on host GPU, stories
+# finish in <60 s; with llama3.2:3b on 4 vCPU CPU, 2–4 min; with
+# qwen3:8b on CPU, impractical. 600 s is generous for the GPU path
+# and tolerant of the CPU fallback. Override with LACS_STORY_TIMEOUT.
+STORY_TIMEOUT="${LACS_STORY_TIMEOUT:-600}"
 
 declare -A STORY_NAMES
 STORY_NAMES[1]="Check disk usage"

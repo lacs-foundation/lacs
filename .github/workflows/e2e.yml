@@ -8,7 +8,7 @@
 #
 # 2. `container-smoke`: runs on workflow_dispatch or when a PR is labeled
 #    `e2e`. Boots Ollama and the daemon directly in the runner, pulls a
-#    small tool-capable model (gemma3:1b), and runs the 7 read-only user
+#    small tool-capable model (llama3.2:3b), and runs the 7 read-only user
 #    stories. Slow (~5-10 min, most of it Ollama model load + inference).
 #
 # The full high-fidelity flow — real Fedora Silverblue in QEMU/KVM via
@@ -97,7 +97,7 @@ jobs:
           done
 
       - name: Pull tool-capable model
-        run: ollama pull gemma3:1b
+        run: ollama pull llama3.2:3b
 
       - name: Build lacs-daemon and lacs-test-cli
         run: |
@@ -152,7 +152,7 @@ jobs:
         env:
           LACS_LISTEN_URI: unix:///run/lacs/daemon.sock
           LACS_LLM_PROVIDER: ollama
-          LACS_LLM_MODEL: gemma3:1b
+          LACS_LLM_MODEL: llama3.2:3b
           LACS_OLLAMA_URL: http://127.0.0.1:11434
           LACS_STORY_TIMEOUT: "180"
         run: bash tests/e2e/run-stories.sh

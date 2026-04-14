@@ -6,7 +6,7 @@
 use crate::provider::ToolDefinition;
 
 pub fn query_tools() -> Vec<ToolDefinition> {
-    let empty_schema = serde_json::json!({"type": "object", "properties": {}, "required": []});
+    let empty_schema = serde_json::json!({"type": "object", "properties": {}, "required": [], "additionalProperties": false});
     vec![
         ToolDefinition {
             name: "query_services".into(),
@@ -46,6 +46,7 @@ pub fn query_tools() -> Vec<ToolDefinition> {
             description: "Show recent systemd journal logs for a specific service unit.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
+                "additionalProperties": false,
                 "properties": {
                     "unit": {
                         "type": "string",
@@ -80,6 +81,7 @@ pub fn query_tools() -> Vec<ToolDefinition> {
             description: "Show detailed info for an installed Flatpak application.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
+                "additionalProperties": false,
                 "properties": {
                     "app_id": {
                         "type": "string",
@@ -94,6 +96,7 @@ pub fn query_tools() -> Vec<ToolDefinition> {
             description: "Show detailed info for a specific container.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
+                "additionalProperties": false,
                 "properties": {
                     "name": {
                         "type": "string",
@@ -144,6 +147,7 @@ pub fn query_tools() -> Vec<ToolDefinition> {
             description: "Show SSH authorized keys for a user account.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
+                "additionalProperties": false,
                 "properties": {
                     "username": {
                         "type": "string",
@@ -271,6 +275,42 @@ mod tests {
         assert_eq!(
             query_tool_to_action("query_deployment_history", &empty),
             Some(("GetDeploymentHistory", serde_json::json!({})))
+        );
+        assert_eq!(
+            query_tool_to_action("query_disk_usage", &empty),
+            Some(("GetDiskUsage", serde_json::json!({})))
+        );
+        assert_eq!(
+            query_tool_to_action("query_processes", &empty),
+            Some(("ListProcesses", serde_json::json!({})))
+        );
+        assert_eq!(
+            query_tool_to_action("query_memory", &empty),
+            Some(("GetMemoryInfo", serde_json::json!({})))
+        );
+        assert_eq!(
+            query_tool_to_action("query_network", &empty),
+            Some(("GetNetworkStatus", serde_json::json!({})))
+        );
+    }
+
+    #[test]
+    fn query_authorized_keys_maps_to_get_authorized_keys() {
+        let input = serde_json::json!({"username": "alice"});
+        assert_eq!(
+            query_tool_to_action("query_authorized_keys", &input),
+            Some((
+                "GetAuthorizedKeys",
+                serde_json::json!({"username": "alice"})
+            ))
+        );
+    }
+
+    #[test]
+    fn query_authorized_keys_defaults_to_empty_username() {
+        assert_eq!(
+            query_tool_to_action("query_authorized_keys", &empty_input()),
+            Some(("GetAuthorizedKeys", serde_json::json!({"username": ""})))
         );
     }
 
