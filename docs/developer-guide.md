@@ -161,6 +161,7 @@ Preferences are plain text, one per line, max 10 KB. Sensitive data
 (passwords, API keys, tokens) is rejected automatically.
 
 Manage preferences through natural language:
+
 - "Remember that I always prefer vim-enhanced"
 - "Forget my vim preference"
 
