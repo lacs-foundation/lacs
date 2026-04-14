@@ -119,6 +119,7 @@ fn propose_plan(summary: &str, steps: &[(&str, &str, &str)]) -> Result<Completio
     Ok(Completion {
         content: vec![ContentBlock::ToolUse {
             id: "tu_001".into(),
+            call_id: None,
             name: "propose_plan".into(),
             input: serde_json::json!({
                 "summary": summary,
@@ -134,6 +135,7 @@ fn get_system_state_call() -> Result<Completion, ProviderError> {
     Ok(Completion {
         content: vec![ContentBlock::ToolUse {
             id: "tu_state".into(),
+            call_id: None,
             name: "get_system_state".into(),
             input: serde_json::json!({}),
         }],
@@ -310,6 +312,7 @@ async fn plan_step_carries_params() {
     let planner = make_planner(MockProvider::new([Ok(Completion {
         content: vec![ContentBlock::ToolUse {
             id: "tu_p".into(),
+            call_id: None,
             name: "propose_plan".into(),
             input: serde_json::json!({
                 "summary": "Install vim",
@@ -360,9 +363,16 @@ async fn auth_error_propagates() {
 
 #[tokio::test]
 async fn end_turn_without_plan_returns_no_plan_proposed() {
-    let planner = make_planner(MockProvider::new([end_turn_text(
-        "I cannot help with that.",
-    )]));
+    // Turn 1: LLM outputs prose instead of calling propose_plan → planner sends
+    //         a correction message and retries.
+    // Turn 2: LLM still returns EndTurn but with no text content → NoPlanProposed.
+    let planner = make_planner(MockProvider::new([
+        end_turn_text("I cannot help with that."),
+        Ok(Completion {
+            content: vec![],
+            stop_reason: StopReason::EndTurn,
+        }),
+    ]));
     assert_eq!(
         planner.plan_intent("do something").await.unwrap_err(),
         PlanningError::NoPlanProposed
@@ -404,6 +414,7 @@ async fn invalid_plan_with_single_turn_returns_planner_stuck() {
         Box::new(MockProvider::new([Ok(Completion {
             content: vec![ContentBlock::ToolUse {
                 id: "tu_bad".into(),
+                call_id: None,
                 name: "propose_plan".into(),
                 input: serde_json::json!({
                     "summary": "bad plan",
@@ -439,6 +450,7 @@ async fn invalid_proposed_plan_is_retried_and_succeeds_on_second_call() {
             Ok(Completion {
                 content: vec![ContentBlock::ToolUse {
                     id: "tu_bad".into(),
+                    call_id: None,
                     name: "propose_plan".into(),
                     input: serde_json::json!({
                         "summary": "bad plan",
@@ -476,6 +488,7 @@ async fn empty_steps_array_with_single_turn_returns_planner_stuck() {
         Box::new(MockProvider::new([Ok(Completion {
             content: vec![ContentBlock::ToolUse {
                 id: "tu_empty".into(),
+                call_id: None,
                 name: "propose_plan".into(),
                 input: serde_json::json!({
                     "summary": "nothing to do",
@@ -546,6 +559,7 @@ async fn unknown_tool_call_continues_loop_and_eventually_sticks() {
         Ok(Completion {
             content: vec![ContentBlock::ToolUse {
                 id: "tu_x".into(),
+                call_id: None,
                 name: "fly_to_the_moon".into(),
                 input: serde_json::json!({}),
             }],
@@ -596,6 +610,7 @@ async fn rejected_plan_is_written_to_safety_audit_log() {
             Ok(Completion {
                 content: vec![ContentBlock::ToolUse {
                     id: "tu_bad".into(),
+                    call_id: None,
                     name: "propose_plan".into(),
                     input: serde_json::json!({
                         "summary": "bad plan",
@@ -661,6 +676,7 @@ async fn planner_without_audit_log_does_not_panic_on_rejection() {
             Ok(Completion {
                 content: vec![ContentBlock::ToolUse {
                     id: "tu_bad".into(),
+                    call_id: None,
                     name: "propose_plan".into(),
                     input: serde_json::json!({
                         "summary": "bad plan",

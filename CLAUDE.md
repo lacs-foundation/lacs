@@ -57,3 +57,26 @@ the shell, and the privileged daemon.
 - `lacs-shell` presents and collects approval.
 - `lacs-daemon` executes privileged actions.
 - No component should blur those roles.
+
+## Code Quality
+
+- No dead code. If a workaround is superseded, remove it immediately — do not
+  leave it commented out or guarded by a condition that is never true.
+- Do not add fallbacks, params, or flags "just in case" — every line of code
+  must be reachable and load-bearing.
+
+## OpenAI Responses API — Dual-ID Protocol
+
+The OpenAI Responses API uses two distinct identifiers per tool call:
+
+| Field     | Format     | Purpose                                          |
+|-----------|------------|--------------------------------------------------|
+| `id`      | `fc_xxx`   | Response-item ID; must be echoed verbatim in the next input array as the assistant's function_call item ID |
+| `call_id` | `call_xxx` | Function-call match key; must appear as `call_id` on the corresponding `function_call_output` item |
+
+`ContentBlock::ToolUse` therefore carries **both** fields. `ToolResultBlock` mirrors
+`call_id` so the adapter can set `ToolResult.call_id = call_xxx` correctly.
+
+Do NOT collapse the two into a single "effective_id". Providers that have no
+separate `call_id` (Anthropic, Ollama, Gemini) leave it as `None` and the
+adapter falls back to `id` — the fallback must stay invisible to callers.

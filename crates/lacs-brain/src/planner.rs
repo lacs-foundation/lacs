@@ -32,6 +32,91 @@ use serde::Serialize;
 use thiserror::Error;
 
 // ---------------------------------------------------------------------------
+// Ollama-provider tuning constants
+// ---------------------------------------------------------------------------
+
+/// Output token budget passed to Ollama as `options.num_predict`.
+///
+/// Why this is needed at all: Rig's `OllamaCompletionRequest` sends
+/// `max_tokens` at the top level of the JSON body, which Ollama's
+/// `/api/chat` endpoint **ignores**. Ollama reads `options.num_predict`
+/// for the generation limit. The `RigCompletionAdapter::with_additional_params`
+/// keys (other than `think`/`keep_alive`, which the Ollama provider
+/// consumes as top-level fields) flow into `options`, so writing
+/// `num_predict` there lands it in the right place.
+///
+/// Why this specific value: we need enough headroom for:
+///   - a thinking trace (qwen3 typically emits 100–400 tokens),
+///   - a complete `propose_plan` tool-call JSON (150–300 tokens),
+///   - a small buffer for retries and fallbacks.
+///
+/// 4096 covers the worst case comfortably while staying below values
+/// that would let the model wander for minutes of thinking on CPU.
+/// Empirically, well-behaved LACS runs never approach this limit;
+/// untuned models that *do* approach it are the ones we cannot use
+/// anyway (CPU inference hits Ollama's internal request timeout first).
+pub const OLLAMA_NUM_PREDICT: u32 = 4096;
+
+/// Model-name prefixes that signal thinking-mode capability in Ollama.
+///
+/// Source of truth: Ollama documents which models accept the `think`
+/// field on `/api/chat`. Sending `think: true` to a non-thinking model
+/// returns HTTP 400 with `"does not support thinking"`. This list
+/// therefore must be kept conservative — add a prefix only after
+/// verifying the model's tag + Ollama version combination accepts it.
+///
+/// Current entries, verified live:
+///   - `qwen3`    — all Qwen3 variants (0.6b … 30b-a3b)
+///   - `qwq`      — Qwen reasoning-focused variant (qwq:32b)
+///   - `deepseek-r` — DeepSeek-R1 family
+///
+/// NOT listed (do not support thinking): `llama3.2`, `gemma3`,
+/// `qwen2.5`, `mistral`, `gemma2`.
+///
+/// An out-of-process override lives in `LACS_OLLAMA_THINK`; this
+/// auto-detection is only the default.
+pub const THINKING_MODEL_PREFIXES: &[&str] = &["qwen3", "qwq", "deepseek-r"];
+
+/// Environment variable that overrides the auto-detected thinking mode.
+///
+/// Set to `"true"` or `"false"` (case-insensitive). Any other value
+/// falls back to auto-detection. Populated by `LacsConfig` from
+/// `config.toml`'s `[llm] ollama_think` field.
+pub const LACS_OLLAMA_THINK_ENV: &str = "LACS_OLLAMA_THINK";
+
+/// Decide whether to send `think: true` for a given Ollama model.
+///
+/// Resolution order (highest priority wins):
+///   1. `LACS_OLLAMA_THINK` env var, if set to a parseable `true`/`false`.
+///   2. Auto-detection against [`THINKING_MODEL_PREFIXES`].
+///
+/// An unparseable env-var value (neither `"true"` nor `"false"` after
+/// trimming and lowercasing) is ignored — we fall back to auto-detection
+/// so a typo does not silently break tool use.
+///
+/// The distinction matters on CPU-only hosts: thinking models on 4 vCPUs
+/// emit long reasoning traces that exceed Ollama's request timeout before
+/// any tool call lands. Users on CPU should set `ollama_think = false`
+/// in `config.toml` for qwen3-class models; this helper respects that.
+pub fn resolve_ollama_think(model: &str) -> bool {
+    if let Ok(raw) = std::env::var(LACS_OLLAMA_THINK_ENV) {
+        match raw.trim().to_lowercase().as_str() {
+            "true" => return true,
+            "false" => return false,
+            _ => {
+                // Unparseable override — fall through to auto-detection.
+                // We intentionally do not log this; startup noise is not
+                // worth it and the auto-detected behaviour is safe.
+            }
+        }
+    }
+    let model_lower = model.to_lowercase();
+    THINKING_MODEL_PREFIXES
+        .iter()
+        .any(|prefix| model_lower.starts_with(prefix))
+}
+
+// ---------------------------------------------------------------------------
 // Risk level
 // ---------------------------------------------------------------------------
 
@@ -315,7 +400,18 @@ impl LlmPlanner {
                     .build()
                     .map_err(|e| format!("failed to initialize ollama provider: {e}"))?;
                 let completion_model = client.completion_model(&model);
-                Box::new(RigCompletionAdapter::new(completion_model))
+                // See `OLLAMA_NUM_PREDICT` and `THINKING_MODEL_PREFIXES`
+                // at the top of this module for the rationale behind each
+                // key sent through `additional_params`.
+                let think = resolve_ollama_think(&model);
+                let mut params = serde_json::json!({ "num_predict": OLLAMA_NUM_PREDICT });
+                if think {
+                    params["think"] = serde_json::Value::Bool(true);
+                }
+                Box::new(
+                    RigCompletionAdapter::new(completion_model)
+                        .with_additional_params(params),
+                )
             }
             ProviderConfig::OpenAI { api_key, model } => {
                 let client = rig::providers::openai::Client::builder()
@@ -442,7 +538,26 @@ impl LlmPlanner {
             });
 
             match completion.stop_reason {
-                StopReason::EndTurn | StopReason::MaxTokens => {
+                StopReason::MaxTokens => {
+                    return Err(PlanningError::NoPlanProposed);
+                }
+                StopReason::EndTurn => {
+                    // Some providers (e.g. OpenAI via Rig's Responses API) may
+                    // output the plan as a plain-text JSON block instead of
+                    // calling propose_plan. Inject a correction and let the
+                    // model retry — but only if we have turns remaining.
+                    let has_text = completion
+                        .content
+                        .iter()
+                        .any(|b| matches!(b, ContentBlock::Text { .. }));
+                    if has_text && turn + 1 < self.max_turns {
+                        messages.push(Message::user_text(
+                            "You must call the `propose_plan` tool. \
+                             Do not output JSON or text directly — \
+                             your response must be a tool call to `propose_plan`.",
+                        ));
+                        continue;
+                    }
                     return Err(PlanningError::NoPlanProposed);
                 }
                 StopReason::ToolUse => {
@@ -450,8 +565,8 @@ impl LlmPlanner {
                         .content
                         .iter()
                         .filter_map(|b| {
-                            if let ContentBlock::ToolUse { id, name, input } = b {
-                                Some((id.clone(), name.clone(), input.clone()))
+                            if let ContentBlock::ToolUse { id, call_id, name, input } = b {
+                                Some((id.clone(), call_id.clone(), name.clone(), input.clone()))
                             } else {
                                 None
                             }
@@ -465,7 +580,7 @@ impl LlmPlanner {
                     let mut tool_results: Vec<ToolResultBlock> =
                         Vec::with_capacity(tool_calls.len());
 
-                    for (id, name, input) in &tool_calls {
+                    for (id, call_id, name, input) in &tool_calls {
                         match name.as_str() {
                             "get_system_state" => {
                                 let state = self.state_client.curated_state()?;
@@ -480,6 +595,7 @@ impl LlmPlanner {
                                 })?;
                                 tool_results.push(ToolResultBlock {
                                     tool_use_id: id.clone(),
+                                    call_id: call_id.clone(),
                                     content: state_json,
                                     is_error: false,
                                 });
@@ -507,6 +623,7 @@ impl LlmPlanner {
                                         }
                                         tool_results.push(ToolResultBlock {
                                             tool_use_id: id.clone(),
+                                            call_id: call_id.clone(),
                                             content: format!(
                                                 "Plan rejected: {reason}. \
                                                  Correct the plan and call propose_plan again."
@@ -526,6 +643,7 @@ impl LlmPlanner {
                                         Ok(output) => {
                                             tool_results.push(ToolResultBlock {
                                                 tool_use_id: id.clone(),
+                                                call_id: call_id.clone(),
                                                 content: output,
                                                 is_error: false,
                                             });
@@ -533,6 +651,7 @@ impl LlmPlanner {
                                         Err(e) => {
                                             tool_results.push(ToolResultBlock {
                                                 tool_use_id: id.clone(),
+                                                call_id: call_id.clone(),
                                                 content: format!("Query failed: {e}"),
                                                 is_error: true,
                                             });
@@ -552,6 +671,7 @@ impl LlmPlanner {
                                     );
                                     tool_results.push(ToolResultBlock {
                                         tool_use_id: id.clone(),
+                                        call_id: call_id.clone(),
                                         content: format!("unknown tool: {other_name}"),
                                         is_error: true,
                                     });
@@ -568,3 +688,80 @@ impl LlmPlanner {
         Err(PlanningError::PlannerStuck)
     }
 }
+
+
+// ---------------------------------------------------------------------------
+// Unit tests (module-local helpers only — integration tests live in
+// crates/lacs-brain/tests/planner.rs).
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    // Env-var mutation is process-global; tests that touch it must be
+    // serialised to avoid cross-test interference on a multi-threaded
+    // test runner.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn resolve_think_auto_detects_qwen3() {
+        let _g = ENV_LOCK.lock().unwrap();
+        // SAFETY: single-threaded within this test under ENV_LOCK.
+        unsafe { std::env::remove_var(LACS_OLLAMA_THINK_ENV) };
+        assert!(resolve_ollama_think("qwen3:8b"));
+        assert!(resolve_ollama_think("Qwen3:30b-a3b"));
+        assert!(resolve_ollama_think("qwq:32b"));
+        assert!(resolve_ollama_think("deepseek-r1:7b"));
+    }
+
+    #[test]
+    fn resolve_think_auto_detects_non_thinking_models() {
+        let _g = ENV_LOCK.lock().unwrap();
+        unsafe { std::env::remove_var(LACS_OLLAMA_THINK_ENV) };
+        assert!(!resolve_ollama_think("llama3.2:3b"));
+        assert!(!resolve_ollama_think("gemma3:1b"));
+        assert!(!resolve_ollama_think("qwen2.5:3b"));
+        assert!(!resolve_ollama_think("mistral-small3.2:24b"));
+    }
+
+    #[test]
+    fn resolve_think_env_override_true_wins_over_non_thinking_model() {
+        let _g = ENV_LOCK.lock().unwrap();
+        unsafe { std::env::set_var(LACS_OLLAMA_THINK_ENV, "true") };
+        let got = resolve_ollama_think("llama3.2:3b");
+        unsafe { std::env::remove_var(LACS_OLLAMA_THINK_ENV) };
+        assert!(got, "env override should force think=true");
+    }
+
+    #[test]
+    fn resolve_think_env_override_false_wins_over_thinking_model() {
+        let _g = ENV_LOCK.lock().unwrap();
+        unsafe { std::env::set_var(LACS_OLLAMA_THINK_ENV, "false") };
+        let got = resolve_ollama_think("qwen3:8b");
+        unsafe { std::env::remove_var(LACS_OLLAMA_THINK_ENV) };
+        assert!(!got, "env override should force think=false");
+    }
+
+    #[test]
+    fn resolve_think_env_override_case_insensitive() {
+        let _g = ENV_LOCK.lock().unwrap();
+        unsafe { std::env::set_var(LACS_OLLAMA_THINK_ENV, "  TRUE  ") };
+        let got = resolve_ollama_think("llama3.2:3b");
+        unsafe { std::env::remove_var(LACS_OLLAMA_THINK_ENV) };
+        assert!(got);
+    }
+
+    #[test]
+    fn resolve_think_unparseable_env_falls_back_to_auto() {
+        let _g = ENV_LOCK.lock().unwrap();
+        unsafe { std::env::set_var(LACS_OLLAMA_THINK_ENV, "yes") };
+        let qwen = resolve_ollama_think("qwen3:8b");
+        let llama = resolve_ollama_think("llama3.2:3b");
+        unsafe { std::env::remove_var(LACS_OLLAMA_THINK_ENV) };
+        assert!(qwen, "unparseable value should NOT disable auto-detection");
+        assert!(!llama, "unparseable value should NOT force think on");
+    }
+}
+

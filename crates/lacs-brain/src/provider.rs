@@ -42,6 +42,7 @@ impl Message {
                 .into_iter()
                 .map(|r| ContentBlock::ToolResult {
                     tool_use_id: r.tool_use_id,
+                    call_id: r.call_id,
                     content: r.content,
                     is_error: r.is_error,
                 })
@@ -66,12 +67,23 @@ pub enum ContentBlock {
         text: String,
     },
     ToolUse {
+        /// Response-item ID (OpenAI format: `fc_xxx`). Must be echoed verbatim
+        /// when reconstructing the assistant turn in the next API call.
         id: String,
+        /// Function-call match key (OpenAI format: `call_xxx`). Must appear as
+        /// `call_id` in the corresponding `function_call_output` item.
+        /// `None` for providers that do not use a separate call ID
+        /// (Anthropic, Ollama, Gemini, etc.).
+        call_id: Option<String>,
         name: String,
         input: serde_json::Value,
     },
     ToolResult {
         tool_use_id: String,
+        /// Mirror of `ContentBlock::ToolUse::call_id` for the same tool call.
+        /// Used by the OpenAI Responses API adapter to set `call_id` on the
+        /// `function_call_output` item so it matches the originating call.
+        call_id: Option<String>,
         content: String,
         is_error: bool,
     },
@@ -80,6 +92,8 @@ pub enum ContentBlock {
 /// Transient struct used when building tool result messages.
 pub struct ToolResultBlock {
     pub tool_use_id: String,
+    /// Mirror of the originating `ContentBlock::ToolUse::call_id`.
+    pub call_id: Option<String>,
     pub content: String,
     pub is_error: bool,
 }
