@@ -1,0 +1,635 @@
+//! Async daemon client over the lacs-daemon Unix socket.
+//!
+//! Protocol: JSON messages with a 4-byte little-endian length prefix (max 4 MiB).
+//!
+//! ## Connection model
+//!
+//! Each operation opens a fresh connection, exchanges its messages, then closes.
+//! This mirrors `tests/e2e/bin/TestDaemonClient` and keeps the client stateless.
+//!
+//! ## Sync vs async
+//!
+//! `DaemonClient` implements [`StateClient`] with blocking `std::os::unix::net`
+//! IO so `lacs-brain`'s planner can call it directly from a sync closure.
+//! When calling `plan_intent` from an async runtime, wrap the call in
+//! `tokio::task::spawn_blocking` so the blocking socket IO does not stall the
+//! executor.
+//!
+//! `preview` and `execute` are `async` and use `tokio::net::UnixStream`.
+//!
+//! ## ANSI stripping
+//!
+//! All string output received from the daemon passes through
+//! [`strip_ansi_escapes`] before being returned to callers.
+
+use std::io::{Read, Write};
+use std::os::unix::net::UnixStream;
+use std::time::Duration;
+
+use lacs_brain::planner::PlanningError;
+use lacs_brain::state_client::{CuratedState, StateClient};
+use lacs_types::{PreviewEnvelope, ResultEnvelope};
+use serde_json::Value;
+
+use crate::error::CliError;
+
+const SOCKET_TIMEOUT: Duration = Duration::from_secs(10);
+const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
+
+// ---------------------------------------------------------------------------
+// Framing — sync (used by StateClient impl)
+// ---------------------------------------------------------------------------
+
+fn write_framed(stream: &mut UnixStream, msg: &[u8]) -> std::io::Result<()> {
+    let len = u32::try_from(msg.len())
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "message too large"))?;
+    stream.write_all(&len.to_le_bytes())?;
+    stream.write_all(msg)
+}
+
+fn read_framed(stream: &mut UnixStream) -> std::io::Result<Vec<u8>> {
+    let mut len_buf = [0u8; 4];
+    stream.read_exact(&mut len_buf)?;
+    let len = u32::from_le_bytes(len_buf) as usize;
+    if len > MAX_FRAME_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("frame too large: {len} bytes"),
+        ));
+    }
+    let mut buf = vec![0u8; len];
+    stream.read_exact(&mut buf)?;
+    Ok(buf)
+}
+
+// ---------------------------------------------------------------------------
+// Framing — async (used by preview / execute)
+// ---------------------------------------------------------------------------
+
+async fn write_framed_async(
+    stream: &mut tokio::net::UnixStream,
+    msg: &[u8],
+) -> std::io::Result<()> {
+    use tokio::io::AsyncWriteExt;
+    let len = u32::try_from(msg.len())
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "message too large"))?;
+    stream.write_all(&len.to_le_bytes()).await?;
+    stream.write_all(msg).await?;
+    Ok(())
+}
+
+async fn read_framed_async(stream: &mut tokio::net::UnixStream) -> std::io::Result<Vec<u8>> {
+    use tokio::io::AsyncReadExt;
+    let mut len_buf = [0u8; 4];
+    stream.read_exact(&mut len_buf).await?;
+    let len = u32::from_le_bytes(len_buf) as usize;
+    if len > MAX_FRAME_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("frame too large: {len} bytes"),
+        ));
+    }
+    let mut buf = vec![0u8; len];
+    stream.read_exact(&mut buf).await?;
+    Ok(buf)
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+fn strip_ansi(s: &str) -> String {
+    strip_ansi_escapes::strip_str(s)
+}
+
+fn string_array(v: &Value) -> Vec<String> {
+    v.as_array()
+        .map(|arr| arr.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+        .unwrap_or_default()
+}
+
+// ---------------------------------------------------------------------------
+// DaemonClient
+// ---------------------------------------------------------------------------
+
+/// Client for the lacs-daemon Unix socket.
+pub struct DaemonClient {
+    socket_path: String,
+}
+
+impl DaemonClient {
+    /// Construct with the resolved socket path (caller handles config/env lookup).
+    pub fn new(socket_path: impl Into<String>) -> Self {
+        Self { socket_path: socket_path.into() }
+    }
+
+    // ------------------------------------------------------------------
+    // Sync internals (called by StateClient impl)
+    // ------------------------------------------------------------------
+
+    fn curated_state_inner(&self) -> Result<CuratedState, PlanningError> {
+        let mut stream = UnixStream::connect(&self.socket_path)
+            .map_err(|e| PlanningError::StateUnavailable(format!("connect: {e}")))?;
+        stream.set_read_timeout(Some(SOCKET_TIMEOUT)).ok();
+        stream.set_write_timeout(Some(SOCKET_TIMEOUT)).ok();
+
+        let req = serde_json::to_vec(&serde_json::json!({
+            "type": "query_state",
+            "request_id": "cli-state"
+        }))
+        .expect("static JSON");
+
+        write_framed(&mut stream, &req)
+            .map_err(|e| PlanningError::StateUnavailable(format!("send: {e}")))?;
+
+        let raw = read_framed(&mut stream)
+            .map_err(|e| PlanningError::StateUnavailable(format!("recv: {e}")))?;
+
+        let resp: Value = serde_json::from_slice(&raw)
+            .map_err(|e| PlanningError::StateUnavailable(format!("parse: {e}")))?;
+
+        match resp["type"].as_str() {
+            Some("state_response") => {
+                let s = resp
+                    .get("state")
+                    .ok_or_else(|| PlanningError::StateUnavailable("missing state field".into()))?;
+                let host = s["host_name"]
+                    .as_str()
+                    .ok_or_else(|| PlanningError::StateUnavailable("missing host_name".into()))?;
+                let deployment = s["deployment"].as_str().unwrap_or("");
+                CuratedState::new(
+                    host,
+                    deployment,
+                    string_array(&s["services"]),
+                    string_array(&s["flatpaks"]),
+                    string_array(&s["toolboxes"]),
+                    string_array(&s["layered_packages"]),
+                    string_array(&s["containers"]),
+                    string_array(&s["users"]),
+                )
+                .map_err(PlanningError::StateUnavailable)
+            }
+            Some("error_response") => Err(PlanningError::StateUnavailable(format!(
+                "daemon error: {}",
+                resp["message"].as_str().unwrap_or("unknown")
+            ))),
+            _ => Err(PlanningError::StateUnavailable(
+                "unexpected response type".into(),
+            )),
+        }
+    }
+
+    fn query_action_inner(
+        &self,
+        action_name: &str,
+        params: &Value,
+    ) -> Result<String, PlanningError> {
+        let mut stream = UnixStream::connect(&self.socket_path)
+            .map_err(|e| PlanningError::StateUnavailable(format!("connect: {e}")))?;
+        stream.set_read_timeout(Some(SOCKET_TIMEOUT)).ok();
+        stream.set_write_timeout(Some(SOCKET_TIMEOUT)).ok();
+
+        let req = serde_json::to_vec(&serde_json::json!({
+            "type": "query_action",
+            "request_id": format!("cli-query-{action_name}"),
+            "action_name": action_name,
+            "params": params,
+        }))
+        .map_err(|e| PlanningError::StateUnavailable(format!("serialize: {e}")))?;
+
+        write_framed(&mut stream, &req)
+            .map_err(|e| PlanningError::StateUnavailable(format!("send: {e}")))?;
+
+        let raw = read_framed(&mut stream)
+            .map_err(|e| PlanningError::StateUnavailable(format!("recv: {e}")))?;
+
+        let resp: Value = serde_json::from_slice(&raw)
+            .map_err(|e| PlanningError::StateUnavailable(format!("parse: {e}")))?;
+
+        match resp["type"].as_str() {
+            Some("query_action_response") => {
+                let output = resp["output"].as_str().unwrap_or("");
+                Ok(strip_ansi(output))
+            }
+            Some("error_response") => Err(PlanningError::StateUnavailable(format!(
+                "daemon error: {}",
+                resp["message"].as_str().unwrap_or("unknown")
+            ))),
+            _ => Err(PlanningError::StateUnavailable(
+                "unexpected response type".into(),
+            )),
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Async operations (called by runner.rs)
+    // ------------------------------------------------------------------
+
+    /// Preview a plan step.
+    ///
+    /// Returns the [`PreviewEnvelope`] (which contains `request_hash`) and the
+    /// `transaction_id`. Pass `request_hash` verbatim to [`execute`] as
+    /// `approval_hash`.
+    pub async fn preview(
+        &self,
+        action_name: &str,
+        params: &Value,
+    ) -> Result<(PreviewEnvelope, String), CliError> {
+        let mut stream = tokio::net::UnixStream::connect(&self.socket_path)
+            .await
+            .map_err(|e| {
+                CliError::ConfigOrDaemon(format!(
+                    "cannot connect to {}: {e}",
+                    self.socket_path
+                ))
+            })?;
+
+        let req = serde_json::to_vec(&serde_json::json!({
+            "type": "preview",
+            "request_id": format!("cli-preview-{action_name}"),
+            "action_name": action_name,
+            "params": params,
+        }))
+        .map_err(|e| CliError::ConfigOrDaemon(format!("serialize: {e}")))?;
+
+        write_framed_async(&mut stream, &req)
+            .await
+            .map_err(|e| CliError::ConfigOrDaemon(format!("send: {e}")))?;
+
+        let raw = read_framed_async(&mut stream)
+            .await
+            .map_err(|e| CliError::ConfigOrDaemon(format!("recv: {e}")))?;
+
+        let resp: Value = serde_json::from_slice(&raw)
+            .map_err(|e| CliError::ConfigOrDaemon(format!("parse response: {e}")))?;
+
+        match resp["type"].as_str() {
+            Some("preview_response") => {
+                let tx_id = resp["transaction_id"]
+                    .as_str()
+                    .ok_or_else(|| CliError::ConfigOrDaemon("missing transaction_id".into()))?
+                    .to_string();
+                let envelope: PreviewEnvelope =
+                    serde_json::from_value(resp["preview"].clone()).map_err(|e| {
+                        CliError::ConfigOrDaemon(format!("parse preview envelope: {e}"))
+                    })?;
+                Ok((envelope, tx_id))
+            }
+            Some("error_response") => Err(CliError::PlanningFailed(format!(
+                "{}: {}",
+                resp["category"].as_str().unwrap_or("error"),
+                resp["message"].as_str().unwrap_or("unknown")
+            ))),
+            _ => Err(CliError::ConfigOrDaemon(format!(
+                "unexpected response type: {:?}",
+                resp["type"]
+            ))),
+        }
+    }
+
+    /// Execute a previously previewed step.
+    ///
+    /// `on_line` is called for each progress line emitted by the daemon, with
+    /// ANSI escape sequences already stripped.
+    pub async fn execute(
+        &self,
+        action_name: &str,
+        params: &Value,
+        approval_hash: &str,
+        mut on_line: impl FnMut(String),
+    ) -> Result<ResultEnvelope, CliError> {
+        let mut stream = tokio::net::UnixStream::connect(&self.socket_path)
+            .await
+            .map_err(|e| {
+                CliError::ConfigOrDaemon(format!(
+                    "cannot connect to {}: {e}",
+                    self.socket_path
+                ))
+            })?;
+
+        let req = serde_json::to_vec(&serde_json::json!({
+            "type": "execute",
+            "request_id": format!("cli-exec-{action_name}"),
+            "action_name": action_name,
+            "params": params,
+            "approval_hash": approval_hash,
+        }))
+        .map_err(|e| CliError::ConfigOrDaemon(format!("serialize: {e}")))?;
+
+        write_framed_async(&mut stream, &req)
+            .await
+            .map_err(|e| CliError::ConfigOrDaemon(format!("send: {e}")))?;
+
+        loop {
+            let raw = read_framed_async(&mut stream)
+                .await
+                .map_err(|e| CliError::ExecutionFailed(format!("recv: {e}")))?;
+
+            let resp: Value = serde_json::from_slice(&raw)
+                .map_err(|e| CliError::ExecutionFailed(format!("parse: {e}")))?;
+
+            match resp["type"].as_str() {
+                Some("job_started") => {}
+                Some("job_progress") => {
+                    let line = resp["line"].as_str().unwrap_or("");
+                    on_line(strip_ansi(line));
+                }
+                Some("job_completed") => {
+                    let envelope: ResultEnvelope =
+                        serde_json::from_value(resp["result"].clone()).map_err(|e| {
+                            CliError::ExecutionFailed(format!("parse result: {e}"))
+                        })?;
+                    return Ok(envelope);
+                }
+                Some("error_response") => {
+                    return Err(CliError::ExecutionFailed(format!(
+                        "{}: {}",
+                        resp["category"].as_str().unwrap_or("error"),
+                        resp["message"].as_str().unwrap_or("unknown")
+                    )));
+                }
+                _ => {
+                    return Err(CliError::ExecutionFailed(format!(
+                        "unexpected response type: {:?}",
+                        resp["type"]
+                    )));
+                }
+            }
+        }
+    }
+}
+
+impl StateClient for DaemonClient {
+    fn curated_state(&self) -> Result<CuratedState, PlanningError> {
+        self.curated_state_inner()
+    }
+
+    fn query_action(&self, action_name: &str, params: &Value) -> Result<String, PlanningError> {
+        self.query_action_inner(action_name, params)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lacs_types::{JobState, RiskLevel};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static SOCKET_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    /// Returns a unique temp socket path per test invocation.
+    fn temp_socket_path() -> std::path::PathBuf {
+        let n = SOCKET_COUNTER.fetch_add(1, Ordering::SeqCst);
+        std::env::temp_dir()
+            .join(format!("lacs-cli-test-{}-{n}.sock", std::process::id()))
+    }
+
+    /// Spawn a background thread that accepts one sync connection and runs
+    /// `handler` on the accepted stream.
+    fn serve_sync<F>(path: &std::path::Path, handler: F) -> std::thread::JoinHandle<()>
+    where
+        F: FnOnce(UnixStream) + Send + 'static,
+    {
+        use std::os::unix::net::UnixListener;
+        let listener = UnixListener::bind(path).unwrap();
+        std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            handler(stream);
+        })
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 1: curated_state sends query_state and parses the state_response
+    // -----------------------------------------------------------------------
+    #[test]
+    fn curated_state_sends_query_state_and_parses_response() {
+        let socket_path = temp_socket_path();
+        let handle = serve_sync(&socket_path, |mut stream| {
+            let raw = read_framed(&mut stream).unwrap();
+            let req: Value = serde_json::from_slice(&raw).unwrap();
+            assert_eq!(req["type"].as_str(), Some("query_state"), "wrong request type");
+
+            let resp = serde_json::json!({
+                "type": "state_response",
+                "request_id": req["request_id"],
+                "state": {
+                    "host_name": "testhost",
+                    "deployment": "ostree-commit-abc",
+                    "services": ["sshd.service", "nginx.service"],
+                    "flatpaks": [],
+                    "toolboxes": [],
+                    "layered_packages": ["vim"],
+                    "containers": [],
+                    "users": ["alice", "bob"]
+                }
+            });
+            write_framed(&mut stream, &serde_json::to_vec(&resp).unwrap()).unwrap();
+        });
+
+        let client = DaemonClient::new(socket_path.to_str().unwrap());
+        let state = client.curated_state().unwrap();
+        handle.join().unwrap();
+        let _ = std::fs::remove_file(&socket_path);
+
+        assert_eq!(state.host_name(), "testhost");
+        assert_eq!(state.deployment(), "ostree-commit-abc");
+        assert_eq!(state.services(), &["sshd.service", "nginx.service"]);
+        assert_eq!(state.layered_packages(), &["vim"]);
+        assert_eq!(state.users(), &["alice", "bob"]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 2: query_action sends query_action request and strips ANSI escapes
+    // -----------------------------------------------------------------------
+    #[test]
+    fn query_action_strips_ansi_from_output() {
+        let socket_path = temp_socket_path();
+        let handle = serve_sync(&socket_path, |mut stream| {
+            let raw = read_framed(&mut stream).unwrap();
+            let req: Value = serde_json::from_slice(&raw).unwrap();
+            assert_eq!(req["type"].as_str(), Some("query_action"));
+            assert_eq!(req["action_name"].as_str(), Some("GetDiskUsage"));
+
+            let resp = serde_json::json!({
+                "type": "query_action_response",
+                "request_id": req["request_id"],
+                "action_name": "GetDiskUsage",
+                // ANSI green around "50G", reset, then plain text
+                "output": "\x1b[32m50G\x1b[0m free on /"
+            });
+            write_framed(&mut stream, &serde_json::to_vec(&resp).unwrap()).unwrap();
+        });
+
+        let client = DaemonClient::new(socket_path.to_str().unwrap());
+        let output = client
+            .query_action("GetDiskUsage", &serde_json::json!({}))
+            .unwrap();
+        handle.join().unwrap();
+        let _ = std::fs::remove_file(&socket_path);
+
+        assert_eq!(output, "50G free on /", "ANSI escapes must be stripped");
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 3: preview sends a preview request and returns the envelope
+    // -----------------------------------------------------------------------
+    #[tokio::test]
+    async fn preview_sends_request_and_returns_envelope() {
+        let socket_path = temp_socket_path();
+        let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
+
+        let mock = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let raw = read_framed_async(&mut stream).await.unwrap();
+            let req: Value = serde_json::from_slice(&raw).unwrap();
+            assert_eq!(req["type"].as_str(), Some("preview"), "wrong request type");
+            assert_eq!(req["action_name"].as_str(), Some("GetDiskUsage"));
+
+            let resp = serde_json::json!({
+                "type": "preview_response",
+                "request_id": req["request_id"],
+                "transaction_id": "tx-abc123",
+                "preview": {
+                    "summary": "Collect disk usage statistics",
+                    "risk_level": "low",
+                    "current_state": {},
+                    "proposed_change": {},
+                    "expected_side_effects": [],
+                    "reboot_required": false,
+                    "rollback_available": false,
+                    "warnings": [],
+                    "request_hash": "abcdef1234"
+                }
+            });
+            write_framed_async(&mut stream, &serde_json::to_vec(&resp).unwrap())
+                .await
+                .unwrap();
+        });
+
+        let client = DaemonClient::new(socket_path.to_str().unwrap());
+        let (envelope, tx_id) = client
+            .preview("GetDiskUsage", &serde_json::json!({}))
+            .await
+            .unwrap();
+
+        mock.await.unwrap();
+        let _ = tokio::fs::remove_file(&socket_path).await;
+
+        assert_eq!(envelope.request_hash, "abcdef1234");
+        assert_eq!(envelope.summary, "Collect disk usage statistics");
+        assert_eq!(envelope.risk_level, RiskLevel::Low);
+        assert!(!envelope.reboot_required);
+        assert_eq!(tx_id, "tx-abc123");
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 4: execute streams progress lines (ANSI stripped) and returns result
+    // -----------------------------------------------------------------------
+    #[tokio::test]
+    async fn execute_streams_progress_and_returns_result() {
+        let socket_path = temp_socket_path();
+        let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
+
+        let mock = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let raw = read_framed_async(&mut stream).await.unwrap();
+            let req: Value = serde_json::from_slice(&raw).unwrap();
+            assert_eq!(req["type"].as_str(), Some("execute"), "wrong request type");
+            assert_eq!(req["approval_hash"].as_str(), Some("abcdef1234"));
+
+            for msg in [
+                serde_json::json!({
+                    "type": "job_started",
+                    "request_id": req["request_id"],
+                    "job_id": "job-42",
+                    "transaction_id": "tx-abc123"
+                }),
+                serde_json::json!({
+                    "type": "job_progress",
+                    "job_id": "job-42",
+                    // ANSI bold markers around "Collecting"
+                    "line": "\x1b[1mCollecting\x1b[0m disk stats…"
+                }),
+                serde_json::json!({
+                    "type": "job_progress",
+                    "job_id": "job-42",
+                    "line": "Done."
+                }),
+                serde_json::json!({
+                    "type": "job_completed",
+                    "job_id": "job-42",
+                    "result": {
+                        "status": "succeeded",
+                        "summary": "Disk stats collected",
+                        "warnings": [],
+                        "job_id": "job-42",
+                        "needs_reboot": false,
+                        "rollback_ref": null,
+                        "transaction_id": "tx-abc123"
+                    }
+                }),
+            ] {
+                write_framed_async(&mut stream, &serde_json::to_vec(&msg).unwrap())
+                    .await
+                    .unwrap();
+            }
+        });
+
+        let client = DaemonClient::new(socket_path.to_str().unwrap());
+        let mut lines: Vec<String> = Vec::new();
+        let result = client
+            .execute(
+                "GetDiskUsage",
+                &serde_json::json!({}),
+                "abcdef1234",
+                |line| lines.push(line),
+            )
+            .await
+            .unwrap();
+
+        mock.await.unwrap();
+        let _ = tokio::fs::remove_file(&socket_path).await;
+
+        // ANSI must be stripped from progress lines
+        assert_eq!(lines, vec!["Collecting disk stats…", "Done."]);
+        assert_eq!(result.status, JobState::Succeeded);
+        assert_eq!(result.summary, "Disk stats collected");
+        assert!(!result.needs_reboot);
+        assert_eq!(result.transaction_id, "tx-abc123");
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 5: connection failures map to the right error types
+    // -----------------------------------------------------------------------
+    #[test]
+    fn curated_state_connection_failure_maps_to_state_unavailable() {
+        let client = DaemonClient::new("/tmp/lacs-no-such-socket-xyzzy.sock");
+        let err = client.curated_state().unwrap_err();
+        match err {
+            PlanningError::StateUnavailable(msg) => {
+                assert!(
+                    msg.contains("connect"),
+                    "error should mention 'connect', got: {msg}"
+                );
+            }
+            other => panic!("expected StateUnavailable, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn preview_connection_failure_maps_to_config_or_daemon() {
+        let client = DaemonClient::new("/tmp/lacs-no-such-socket-xyzzy.sock");
+        let err = client
+            .preview("GetDiskUsage", &serde_json::json!({}))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, CliError::ConfigOrDaemon(_)),
+            "expected ConfigOrDaemon, got {err:?}"
+        );
+    }
+}
