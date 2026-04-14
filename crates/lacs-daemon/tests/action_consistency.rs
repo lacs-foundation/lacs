@@ -18,9 +18,17 @@ use lacs_daemon::executor::build_action_spec;
 use lacs_daemon::policy::min_role_for_action;
 use serde_json::json;
 
-/// Collect every action name from every action module's `specs()` function.
+/// Actions that are intercepted by the dispatcher before reaching the executor.
+/// They have policy entries and KNOWN_ACTIONS entries but no ActionSpec.
+const DISPATCHER_INTERNAL_ACTIONS: &[&str] = &["ListJobHistory"];
+
+/// Collect every action name from every action module's `specs()` function,
+/// plus dispatcher-internal actions that bypass the executor.
 fn all_spec_action_names() -> BTreeSet<&'static str> {
     let mut names = BTreeSet::new();
+    for &name in DISPATCHER_INTERNAL_ACTIONS {
+        names.insert(name);
+    }
     for spec in deployment::specs() {
         names.insert(spec.action_name);
     }
@@ -91,8 +99,13 @@ fn every_spec_action_has_a_policy_entry() {
 /// `MissingParam` or `InvalidParam` is fine — that means the name is known).
 #[test]
 fn every_spec_action_is_recognised_by_executor() {
+    let dispatcher_internal: BTreeSet<&str> = DISPATCHER_INTERNAL_ACTIONS.iter().copied().collect();
     let mut missing = Vec::new();
     for name in all_spec_action_names() {
+        // Dispatcher-internal actions are handled before reaching the executor.
+        if dispatcher_internal.contains(name) {
+            continue;
+        }
         match build_action_spec(name, &json!({})) {
             Err(lacs_daemon::executor::ExecutorError::UnknownAction(_)) => {
                 missing.push(name);

@@ -104,6 +104,8 @@ pub const KNOWN_ACTIONS: &[&str] = &[
     "GetAuthorizedKeys",
     "AddAuthorizedKey",
     "RemoveAuthorizedKey",
+    // Job history
+    "ListJobHistory",
 ];
 
 pub fn propose_plan_tool_def() -> ToolDefinition {
@@ -522,5 +524,15 @@ mod tests {
                 "risk_level '{bad}' should be rejected"
             );
         }
+    }
+
+    #[test]
+    fn list_job_history_is_accepted() {
+        let input = serde_json::json!({
+            "summary": "show history",
+            "explanation": "shows recent LACS actions",
+            "steps": [{ "action_name": "ListJobHistory", "summary": "show recent activity", "risk_level": "low", "params": {} }]
+        });
+        parse_proposed_plan("show history", &input).unwrap();
     }
 }
