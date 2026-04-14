@@ -26,9 +26,13 @@ const SENSITIVE_PATTERNS: &[&str] = &[
     "token",
     "credential",
     "-----begin",
+    "bearer ",  // OAuth2 Bearer tokens ("Bearer eyJ...")
+    "akia",     // AWS Access Key ID prefix
 ];
 
 /// String prefixes that indicate well-known secret formats (API keys, access tokens, PATs).
+/// All entries are lowercase; matched against the lowercased input so casing variants
+/// (e.g. "SK-" or "GHP_") are caught.
 const SENSITIVE_PREFIXES: &[&str] = &[
     "sk-",         // Anthropic / OpenAI
     "ghp_",        // GitHub personal access token
@@ -36,6 +40,9 @@ const SENSITIVE_PREFIXES: &[&str] = &[
     "gho_",        // GitHub OAuth token
     "xoxb-",       // Slack bot token
     "xoxp-",       // Slack user token
+    "sg.",         // SendGrid API key
+    "key_live_",   // Stripe live key
+    "key_test_",   // Stripe test key
 ];
 
 /// Read the user preferences file. Returns `Ok(None)` if the file does not
@@ -69,15 +76,7 @@ pub fn append_pref(path: &Path, fact: &str) -> Result<(), io::Error> {
         Err(e) => return Err(e),
     };
 
-    if existing.len() as u64 >= PREFS_MAX_BYTES {
-        return Err(io::Error::other(format!(
-            "preferences file exceeds size limit ({} bytes); \
-             remove unused preferences before adding new ones",
-            PREFS_MAX_BYTES
-        )));
-    }
-
-    // Check for duplicates.
+    // Check for duplicates before computing size (duplicates don't change size).
     if existing.lines().any(|line| {
         line.strip_prefix("- ")
             .is_some_and(|stripped| stripped == fact)
@@ -86,6 +85,15 @@ pub fn append_pref(path: &Path, fact: &str) -> Result<(), io::Error> {
     }
 
     let new_line = format!("- {fact}\n");
+
+    // Check combined size, not just the existing size, to prevent writing past the limit.
+    if (existing.len() + new_line.len()) as u64 > PREFS_MAX_BYTES {
+        return Err(io::Error::other(format!(
+            "preferences file exceeds size limit ({} bytes); \
+             remove unused preferences before adding new ones",
+            PREFS_MAX_BYTES
+        )));
+    }
     let combined = format!("{existing}{new_line}");
 
     // Write via temp-file + rename for crash safety (not concurrency-safe).
@@ -139,7 +147,9 @@ pub fn contains_sensitive(fact: &str) -> bool {
     if SENSITIVE_PATTERNS.iter().any(|p| lower.contains(p)) {
         return true;
     }
-    SENSITIVE_PREFIXES.iter().any(|p| fact.contains(p))
+    // Check prefixes against the lowercased string so casing variants are caught
+    // (e.g. "SK-" and "GHP_" as well as lowercase forms).
+    SENSITIVE_PREFIXES.iter().any(|p| lower.contains(p))
 }
 
 #[cfg(test)]
@@ -271,5 +281,63 @@ mod tests {
         let path = dir.path().join("prefs.md");
         let result = append_pref(&path, "line one\rline two");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn append_pref_rejects_when_combined_size_exceeds_limit() {
+        // File is one byte under the limit; the new entry would push it over.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("prefs.md");
+        // "- " + x*(limit-3) + "\n" = exactly limit bytes
+        let big_content = "- ".to_string() + &"x".repeat(PREFS_MAX_BYTES as usize - 3) + "\n";
+        assert_eq!(big_content.len(), PREFS_MAX_BYTES as usize);
+        std::fs::write(&path, &big_content).unwrap();
+        // Adding even a 1-char fact ("- a\n" = 4 bytes) would exceed the limit.
+        let result = append_pref(&path, "a");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("size limit"));
+    }
+
+    #[test]
+    fn read_prefs_returns_none_for_whitespace_only_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("prefs.md");
+        std::fs::write(&path, "   \n\n  \t  \n").unwrap();
+        assert!(read_prefs(&path).unwrap().is_none());
+    }
+
+    #[test]
+    fn remove_pref_last_entry_leaves_empty_file_and_read_prefs_returns_none() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("prefs.md");
+        append_pref(&path, "only pref").unwrap();
+        let removed = remove_pref(&path, "only pref").unwrap();
+        assert!(removed);
+        // After removing the last entry, read_prefs should return None.
+        assert!(read_prefs(&path).unwrap().is_none());
+    }
+
+    #[test]
+    fn contains_sensitive_detects_uppercase_prefix_variants() {
+        // Uppercase casing must be caught (was previously missed due to case-sensitive check).
+        assert!(contains_sensitive("SK-ant-abc123 is my key"));
+        assert!(contains_sensitive("GHP_abcdef1234 github token"));
+    }
+
+    #[test]
+    fn contains_sensitive_detects_new_patterns() {
+        assert!(contains_sensitive("Bearer eyJhbGciOiJSUzI1NiJ9"));
+        assert!(contains_sensitive("AKIAIOSFODNN7EXAMPLE"));
+        assert!(contains_sensitive("SG.abcdef1234567890"));
+        assert!(contains_sensitive("key_live_abc123xyz"));
+        assert!(contains_sensitive("key_test_abc123xyz"));
+    }
+
+    #[test]
+    fn contains_sensitive_prefix_case_insensitive() {
+        // sk- in uppercase should be detected.
+        assert!(contains_sensitive("use SK-abc123 for anthropic"));
+        // Legitimate prefs that happen to contain short matching substrings should not match.
+        assert!(!contains_sensitive("prefer skg over skb"));
     }
 }
