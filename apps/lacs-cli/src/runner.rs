@@ -398,6 +398,7 @@ pub async fn run_intent(intent: String, opts: &RunOpts, log: &Logger) -> Result<
                     "action": s.action_name(),
                     "summary": s.summary(),
                     "risk": s.risk_level().as_str(),
+                    "params": s.params(),
                 })
             })
             .collect();

@@ -18,22 +18,22 @@ INTENT="authorize this SSH key for user lacsdev: $TEST_KEY"
 echo "=== Story 10: Add SSH authorized key ==="
 echo "Intent: $INTENT"
 
-PLAN=$(echo "$INTENT" | lacs-test-cli 2>/tmp/lacs-story-10-stderr.log)
+PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-10-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 
 # --- Assertions ---
 
-ADD_KEY_STEP=$(echo "$PLAN" | jq '.steps[] | select(.action_name == "AddAuthorizedKey")')
+ADD_KEY_STEP=$(echo "$PLAN" | jq '.plan.steps[] | select(.action == "AddAuthorizedKey")')
 
 if [[ -z "$ADD_KEY_STEP" || "$ADD_KEY_STEP" == "null" ]]; then
   echo "FAIL: no AddAuthorizedKey step found"
-  echo "Actions: $(echo "$PLAN" | jq -r '.steps[].action_name')"
+  echo "Actions: $(echo "$PLAN" | jq -r '.plan.steps[].action')"
   exit 1
 fi
 
 # Check risk level is medium.
-RISK=$(echo "$ADD_KEY_STEP" | jq -r '.risk_level')
+RISK=$(echo "$ADD_KEY_STEP" | jq -r '.risk')
 if [[ "$RISK" != "medium" ]]; then
   echo "FAIL: expected risk medium, got $RISK"
   exit 1

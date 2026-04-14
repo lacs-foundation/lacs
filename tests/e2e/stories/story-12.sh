@@ -16,27 +16,27 @@ INTENT="show me the LACS activity log for today"
 echo "=== Story 12: LACS activity log — today ==="
 echo "Intent: $INTENT"
 
-PLAN=$(echo "$INTENT" | lacs-test-cli 2>/tmp/lacs-story-12-stderr.log)
+PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-12-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 
 # --- Assertions ---
 
-STEP_COUNT=$(echo "$PLAN" | jq '.steps | length')
+STEP_COUNT=$(echo "$PLAN" | jq '.plan.steps | length')
 if [[ "$STEP_COUNT" != "1" ]]; then
   echo "FAIL: expected 1 step, got $STEP_COUNT"
-  echo "Actions: $(echo "$PLAN" | jq -r '.steps[].action_name')"
+  echo "Actions: $(echo "$PLAN" | jq -r '.plan.steps[].action')"
   exit 1
 fi
 
-ACTION=$(echo "$PLAN" | jq -r '.steps[0].action_name')
+ACTION=$(echo "$PLAN" | jq -r '.plan.steps[0].action')
 if [[ "$ACTION" != "ListJobHistory" ]]; then
   echo "FAIL: expected ListJobHistory, got $ACTION"
   echo "NOTE: model must use query_job_history to check history, then propose ListJobHistory"
   exit 1
 fi
 
-RISK=$(echo "$PLAN" | jq -r '.steps[0].risk_level')
+RISK=$(echo "$PLAN" | jq -r '.plan.steps[0].risk')
 if [[ "$RISK" != "low" ]]; then
   echo "FAIL: expected risk low, got $RISK"
   exit 1

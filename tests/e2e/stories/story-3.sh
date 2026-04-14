@@ -10,29 +10,29 @@ INTENT="is sshd running? show me its recent logs"
 echo "=== Story 3: Service health check ==="
 echo "Intent: $INTENT"
 
-PLAN=$(echo "$INTENT" | lacs-test-cli 2>/tmp/lacs-story-3-stderr.log)
+PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-3-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 
 # --- Assertions ---
 
 # 1. At least one step with GetServiceLogs.
-HAS_LOGS=$(echo "$PLAN" | jq '[.steps[] | select(.action_name == "GetServiceLogs")] | length')
+HAS_LOGS=$(echo "$PLAN" | jq '[.plan.steps[] | select(.action == "GetServiceLogs")] | length')
 if [[ "$HAS_LOGS" == "0" ]]; then
   echo "FAIL: no GetServiceLogs step found"
-  echo "Actions present: $(echo "$PLAN" | jq -r '.steps[].action_name')"
+  echo "Actions present: $(echo "$PLAN" | jq -r '.plan.steps[].action')"
   exit 1
 fi
 
 # 2. The GetServiceLogs step has a unit param mentioning sshd.
 UNIT_PARAM=$(echo "$PLAN" | jq -r '
-  .steps[] | select(.action_name == "GetServiceLogs") |
+  .plan.steps[] | select(.action == "GetServiceLogs") |
   .params.unit // .params.service // .params.name // ""
 ')
 if [[ "$UNIT_PARAM" != *"sshd"* ]]; then
   echo "FAIL: GetServiceLogs unit parameter does not contain 'sshd', got: '$UNIT_PARAM'"
   # Check if it is in a nested structure.
-  FULL_PARAMS=$(echo "$PLAN" | jq '.steps[] | select(.action_name == "GetServiceLogs") | .params')
+  FULL_PARAMS=$(echo "$PLAN" | jq '.plan.steps[] | select(.action == "GetServiceLogs") | .params')
   echo "Full params: $FULL_PARAMS"
   exit 1
 fi

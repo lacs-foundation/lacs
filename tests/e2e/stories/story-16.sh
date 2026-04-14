@@ -16,14 +16,14 @@ INTENT="show me the network status and the current firewall rules"
 echo "=== Story 16: Network status + firewall rules ==="
 echo "Intent: $INTENT"
 
-PLAN=$(echo "$INTENT" | lacs-test-cli 2>/tmp/lacs-story-16-stderr.log)
+PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-16-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 
 # --- Assertions ---
 
-STEP_COUNT=$(echo "$PLAN" | jq '.steps | length')
-ACTIONS=$(echo "$PLAN" | jq -r '.steps[].action_name')
+STEP_COUNT=$(echo "$PLAN" | jq '.plan.steps | length')
+ACTIONS=$(echo "$PLAN" | jq -r '.plan.steps[].action')
 
 if ! echo "$ACTIONS" | grep -q "GetNetworkStatus"; then
   echo "FAIL: GetNetworkStatus not found in plan"
@@ -37,7 +37,7 @@ if ! echo "$ACTIONS" | grep -q "GetFirewallState"; then
   exit 1
 fi
 
-RISKS=$(echo "$PLAN" | jq -r '.steps[].risk_level')
+RISKS=$(echo "$PLAN" | jq -r '.plan.steps[].risk')
 while IFS= read -r risk; do
   if [[ "$risk" != "low" ]]; then
     echo "FAIL: expected all steps low risk, got '$risk'"

@@ -18,20 +18,20 @@ INTENT="list all running containers and give me detailed info on the container n
 echo "=== Story 17: Container list + postgres info ==="
 echo "Intent: $INTENT"
 
-PLAN=$(echo "$INTENT" | lacs-test-cli 2>/tmp/lacs-story-17-stderr.log)
+PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-17-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 
 # --- Assertions ---
 
-STEP_COUNT=$(echo "$PLAN" | jq '.steps | length')
+STEP_COUNT=$(echo "$PLAN" | jq '.plan.steps | length')
 if [[ "$STEP_COUNT" != "2" ]]; then
   echo "FAIL: expected 2 steps, got $STEP_COUNT"
-  echo "Actions: $(echo "$PLAN" | jq -r '.steps[].action_name')"
+  echo "Actions: $(echo "$PLAN" | jq -r '.plan.steps[].action')"
   exit 1
 fi
 
-ACTIONS=$(echo "$PLAN" | jq -r '.steps[].action_name')
+ACTIONS=$(echo "$PLAN" | jq -r '.plan.steps[].action')
 
 if ! echo "$ACTIONS" | grep -q "ListContainers"; then
   echo "FAIL: ListContainers not found in plan"
@@ -46,14 +46,14 @@ if ! echo "$ACTIONS" | grep -q "GetContainerInfo"; then
 fi
 
 # GetContainerInfo must have name=postgres.
-CONTAINER_NAME=$(echo "$PLAN" | jq -r '.steps[] | select(.action_name == "GetContainerInfo") | .params.name // ""')
+CONTAINER_NAME=$(echo "$PLAN" | jq -r '.plan.steps[] | select(.action == "GetContainerInfo") | .params.name // ""')
 if [[ "$CONTAINER_NAME" != "postgres" ]]; then
   echo "FAIL: expected GetContainerInfo params.name=postgres, got '$CONTAINER_NAME'"
-  echo "Full params: $(echo "$PLAN" | jq '.steps[] | select(.action_name == "GetContainerInfo") | .params')"
+  echo "Full params: $(echo "$PLAN" | jq '.plan.steps[] | select(.action == "GetContainerInfo") | .params')"
   exit 1
 fi
 
-RISKS=$(echo "$PLAN" | jq -r '.steps[].risk_level')
+RISKS=$(echo "$PLAN" | jq -r '.plan.steps[].risk')
 while IFS= read -r risk; do
   if [[ "$risk" != "low" ]]; then
     echo "FAIL: expected all steps low risk, got '$risk'"

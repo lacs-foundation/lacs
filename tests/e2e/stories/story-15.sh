@@ -19,27 +19,27 @@ INTENT="show me all rollback operations LACS has performed"
 echo "=== Story 15: Rollback history ==="
 echo "Intent: $INTENT"
 
-PLAN=$(echo "$INTENT" | lacs-test-cli 2>/tmp/lacs-story-15-stderr.log)
+PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-15-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 
 # --- Assertions ---
 
-STEP_COUNT=$(echo "$PLAN" | jq '.steps | length')
+STEP_COUNT=$(echo "$PLAN" | jq '.plan.steps | length')
 if [[ "$STEP_COUNT" != "1" ]]; then
   echo "FAIL: expected 1 step, got $STEP_COUNT"
-  echo "Actions: $(echo "$PLAN" | jq -r '.steps[].action_name')"
+  echo "Actions: $(echo "$PLAN" | jq -r '.plan.steps[].action')"
   exit 1
 fi
 
-ACTION=$(echo "$PLAN" | jq -r '.steps[0].action_name')
+ACTION=$(echo "$PLAN" | jq -r '.plan.steps[0].action')
 if [[ "$ACTION" != "ListJobHistory" ]]; then
   echo "FAIL: expected ListJobHistory, got $ACTION"
   echo "NOTE: do NOT use query_deployments or get_system_state for LACS history"
   exit 1
 fi
 
-RISK=$(echo "$PLAN" | jq -r '.steps[0].risk_level')
+RISK=$(echo "$PLAN" | jq -r '.plan.steps[0].risk')
 if [[ "$RISK" != "low" ]]; then
   echo "FAIL: expected risk low, got $RISK"
   exit 1

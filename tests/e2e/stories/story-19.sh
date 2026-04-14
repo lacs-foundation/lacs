@@ -20,26 +20,26 @@ INTENT="update my Fedora Silverblue system"
 echo "=== Story 19: Full system update ==="
 echo "Intent: $INTENT"
 
-PLAN=$(echo "$INTENT" | lacs-test-cli 2>/tmp/lacs-story-19-stderr.log)
+PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-19-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 
 # --- Assertions ---
 
-STEP_COUNT=$(echo "$PLAN" | jq '.steps | length')
+STEP_COUNT=$(echo "$PLAN" | jq '.plan.steps | length')
 if [[ "$STEP_COUNT" != "1" ]]; then
   echo "FAIL: expected 1 step, got $STEP_COUNT"
-  echo "Actions: $(echo "$PLAN" | jq -r '.steps[].action_name')"
+  echo "Actions: $(echo "$PLAN" | jq -r '.plan.steps[].action')"
   exit 1
 fi
 
-ACTION=$(echo "$PLAN" | jq -r '.steps[0].action_name')
+ACTION=$(echo "$PLAN" | jq -r '.plan.steps[0].action')
 if [[ "$ACTION" != "UpdateSystem" ]]; then
   echo "FAIL: expected UpdateSystem, got $ACTION"
   exit 1
 fi
 
-RISK=$(echo "$PLAN" | jq -r '.steps[0].risk_level')
+RISK=$(echo "$PLAN" | jq -r '.plan.steps[0].risk')
 if [[ "$RISK" != "high" ]]; then
   echo "FAIL: expected risk high, got $RISK"
   exit 1

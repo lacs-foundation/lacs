@@ -16,20 +16,20 @@ INTENT="I want to check disk usage, memory pressure, and see which services are 
 echo "=== Story 14: Triple compound — disk + memory + services ==="
 echo "Intent: $INTENT"
 
-PLAN=$(echo "$INTENT" | lacs-test-cli 2>/tmp/lacs-story-14-stderr.log)
+PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-14-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 
 # --- Assertions ---
 
-STEP_COUNT=$(echo "$PLAN" | jq '.steps | length')
+STEP_COUNT=$(echo "$PLAN" | jq '.plan.steps | length')
 if [[ "$STEP_COUNT" != "3" ]]; then
   echo "FAIL: expected 3 steps, got $STEP_COUNT"
-  echo "Actions: $(echo "$PLAN" | jq -r '.steps[].action_name')"
+  echo "Actions: $(echo "$PLAN" | jq -r '.plan.steps[].action')"
   exit 1
 fi
 
-ACTIONS=$(echo "$PLAN" | jq -r '.steps[].action_name')
+ACTIONS=$(echo "$PLAN" | jq -r '.plan.steps[].action')
 
 if ! echo "$ACTIONS" | grep -q "GetDiskUsage"; then
   echo "FAIL: GetDiskUsage not found in plan"
@@ -50,7 +50,7 @@ if ! echo "$ACTIONS" | grep -q "ListServices"; then
 fi
 
 # All steps must be low risk.
-RISKS=$(echo "$PLAN" | jq -r '.steps[].risk_level')
+RISKS=$(echo "$PLAN" | jq -r '.plan.steps[].risk')
 while IFS= read -r risk; do
   if [[ "$risk" != "low" ]]; then
     echo "FAIL: expected all steps low risk, got '$risk'"
