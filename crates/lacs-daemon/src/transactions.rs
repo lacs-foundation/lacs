@@ -245,7 +245,67 @@ impl TransactionStore {
         Ok(rows_affected as u64)
     }
 
-    fn connection(&self) -> Result<Connection, TransactionStoreError> {
+    /// List transactions with optional filters, ordered by newest first.
+    ///
+    /// - `limit`: max number of rows (capped at 100)
+    /// - `offset`: skip this many rows
+    /// - `status_filter`: if set, only return rows matching this status
+    ///   (e.g. `"succeeded"`, `"failed"`, `"queued"`)
+    /// - `action_filter`: if set, only return rows with this exact action name
+    /// - `since_hours`: if set, only return rows created within the last N hours
+    pub fn list_transactions(
+        &self,
+        limit: u32,
+        offset: u32,
+        status_filter: Option<&str>,
+        action_filter: Option<&str>,
+        since_hours: Option<u32>,
+    ) -> Result<Vec<TransactionRecord>, TransactionStoreError> {
+        let conn = self.connection()?;
+        let limit = limit.min(100);
+
+        let mut sql = String::from(
+            "SELECT transaction_id, request_id, request_hash, action_name, \
+             risk_level, status, approval_id, summary, warnings_json \
+             FROM transactions WHERE 1=1",
+        );
+        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+        if let Some(status) = status_filter {
+            let status_json = format!("\"{status}\"");
+            sql.push_str(" AND status = ?");
+            param_values.push(Box::new(status_json));
+        }
+
+        if let Some(action) = action_filter {
+            sql.push_str(" AND action_name = ?");
+            param_values.push(Box::new(action.to_string()));
+        }
+
+        if let Some(hours) = since_hours {
+            sql.push_str(&format!(
+                " AND created_at > datetime('now', '-{hours} hours')"
+            ));
+        }
+
+        sql.push_str(" ORDER BY rowid DESC LIMIT ? OFFSET ?");
+        param_values.push(Box::new(limit));
+        param_values.push(Box::new(offset));
+
+        let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+            param_values.iter().map(|b| b.as_ref()).collect();
+
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_ref.as_slice(), |row| Ok(row_to_record(row)))?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row??);
+        }
+        Ok(results)
+    }
+
+    pub(crate) fn connection(&self) -> Result<Connection, TransactionStoreError> {
         Ok(Connection::open(&self.path)?)
     }
 
@@ -722,5 +782,131 @@ mod tests {
 
         let updated = store.get(&tx.transaction_id).unwrap().unwrap();
         assert_eq!(updated.status, JobState::RolledBack);
+    }
+
+    // ── list_transactions tests ───────────────────────────────────────────
+
+    #[test]
+    fn list_transactions_returns_empty_for_fresh_store() {
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let results = store.list_transactions(10, 0, None, None, None).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn list_transactions_returns_all_records_ordered_by_newest_first() {
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        store.record(queued_transaction()).unwrap();
+
+        let mut second = queued_transaction();
+        second.action_name = "GetDiskUsage".to_string();
+        second.risk_level = RiskLevel::Low;
+        store.record(second).unwrap();
+
+        let results = store.list_transactions(10, 0, None, None, None).unwrap();
+        assert_eq!(results.len(), 2);
+        // Most recent first (GetDiskUsage was recorded second).
+        assert_eq!(results[0].action_name, "GetDiskUsage");
+        assert_eq!(results[1].action_name, "UpdateSystem");
+    }
+
+    #[test]
+    fn list_transactions_respects_limit() {
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        for _ in 0..5 {
+            store.record(queued_transaction()).unwrap();
+        }
+        let results = store.list_transactions(3, 0, None, None, None).unwrap();
+        assert_eq!(results.len(), 3);
+    }
+
+    #[test]
+    fn list_transactions_respects_offset() {
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        for _ in 0..5 {
+            store.record(queued_transaction()).unwrap();
+        }
+        let results = store.list_transactions(10, 3, None, None, None).unwrap();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn list_transactions_filters_by_status() {
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let tx = store.record(queued_transaction()).unwrap();
+        store
+            .update_status(&tx.transaction_id, JobState::Running)
+            .unwrap();
+        store
+            .update_status(&tx.transaction_id, JobState::Succeeded)
+            .unwrap();
+
+        // Add another that stays Queued.
+        store.record(queued_transaction()).unwrap();
+
+        let succeeded = store
+            .list_transactions(10, 0, Some("succeeded"), None, None)
+            .unwrap();
+        assert_eq!(succeeded.len(), 1);
+        assert_eq!(succeeded[0].status, JobState::Succeeded);
+
+        let queued = store
+            .list_transactions(10, 0, Some("queued"), None, None)
+            .unwrap();
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].status, JobState::Queued);
+    }
+
+    #[test]
+    fn list_transactions_filters_by_action_name() {
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        store.record(queued_transaction()).unwrap(); // UpdateSystem
+
+        let mut disk = queued_transaction();
+        disk.action_name = "GetDiskUsage".to_string();
+        store.record(disk).unwrap();
+
+        let results = store
+            .list_transactions(10, 0, None, Some("GetDiskUsage"), None)
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].action_name, "GetDiskUsage");
+    }
+
+    #[test]
+    fn list_transactions_filters_by_since_hours() {
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+
+        // Record a transaction and backdate it to 48 hours ago.
+        let old = store.record(queued_transaction()).unwrap();
+        let conn = store.connection().unwrap();
+        conn.execute(
+            "UPDATE transactions SET created_at = datetime('now', '-48 hours') \
+             WHERE transaction_id = ?1",
+            params![old.transaction_id],
+        )
+        .unwrap();
+
+        // Record a fresh transaction.
+        store.record(queued_transaction()).unwrap();
+
+        // since_hours=24 should only return the fresh one.
+        let results = store
+            .list_transactions(10, 0, None, None, Some(24))
+            .unwrap();
+        assert_eq!(results.len(), 1);
+
+        // since_hours=72 should return both.
+        let results = store
+            .list_transactions(10, 0, None, None, Some(72))
+            .unwrap();
+        assert_eq!(results.len(), 2);
     }
 }
