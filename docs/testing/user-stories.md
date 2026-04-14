@@ -293,13 +293,15 @@ on PRs labeled `e2e`.
 
 ### Prompt engineering observations
 
-The system prompt in `crates/lacs-brain/src/prompt.rs` contains two worked
-examples (A and B). These are **load-bearing** — removing them causes 4 of 7
+The system prompt in `crates/lacs-brain/src/prompt.rs` contains three worked
+examples (A, B, and C). These are **load-bearing** — removing them causes 4 of 7
 read-only stories to fail with GPT-4o.
 
 The original Example A ("check disk usage") was removed — it was a strict
 subset of the prose rule and the current Example A, and added no measurable
-coverage. The remaining examples were renumbered B→A, C→B.
+coverage. The remaining examples were renumbered B→A, C→B. Example C
+("did LACS successfully update recently?") was later added to teach
+`query_job_history` for questions about past LACS actions.
 
 Stories 8–10 require a live daemon and are skipped in the no-daemon CI run.
 
@@ -314,7 +316,7 @@ degraded fallback plan (e.g. `CollectDiagnostics` instead of `GetMemoryInfo`).
 immediately. Use `query_*` only when you need to DECIDE between plans (e.g.
 check if vim is already layered before proposing `AddLayeredPackage`).
 
-| Story | Without examples | With A+B |
+| Story | Without examples | With A+B+C |
 |-------|-----------------|---------|
 | 1 — disk usage | ✅ (lucky fallback) | ✅ |
 | 2 — memory pressure | ❌ wrong plan | ✅ |
@@ -326,6 +328,7 @@ check if vim is already layered before proposing `AddLayeredPackage`).
 | 8 — install vim | ❌ crash (daemon absent) | ❌ crash (daemon absent) |
 | 9 — create toolbox | ✅ (skipped/no-daemon) | ✅ (skipped/no-daemon) |
 | 10 — add SSH key | ❌ crash (daemon absent) | ❌ crash (daemon absent) |
+| 11 — transaction history | ❌ wrong tool | ✅ (requires Example C) |
 
 **Crash** = `get_system_state` propagates `StateUnavailable` immediately;
 planning returns with no plan produced.

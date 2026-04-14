@@ -184,19 +184,30 @@ fn read_gid_map() -> std::collections::HashMap<u32, String> {
         }
     };
     let mut map = std::collections::HashMap::new();
-    for line in content.lines() {
+    for (line_no, line) in content.lines().enumerate() {
         let mut parts = line.splitn(4, ':');
         let name = match parts.next() {
             Some(n) => n,
-            None => continue,
+            None => {
+                eprintln!("[lacs-daemon] WARNING: malformed /etc/group line {line_no}: missing name field");
+                continue;
+            }
         };
         let _ = parts.next(); // password field
         let gid_str = match parts.next() {
             Some(g) => g,
-            None => continue,
+            None => {
+                eprintln!("[lacs-daemon] WARNING: malformed /etc/group line {line_no} (group={name:?}): missing GID field");
+                continue;
+            }
         };
-        if let Ok(gid) = gid_str.parse::<u32>() {
-            map.insert(gid, name.to_string());
+        match gid_str.parse::<u32>() {
+            Ok(gid) => {
+                map.insert(gid, name.to_string());
+            }
+            Err(_) => {
+                eprintln!("[lacs-daemon] WARNING: malformed /etc/group line {line_no} (group={name:?}): GID {gid_str:?} is not a number");
+            }
         }
     }
     map
@@ -222,6 +233,13 @@ fn groups_for_pid(pid: u32, gid_map: &std::collections::HashMap<u32, String>) ->
                 .collect();
         }
     }
+    // If the Groups: line is absent (unusual kernel config or namespacing),
+    // the caller will be resolved to Observer via its primary GID only.
+    // Log so operators can diagnose unexpected authorization failures.
+    eprintln!(
+        "[lacs-daemon] WARNING: no Groups: line in /proc/{pid}/status; \
+         supplementary groups unavailable — caller may be demoted to Observer"
+    );
     vec![]
 }
 
@@ -252,7 +270,8 @@ pub fn compute_request_hash(action_name: &str, params: &Value) -> String {
     let bytes = hasher.finalize();
     bytes.iter().fold(String::with_capacity(64), |mut s, b| {
         use std::fmt::Write;
-        write!(s, "{b:02x}").unwrap();
+        // Writing to String via fmt::Write is infallible.
+        let _ = write!(s, "{b:02x}");
         s
     })
 }
@@ -265,9 +284,11 @@ fn canonical_json(v: &Value) -> String {
             let pairs = keys
                 .iter()
                 .map(|k| {
+                    // Use Value::String's Display impl to JSON-encode the key —
+                    // infallible because Rust strings are always valid UTF-8.
                     format!(
                         "{}:{}",
-                        serde_json::to_string(k).unwrap(),
+                        Value::String((*k).to_string()),
                         canonical_json(&map[*k])
                     )
                 })
@@ -281,7 +302,9 @@ fn canonical_json(v: &Value) -> String {
             let items = arr.iter().map(canonical_json).collect::<Vec<_>>().join(",");
             format!("[{items}]")
         }
-        _ => serde_json::to_string(v).unwrap(),
+        // For scalars (null, bool, number, string) use Value's Display impl,
+        // which renders valid JSON and is infallible.
+        _ => format!("{v}"),
     }
 }
 
@@ -438,10 +461,10 @@ async fn handle_query_state(
 ) -> Result<(), HandlerError> {
     // collect_state uses std::process::Command (blocking). Offload to the
     // blocking thread pool so the async executor is not stalled.
-    let collected = match tokio::task::spawn_blocking(move || collect_state(&*runner))
+    let join_result = tokio::task::spawn_blocking(move || collect_state(&*runner))
         .await
-        .expect("collect_state task should not panic")
-    {
+        .map_err(|e| HandlerError::Internal(format!("collect_state task failed: {e}")))?;
+    let collected = match join_result {
         Ok(s) => s,
         Err(e) => {
             return send_error(framed, request_id, "state_collection_failed", e.to_string()).await;
@@ -610,6 +633,27 @@ async fn handle_query_action(
         }
     };
 
+    // Non-zero exit codes from read-only actions must not be silently presented
+    // as successful output. The LLM would receive error text as if it were valid
+    // system state, leading to incorrect planning decisions.
+    if output.exit_code != 0 {
+        return send_error(
+            framed,
+            request_id,
+            "execution_failure",
+            format!(
+                "{action_name} failed with exit code {}{}",
+                output.exit_code,
+                if output.stderr.trim().is_empty() {
+                    String::new()
+                } else {
+                    format!(": {}", output.stderr.trim())
+                }
+            ),
+        )
+        .await;
+    }
+
     let output_text = if output.stderr.is_empty() {
         output.stdout
     } else {
@@ -662,17 +706,33 @@ async fn handle_preview(
     // State is best-effort: if collection fails, the preview is generated with
     // an empty state and a warning is logged rather than aborting the preview.
     let runner_for_preview = Arc::clone(&runner);
-    let current_state = tokio::task::spawn_blocking(move || collect_state(&*runner_for_preview))
-        .await
-        .expect("collect_state task should not panic")
-        .map(|s| serde_json::to_value(&s).unwrap_or(Value::Null))
-        .unwrap_or_else(|e| {
-            eprintln!(
-                "[lacs-daemon] handle_preview: state collection failed ({e}); \
+    let current_state =
+        match tokio::task::spawn_blocking(move || collect_state(&*runner_for_preview)).await {
+            Err(e) => {
+                eprintln!(
+                    "[lacs-daemon] handle_preview: collect_state task failed ({e}); \
                  generating preview with empty state"
-            );
-            Value::Null
-        });
+                );
+                Value::Null
+            }
+            Ok(Err(e)) => {
+                eprintln!(
+                    "[lacs-daemon] handle_preview: state collection failed ({e}); \
+                 generating preview with empty state"
+                );
+                Value::Null
+            }
+            Ok(Ok(s)) => match serde_json::to_value(&s) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!(
+                        "[lacs-daemon] handle_preview: failed to serialize collected state ({e}); \
+                     using empty state"
+                    );
+                    Value::Null
+                }
+            },
+        };
     let proposed_change = json!({ "action": action_name, "params": params });
 
     let envelope = RequestEnvelope {
@@ -691,7 +751,6 @@ async fn handle_preview(
         request_hash,
         action_name: action_name.to_string(),
         risk_level: spec.risk_level,
-        status: JobState::Queued,
         approval_id: None,
         summary: preview.summary.clone(),
         warnings: preview.warnings.clone(),
@@ -1096,6 +1155,10 @@ fn job_state_str(state: &JobState) -> &'static str {
 enum HandlerError {
     #[error("framing error: {0}")]
     Framing(#[from] FramingError),
+    #[error("serialization error: {0}")]
+    Serialization(#[from] serde_json::Error),
+    #[error("internal error: {0}")]
+    Internal(String),
 }
 
 fn format_job_history(records: &[lacs_types::TransactionRecord]) -> String {
@@ -1120,7 +1183,7 @@ async fn send_response(
     framed: &mut FramedStream<UnixStream>,
     response: &DaemonResponse,
 ) -> Result<(), HandlerError> {
-    let json = serde_json::to_vec(response).expect("DaemonResponse is always serialisable");
+    let json = serde_json::to_vec(response)?;
     framed.send(&json).await.map_err(HandlerError::Framing)
 }
 

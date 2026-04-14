@@ -72,7 +72,6 @@ echo "Build done."
 echo ""
 
 DAEMON_BIN="$REPO_ROOT/target/release/lacs-daemon"
-TEST_CLI="$REPO_ROOT/target/release/lacs-test-cli"
 
 # ---------------------------------------------------------------------------
 # Start daemon if not already running

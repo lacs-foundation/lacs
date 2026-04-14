@@ -136,7 +136,7 @@ systemctl daemon-reload
 systemctl enable --now ollama || fail "Start Ollama systemd unit"
 systemctl restart ollama     # ensure the drop-in is applied
 # Wait up to 15s for the server to accept connections.
-for i in $(seq 1 15); do
+for _ in $(seq 1 15); do
     if curl -sf http://127.0.0.1:11434/api/tags > /dev/null; then break; fi
     sleep 1
 done

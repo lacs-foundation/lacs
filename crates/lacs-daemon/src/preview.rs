@@ -54,7 +54,8 @@ fn preview_profile(action_name: &str) -> PreviewProfile {
         | "ListProcesses"
         | "GetMemoryInfo"
         | "GetNetworkStatus"
-        | "GetAuthorizedKeys" => PreviewProfile {
+        | "GetAuthorizedKeys"
+        | "ListJobHistory" => PreviewProfile {
             risk_level: RiskLevel::Low,
             expected_side_effects: Vec::new(),
             reboot_required: false,

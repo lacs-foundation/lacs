@@ -70,12 +70,13 @@ the shell, and the privileged daemon.
 The system prompt in `crates/lacs-brain/src/prompt.rs` is load-bearing.
 Changes to it must be validated against the full E2E story suite before merging.
 
-### The two worked examples are not optional
+### The three worked examples are not optional
 
-`prompt.rs` contains Examples A and B. **Do not remove them.**
+`prompt.rs` contains Examples A, B, and C. **Do not remove them.**
 (The original Example A — "check disk usage" — was removed; it was a strict
 subset of the prose rule and the current Example A. It added no measurable
-coverage. The remaining examples were renumbered B→A, C→B.)
+coverage. The remaining examples were renumbered B→A, C→B. Example C for
+transaction history was added later — see the section below.)
 
 Empirical result (GPT-4o, 7 read-only stories, 2026-04-14):
 

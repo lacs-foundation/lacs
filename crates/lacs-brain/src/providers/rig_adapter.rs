@@ -377,19 +377,51 @@ fn from_rig_response(choice: OneOrMany<AssistantContent>) -> Result<Completion, 
 
 /// Strip URL query parameters that may contain API keys from error messages.
 ///
-/// Looks for common key-bearing query parameters (`?key=`, `?api_key=`) and
-/// replaces everything from the `?` to the next whitespace (or end of string)
-/// with `?[REDACTED]`. This avoids leaking secrets in logs or user-facing
-/// error messages without pulling in a regex crate.
+/// Redact common key-bearing query parameters from error messages to prevent
+/// API key leakage in logs. Handles both first-position (`?key=`, `?api_key=`)
+/// and subsequent-position (`&key=`, `&api_key=`) query params, and redacts
+/// all occurrences in the string (not just the first).
 fn sanitize_error_msg(msg: &str) -> String {
-    let mut result = msg.to_string();
-    if let Some(qpos) = result.find("?key=").or_else(|| result.find("?api_key=")) {
-        if let Some(space_pos) = result[qpos..].find(|c: char| c.is_whitespace()) {
-            result.replace_range(qpos..qpos + space_pos, "?[REDACTED]");
-        } else {
-            result.truncate(qpos);
-            result.push_str("?[REDACTED]");
+    // Patterns to find and redact (matched case-insensitively via ASCII lower).
+    const KEY_PARAMS: &[&str] = &["?key=", "?api_key=", "&key=", "&api_key="];
+
+    let lower = msg.to_lowercase();
+    // Collect redaction ranges in reverse order so offsets stay valid.
+    let mut ranges: Vec<std::ops::Range<usize>> = Vec::new();
+
+    for pattern in KEY_PARAMS {
+        let mut search_from = 0;
+        while let Some(rel) = lower[search_from..].find(pattern) {
+            let start = search_from + rel;
+            // Keep the `?` or `&` prefix, redact from `key=` to next whitespace/end.
+            let param_start = start + 1; // skip the `?` or `&`
+            let end = lower[start..]
+                .find(|c: char| c.is_whitespace())
+                .map(|s| start + s)
+                .unwrap_or(msg.len());
+            ranges.push(param_start..end);
+            search_from = start + pattern.len();
         }
+    }
+
+    if ranges.is_empty() {
+        return msg.to_string();
+    }
+
+    // Sort by start position, then apply in reverse to preserve offsets.
+    ranges.sort_by_key(|r| r.start);
+    ranges.dedup_by(|b, a| {
+        if a.end >= b.start {
+            a.end = a.end.max(b.end);
+            true
+        } else {
+            false
+        }
+    });
+
+    let mut result = msg.to_string();
+    for range in ranges.into_iter().rev() {
+        result.replace_range(range, "[REDACTED]");
     }
     result
 }
@@ -631,6 +663,33 @@ mod tests {
         let input = "connection refused: https://api.example.com/v1";
         let result = sanitize_error_msg(input);
         assert_eq!(result, input);
+    }
+
+    #[test]
+    fn sanitize_error_msg_strips_ampersand_key_param() {
+        // Subsequent-position `&key=` must also be redacted.
+        let input = "https://api.example.com/v1?foo=bar&key=sk-secret123";
+        let result = sanitize_error_msg(input);
+        assert_eq!(result, "https://api.example.com/v1?foo=bar&[REDACTED]");
+    }
+
+    #[test]
+    fn sanitize_error_msg_strips_ampersand_api_key_param() {
+        // Subsequent-position `&api_key=` must also be redacted.
+        let input = "https://api.example.com/v1?model=gpt-4&api_key=sk-secret123";
+        let result = sanitize_error_msg(input);
+        assert_eq!(result, "https://api.example.com/v1?model=gpt-4&[REDACTED]");
+    }
+
+    #[test]
+    fn sanitize_error_msg_strips_all_occurrences() {
+        // Two different key-bearing URLs in the same error string — both must be redacted.
+        let input = "first: https://api1.com?key=secret1 second: https://api2.com?api_key=secret2";
+        let result = sanitize_error_msg(input);
+        assert_eq!(
+            result,
+            "first: https://api1.com?[REDACTED] second: https://api2.com?[REDACTED]"
+        );
     }
 
     /// Verify that the empty-content guard fires: if every block is filtered

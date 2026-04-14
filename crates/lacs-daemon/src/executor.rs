@@ -83,6 +83,11 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
         "SetKernelArguments" => {
             let add = str_array_or_empty(params, "add")?;
             let remove = str_array_or_empty(params, "remove")?;
+            // Reject dangerous kernel arguments that could bypass security
+            // mechanisms or give unauthenticated root access on next boot.
+            for arg in add.iter() {
+                validated_safe_kernel_arg(arg)?;
+            }
             let add_refs: Vec<&str> = add.iter().map(String::as_str).collect();
             let remove_refs: Vec<&str> = remove.iter().map(String::as_str).collect();
             Ok(deployment::set_kernel_arguments(&add_refs, &remove_refs))
@@ -99,13 +104,14 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
             let app_id = validated_safe_arg(require_str(params, "app_id")?, "app_id")?;
             Ok(flatpak::remove_flatpak(&app_id))
         }
-        "SearchFlatpakApps" => Ok(flatpak::search_flatpak_apps(require_str(params, "term")?)),
+        "SearchFlatpakApps" => {
+            let term = validated_safe_arg(require_str(params, "term")?, "term")?;
+            Ok(flatpak::search_flatpak_apps(&term))
+        }
         "AddFlatpakRemote" => {
             let remote = validated_safe_arg(require_str(params, "remote")?, "remote")?;
-            Ok(flatpak::add_flatpak_remote(
-                &remote,
-                require_str(params, "url")?,
-            ))
+            let url = validated_safe_arg(require_str(params, "url")?, "url")?;
+            Ok(flatpak::add_flatpak_remote(&remote, &url))
         }
         "RemoveFlatpakRemote" => {
             let remote = validated_safe_arg(require_str(params, "remote")?, "remote")?;
@@ -229,13 +235,19 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
         "ListToolboxes" => Ok(toolbox::list_toolboxes()),
         "CreateToolbox" => {
             let name = validated_safe_arg(require_str(params, "name")?, "name")?;
-            let image = match params.get("image").and_then(|v| v.as_str()) {
-                Some(img) => Some(validated_safe_arg(img, "image")?),
-                None => None,
-            };
+            let image = params
+                .get("image")
+                .and_then(|v| v.as_str())
+                .map(|img| validated_safe_arg(img, "image"))
+                .transpose()?;
+            let release = params
+                .get("release")
+                .and_then(|v| v.as_str())
+                .map(|r| validated_safe_arg(r, "release"))
+                .transpose()?;
             Ok(toolbox::create_toolbox(
                 &name,
-                params.get("release").and_then(|v| v.as_str()),
+                release.as_deref(),
                 image.as_deref(),
             ))
         }
@@ -278,7 +290,11 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
         "SetDnsServers" => {
             let interface = validated_safe_arg(require_str(params, "interface")?, "interface")?;
             let servers = str_array_or_empty(params, "servers")?;
-            let refs: Vec<&str> = servers.iter().map(String::as_str).collect();
+            let validated: Vec<String> = servers
+                .iter()
+                .map(|s| validated_safe_arg(s, "servers"))
+                .collect::<Result<_, _>>()?;
+            let refs: Vec<&str> = validated.iter().map(String::as_str).collect();
             Ok(network::set_dns_servers(&interface, &refs))
         }
         "ConfigureFirewall" => {
@@ -296,10 +312,20 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
         "ListGroups" => Ok(users::list_groups()),
         "CreateUser" => {
             let username = validated_username(require_str(params, "username")?, "username")?;
+            let shell = params
+                .get("shell")
+                .and_then(|v| v.as_str())
+                .map(|s| validated_safe_arg(s, "shell"))
+                .transpose()?;
+            let home = params
+                .get("home")
+                .and_then(|v| v.as_str())
+                .map(|h| validated_safe_arg(h, "home"))
+                .transpose()?;
             Ok(users::create_user(
                 &username,
-                params.get("shell").and_then(|v| v.as_str()),
-                params.get("home").and_then(|v| v.as_str()),
+                shell.as_deref(),
+                home.as_deref(),
             ))
         }
         "DeleteUser" => {
@@ -412,10 +438,10 @@ pub async fn execute_spec(spec: &ActionSpec) -> Result<ExecutionOutput, Executor
 }
 
 fn require_str<'a>(params: &'a Value, key: &'static str) -> Result<&'a str, ExecutorError> {
-    params
-        .get(key)
-        .and_then(|v| v.as_str())
-        .ok_or(ExecutorError::MissingParam(key))
+    match params.get(key) {
+        None => Err(ExecutorError::MissingParam(key)),
+        Some(v) => v.as_str().ok_or(ExecutorError::InvalidParam(key)),
+    }
 }
 
 /// Validate a repo_id: must be non-empty and contain only ASCII letters,
@@ -480,18 +506,20 @@ fn validated_public_key(s: &str) -> Result<String, ExecutorError> {
 }
 
 fn require_bool(params: &Value, key: &'static str) -> Result<bool, ExecutorError> {
-    params
-        .get(key)
-        .and_then(|v| v.as_bool())
-        .ok_or(ExecutorError::MissingParam(key))
+    match params.get(key) {
+        None => Err(ExecutorError::MissingParam(key)),
+        Some(v) => v.as_bool().ok_or(ExecutorError::InvalidParam(key)),
+    }
 }
 
 fn require_u32(params: &Value, key: &'static str) -> Result<u32, ExecutorError> {
-    let n = params
-        .get(key)
-        .and_then(|v| v.as_u64())
-        .ok_or(ExecutorError::MissingParam(key))?;
-    u32::try_from(n).map_err(|_| ExecutorError::InvalidParam(key))
+    match params.get(key) {
+        None => Err(ExecutorError::MissingParam(key)),
+        Some(v) => {
+            let n = v.as_u64().ok_or(ExecutorError::InvalidParam(key))?;
+            u32::try_from(n).map_err(|_| ExecutorError::InvalidParam(key))
+        }
+    }
 }
 
 /// Returns a vec of owned strings from a JSON array, or an empty vec if the
@@ -510,6 +538,55 @@ fn str_array_or_empty(params: &Value, key: &'static str) -> Result<Vec<String>, 
             .collect(),
         _ => Err(ExecutorError::InvalidParam(key)),
     }
+}
+
+/// Reject kernel arguments that could bypass security mechanisms or grant
+/// unauthenticated root access on the next boot. Only applies to the `add`
+/// list — removing dangerous args is always safe.
+///
+/// Blocked prefixes (case-insensitive):
+/// - `init=`           — replaces init, can give root shell
+/// - `selinux=0`       — disables SELinux
+/// - `enforcing=0`     — sets SELinux to permissive
+/// - `security=`       — overrides LSM module selection
+/// - `systemd.unit=emergency` / `systemd.unit=rescue` — unprotected root shell
+/// - `single` / `1` / `s` — single-user mode (root without password)
+/// - `module_blacklist=` — can disable security-critical kernel modules
+fn validated_safe_kernel_arg(arg: &str) -> Result<(), ExecutorError> {
+    const BLOCKED_PREFIXES: &[&str] = &[
+        "init=",
+        "selinux=0",
+        "enforcing=0",
+        "security=",
+        "module_blacklist=",
+    ];
+    const BLOCKED_EXACT: &[&str] = &["single", "s", "1"];
+    const BLOCKED_UNIT_PREFIXES: &[&str] = &["emergency", "rescue", "single"];
+
+    let lower = arg.to_lowercase();
+    // Strip optional value (e.g. "quiet=1" → "quiet") for exact matches.
+    let base = lower.split('=').next().unwrap_or(&lower);
+
+    if BLOCKED_PREFIXES.iter().any(|p| lower.starts_with(p)) {
+        return Err(ExecutorError::InvalidParam("add"));
+    }
+    if BLOCKED_EXACT.iter().any(|e| lower == *e) {
+        return Err(ExecutorError::InvalidParam("add"));
+    }
+    // Block systemd.unit= pointing to emergency/rescue/single targets.
+    if let Some(unit_val) = lower.strip_prefix("systemd.unit=") {
+        if BLOCKED_UNIT_PREFIXES
+            .iter()
+            .any(|u| unit_val.starts_with(u))
+        {
+            return Err(ExecutorError::InvalidParam("add"));
+        }
+    }
+    // Guard against the base arg matching dangerous exact values even with =.
+    if BLOCKED_EXACT.contains(&base) {
+        return Err(ExecutorError::InvalidParam("add"));
+    }
+    Ok(())
 }
 
 /// Return the rollback [`ActionSpec`] for `action_name`, or `None` if no
@@ -965,6 +1042,200 @@ mod tests {
         assert!(rollback_spec_for("CleanupDeployments").is_none());
         // No infinite recursion — RollbackDeployment has no rollback of its own
         assert!(rollback_spec_for("RollbackDeployment").is_none());
+    }
+
+    // ── validated_public_key ──────────────────────────────────────────────
+
+    #[test]
+    fn public_key_accepts_valid_ed25519() {
+        let key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl user@host";
+        assert!(validated_public_key(key).is_ok());
+    }
+
+    #[test]
+    fn public_key_accepts_valid_rsa() {
+        let key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAAAgQCtest user@host";
+        assert!(validated_public_key(key).is_ok());
+    }
+
+    #[test]
+    fn public_key_rejects_empty() {
+        assert!(matches!(
+            validated_public_key(""),
+            Err(ExecutorError::InvalidParam("public_key"))
+        ));
+    }
+
+    #[test]
+    fn public_key_rejects_unknown_prefix() {
+        assert!(matches!(
+            validated_public_key("sk-rsa AAAA... user@host"),
+            Err(ExecutorError::InvalidParam("public_key"))
+        ));
+        assert!(matches!(
+            validated_public_key("AAAAB3Nz... user@host"),
+            Err(ExecutorError::InvalidParam("public_key"))
+        ));
+    }
+
+    #[test]
+    fn public_key_rejects_single_quote() {
+        let key = "ssh-ed25519 AAAA' $(rm -rf /) user@host";
+        assert!(matches!(
+            validated_public_key(key),
+            Err(ExecutorError::InvalidParam("public_key"))
+        ));
+    }
+
+    #[test]
+    fn public_key_rejects_newline() {
+        let key = "ssh-ed25519 AAAA\nmalicious: line user@host";
+        assert!(matches!(
+            validated_public_key(key),
+            Err(ExecutorError::InvalidParam("public_key"))
+        ));
+        let key_cr = "ssh-ed25519 AAAA\rmalicious: line user@host";
+        assert!(matches!(
+            validated_public_key(key_cr),
+            Err(ExecutorError::InvalidParam("public_key"))
+        ));
+    }
+
+    #[test]
+    fn public_key_rejects_too_long() {
+        // Build a key that exceeds MAX_LEN (8192 bytes)
+        let long_payload = "A".repeat(8192);
+        let key = format!("ssh-ed25519 {long_payload} user@host");
+        assert!(matches!(
+            validated_public_key(&key),
+            Err(ExecutorError::InvalidParam("public_key"))
+        ));
+    }
+
+    // ── str_array_or_empty ────────────────────────────────────────────────
+
+    #[test]
+    fn str_array_or_empty_rejects_non_string_element() {
+        let params = json!({ "packages": ["vim", 42, "curl"] });
+        assert!(matches!(
+            str_array_or_empty(&params, "packages"),
+            Err(ExecutorError::InvalidParam("packages"))
+        ));
+    }
+
+    #[test]
+    fn str_array_or_empty_accepts_string_array() {
+        let params = json!({ "packages": ["vim", "curl"] });
+        assert_eq!(
+            str_array_or_empty(&params, "packages").unwrap(),
+            vec!["vim".to_string(), "curl".to_string()]
+        );
+    }
+
+    #[test]
+    fn str_array_or_empty_returns_empty_when_key_absent() {
+        let params = json!({});
+        assert_eq!(
+            str_array_or_empty(&params, "packages").unwrap(),
+            Vec::<String>::new()
+        );
+    }
+
+    // ── validated_safe_kernel_arg ─────────────────────────────────────────
+
+    #[test]
+    fn kernel_arg_allows_safe_args() {
+        assert!(validated_safe_kernel_arg("quiet").is_ok());
+        assert!(validated_safe_kernel_arg("mitigations=off").is_ok());
+        assert!(validated_safe_kernel_arg("rd.driver.blacklist=nouveau").is_ok());
+        assert!(validated_safe_kernel_arg("console=ttyS0,115200").is_ok());
+    }
+
+    #[test]
+    fn kernel_arg_blocks_init_override() {
+        assert!(matches!(
+            validated_safe_kernel_arg("init=/bin/sh"),
+            Err(ExecutorError::InvalidParam("add"))
+        ));
+        assert!(matches!(
+            validated_safe_kernel_arg("INIT=/sbin/bash"),
+            Err(ExecutorError::InvalidParam("add"))
+        ));
+    }
+
+    #[test]
+    fn kernel_arg_blocks_selinux_disable() {
+        assert!(matches!(
+            validated_safe_kernel_arg("selinux=0"),
+            Err(ExecutorError::InvalidParam("add"))
+        ));
+        assert!(matches!(
+            validated_safe_kernel_arg("enforcing=0"),
+            Err(ExecutorError::InvalidParam("add"))
+        ));
+    }
+
+    #[test]
+    fn kernel_arg_blocks_security_override() {
+        assert!(matches!(
+            validated_safe_kernel_arg("security=none"),
+            Err(ExecutorError::InvalidParam("add"))
+        ));
+    }
+
+    #[test]
+    fn kernel_arg_blocks_module_blacklist() {
+        assert!(matches!(
+            validated_safe_kernel_arg("module_blacklist=dm_crypt"),
+            Err(ExecutorError::InvalidParam("add"))
+        ));
+    }
+
+    #[test]
+    fn kernel_arg_blocks_systemd_unit_emergency_rescue() {
+        assert!(matches!(
+            validated_safe_kernel_arg("systemd.unit=emergency.target"),
+            Err(ExecutorError::InvalidParam("add"))
+        ));
+        assert!(matches!(
+            validated_safe_kernel_arg("systemd.unit=rescue.target"),
+            Err(ExecutorError::InvalidParam("add"))
+        ));
+        assert!(matches!(
+            validated_safe_kernel_arg("systemd.unit=single.target"),
+            Err(ExecutorError::InvalidParam("add"))
+        ));
+    }
+
+    #[test]
+    fn kernel_arg_blocks_single_user_shortcuts() {
+        // Runlevel shortcuts that drop to a root shell.
+        assert!(matches!(
+            validated_safe_kernel_arg("single"),
+            Err(ExecutorError::InvalidParam("add"))
+        ));
+        assert!(matches!(
+            validated_safe_kernel_arg("s"),
+            Err(ExecutorError::InvalidParam("add"))
+        ));
+        assert!(matches!(
+            validated_safe_kernel_arg("1"),
+            Err(ExecutorError::InvalidParam("add"))
+        ));
+    }
+
+    #[test]
+    fn kernel_arg_build_spec_rejects_dangerous_arg() {
+        // End-to-end: build_action_spec must propagate the blocklist error.
+        let err = build_action_spec(
+            "SetKernelArguments",
+            &json!({ "add": ["init=/bin/bash"], "remove": [] }),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, ExecutorError::InvalidParam("add")),
+            "expected InvalidParam(add), got {err:?}"
+        );
     }
 
     /// Every action that claims `rollback_available: true` MUST have a

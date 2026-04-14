@@ -31,7 +31,7 @@
 //! provider     = "ollama"              # "ollama" | "anthropic" | "openai" | "gemini" | ...
 //! model        = "qwen3:8b"            # default — see lacs-brain DEFAULT_OLLAMA_MODEL
 //! ollama_url   = "http://localhost:11434"
-//! max_turns    = 5
+//! max_turns    = 10
 //! # Optional: override the auto-detected thinking mode for Ollama.
 //! # Default: auto-detect from the model name (qwen3 / qwq / deepseek-r → true).
 //! # Set to `false` on CPU-only hosts running thinking models — thinking
@@ -97,22 +97,29 @@ impl LacsConfig {
 
     /// Load `~/.config/lacs/config.toml`.
     ///
-    /// Returns `LacsConfig::default()` (all `None`) if the file is absent,
-    /// unreadable, or unparseable. Errors are silently ignored so that a
-    /// broken config file does not prevent the daemon or shell from starting —
-    /// the built-in defaults apply instead.
+    /// Returns `LacsConfig::default()` (all `None`) if the file is absent.
+    /// Falls back to defaults on parse error (with a warning). I/O errors
+    /// other than `NotFound` (e.g. permission denied) are also warned so the
+    /// user knows their config file exists but could not be read.
     pub fn load() -> Self {
         let path = config_path();
-        let Ok(content) = std::fs::read_to_string(&path) else {
-            return Self::default();
-        };
-        toml::from_str(&content).unwrap_or_else(|e| {
-            eprintln!(
-                "[lacs] warning: could not parse {}: {e}; using defaults",
-                path.display()
-            );
-            Self::default()
-        })
+        match std::fs::read_to_string(&path) {
+            Ok(content) => toml::from_str(&content).unwrap_or_else(|e| {
+                eprintln!(
+                    "[lacs] warning: could not parse {}: {e}; using defaults",
+                    path.display()
+                );
+                Self::default()
+            }),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Self::default(),
+            Err(e) => {
+                eprintln!(
+                    "[lacs] warning: could not read {}: {e}; using defaults",
+                    path.display()
+                );
+                Self::default()
+            }
+        }
     }
 
     /// Set environment variables from the config file for any key that is NOT
@@ -172,13 +179,40 @@ impl LacsConfig {
 // ---------------------------------------------------------------------------
 
 /// Returns `~/.config/lacs`, respecting `XDG_CONFIG_HOME` if set.
+///
+/// `XDG_CONFIG_HOME` is accepted only if it is an absolute path with no `..`
+/// components, to prevent path-traversal attacks where an attacker sets
+/// `XDG_CONFIG_HOME=/etc` to redirect config and prefs writes to system
+/// directories. Invalid values are ignored and the default `~/.config` is used.
+///
+/// If `HOME` is also unset a warning is emitted and `./.config` (relative to
+/// CWD) is used as a last resort — callers that write to the config path
+/// (daemon, shell) should ensure `HOME` is set at startup.
 fn config_dir() -> PathBuf {
-    let base = std::env::var("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-            PathBuf::from(home).join(".config")
-        });
+    // Validate XDG_CONFIG_HOME: must be absolute and contain no `..` components.
+    let xdg_valid = std::env::var("XDG_CONFIG_HOME").ok().and_then(|v| {
+        let p = PathBuf::from(&v);
+        if p.is_absolute() && !p.components().any(|c| c == std::path::Component::ParentDir) {
+            Some(p)
+        } else {
+            eprintln!(
+                "[lacs] warning: XDG_CONFIG_HOME={v:?} is not a safe absolute path; \
+                 ignoring and using default ~/.config"
+            );
+            None
+        }
+    });
+
+    let base = xdg_valid.unwrap_or_else(|| match std::env::var("HOME") {
+        Ok(home) => PathBuf::from(home).join(".config"),
+        Err(_) => {
+            eprintln!(
+                "[lacs] warning: HOME is not set; using relative path ./.config \
+                     for config and preferences — ensure HOME is set in production"
+            );
+            PathBuf::from(".config")
+        }
+    });
     base.join("lacs")
 }
 

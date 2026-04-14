@@ -752,47 +752,58 @@ impl LlmPlanner {
                                 });
                             }
                             other_name => {
-                                if let Some((action_name, params)) =
-                                    crate::planning_tools::query_tools::query_tool_to_action(
-                                        other_name, input,
-                                    )
-                                {
-                                    match self.state_client.query_action(action_name, &params) {
-                                        Ok(output) => {
-                                            tool_results.push(ToolResultBlock {
-                                                tool_use_id: id.clone(),
-                                                call_id: call_id.clone(),
-                                                content: output,
-                                                is_error: false,
-                                            });
-                                        }
-                                        Err(e) => {
-                                            tool_results.push(ToolResultBlock {
-                                                tool_use_id: id.clone(),
-                                                call_id: call_id.clone(),
-                                                content: format!("Query failed: {e}"),
-                                                is_error: true,
-                                            });
+                                match crate::planning_tools::query_tools::query_tool_to_action(
+                                    other_name, input,
+                                ) {
+                                    Ok(Some((action_name, params))) => {
+                                        match self.state_client.query_action(action_name, &params) {
+                                            Ok(output) => {
+                                                tool_results.push(ToolResultBlock {
+                                                    tool_use_id: id.clone(),
+                                                    call_id: call_id.clone(),
+                                                    content: output,
+                                                    is_error: false,
+                                                });
+                                            }
+                                            Err(e) => {
+                                                tool_results.push(ToolResultBlock {
+                                                    tool_use_id: id.clone(),
+                                                    call_id: call_id.clone(),
+                                                    content: format!("Query failed: {e}"),
+                                                    is_error: true,
+                                                });
+                                            }
                                         }
                                     }
-                                } else {
-                                    // An unknown tool call is a protocol violation — log
-                                    // it as a safety event and feed the error back so the
-                                    // LLM has a chance to recover within the remaining
-                                    // turns.
-                                    eprintln!(
-                                        "[LACS WARNING] LLM called unknown tool \
-                                         '{other_name}' (turn {}/{max}); sending error \
-                                         feedback.",
-                                        turn + 1,
-                                        max = self.max_turns
-                                    );
-                                    tool_results.push(ToolResultBlock {
-                                        tool_use_id: id.clone(),
-                                        call_id: call_id.clone(),
-                                        content: format!("unknown tool: {other_name}"),
-                                        is_error: true,
-                                    });
+                                    Err(msg) => {
+                                        // Missing required param — give the LLM a clear,
+                                        // actionable message so it can retry correctly.
+                                        tool_results.push(ToolResultBlock {
+                                            tool_use_id: id.clone(),
+                                            call_id: call_id.clone(),
+                                            content: msg,
+                                            is_error: true,
+                                        });
+                                    }
+                                    Ok(None) => {
+                                        // An unknown tool call is a protocol violation — log
+                                        // it as a safety event and feed the error back so the
+                                        // LLM has a chance to recover within the remaining
+                                        // turns.
+                                        eprintln!(
+                                            "[LACS WARNING] LLM called unknown tool \
+                                             '{other_name}' (turn {}/{max}); sending error \
+                                             feedback.",
+                                            turn + 1,
+                                            max = self.max_turns
+                                        );
+                                        tool_results.push(ToolResultBlock {
+                                            tool_use_id: id.clone(),
+                                            call_id: call_id.clone(),
+                                            content: format!("unknown tool: {other_name}"),
+                                            is_error: true,
+                                        });
+                                    }
                                 }
                             }
                         }

@@ -88,7 +88,6 @@ fn transaction_records_are_persisted() {
         request_hash: "hash-1".into(),
         action_name: "UpdateSystem".into(),
         risk_level: RiskLevel::High,
-        status: JobState::Queued,
         approval_id: Some("approval-1".into()),
         summary: "Stage system update".into(),
         warnings: vec!["reboot required".into()],
