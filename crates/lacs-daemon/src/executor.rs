@@ -235,14 +235,16 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
         "ListToolboxes" => Ok(toolbox::list_toolboxes()),
         "CreateToolbox" => {
             let name = validated_safe_arg(require_str(params, "name")?, "name")?;
-            let image = match params.get("image").and_then(|v| v.as_str()) {
-                Some(img) => Some(validated_safe_arg(img, "image")?),
-                None => None,
-            };
-            let release = match params.get("release").and_then(|v| v.as_str()) {
-                Some(r) => Some(validated_safe_arg(r, "release")?),
-                None => None,
-            };
+            let image = params
+                .get("image")
+                .and_then(|v| v.as_str())
+                .map(|img| validated_safe_arg(img, "image"))
+                .transpose()?;
+            let release = params
+                .get("release")
+                .and_then(|v| v.as_str())
+                .map(|r| validated_safe_arg(r, "release"))
+                .transpose()?;
             Ok(toolbox::create_toolbox(
                 &name,
                 release.as_deref(),
@@ -310,14 +312,16 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
         "ListGroups" => Ok(users::list_groups()),
         "CreateUser" => {
             let username = validated_username(require_str(params, "username")?, "username")?;
-            let shell = match params.get("shell").and_then(|v| v.as_str()) {
-                Some(s) => Some(validated_safe_arg(s, "shell")?),
-                None => None,
-            };
-            let home = match params.get("home").and_then(|v| v.as_str()) {
-                Some(h) => Some(validated_safe_arg(h, "home")?),
-                None => None,
-            };
+            let shell = params
+                .get("shell")
+                .and_then(|v| v.as_str())
+                .map(|s| validated_safe_arg(s, "shell"))
+                .transpose()?;
+            let home = params
+                .get("home")
+                .and_then(|v| v.as_str())
+                .map(|h| validated_safe_arg(h, "home"))
+                .transpose()?;
             Ok(users::create_user(&username, shell.as_deref(), home.as_deref()))
         }
         "DeleteUser" => {
