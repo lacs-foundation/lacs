@@ -1036,6 +1036,100 @@ mod tests {
         assert!(rollback_spec_for("RollbackDeployment").is_none());
     }
 
+    // ── validated_public_key ──────────────────────────────────────────────
+
+    #[test]
+    fn public_key_accepts_valid_ed25519() {
+        let key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl user@host";
+        assert!(validated_public_key(key).is_ok());
+    }
+
+    #[test]
+    fn public_key_accepts_valid_rsa() {
+        let key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAAAgQCtest user@host";
+        assert!(validated_public_key(key).is_ok());
+    }
+
+    #[test]
+    fn public_key_rejects_empty() {
+        assert!(matches!(
+            validated_public_key(""),
+            Err(ExecutorError::InvalidParam("public_key"))
+        ));
+    }
+
+    #[test]
+    fn public_key_rejects_unknown_prefix() {
+        assert!(matches!(
+            validated_public_key("sk-rsa AAAA... user@host"),
+            Err(ExecutorError::InvalidParam("public_key"))
+        ));
+        assert!(matches!(
+            validated_public_key("AAAAB3Nz... user@host"),
+            Err(ExecutorError::InvalidParam("public_key"))
+        ));
+    }
+
+    #[test]
+    fn public_key_rejects_single_quote() {
+        let key = "ssh-ed25519 AAAA' $(rm -rf /) user@host";
+        assert!(matches!(
+            validated_public_key(key),
+            Err(ExecutorError::InvalidParam("public_key"))
+        ));
+    }
+
+    #[test]
+    fn public_key_rejects_newline() {
+        let key = "ssh-ed25519 AAAA\nmalicious: line user@host";
+        assert!(matches!(
+            validated_public_key(key),
+            Err(ExecutorError::InvalidParam("public_key"))
+        ));
+        let key_cr = "ssh-ed25519 AAAA\rmalicious: line user@host";
+        assert!(matches!(
+            validated_public_key(key_cr),
+            Err(ExecutorError::InvalidParam("public_key"))
+        ));
+    }
+
+    #[test]
+    fn public_key_rejects_too_long() {
+        // Build a key that exceeds MAX_LEN (8192 bytes)
+        let long_payload = "A".repeat(8192);
+        let key = format!("ssh-ed25519 {long_payload} user@host");
+        assert!(matches!(
+            validated_public_key(&key),
+            Err(ExecutorError::InvalidParam("public_key"))
+        ));
+    }
+
+    // ── str_array_or_empty ────────────────────────────────────────────────
+
+    #[test]
+    fn str_array_or_empty_rejects_non_string_element() {
+        let params = json!({ "packages": ["vim", 42, "curl"] });
+        assert!(matches!(
+            str_array_or_empty(&params, "packages"),
+            Err(ExecutorError::InvalidParam("packages"))
+        ));
+    }
+
+    #[test]
+    fn str_array_or_empty_accepts_string_array() {
+        let params = json!({ "packages": ["vim", "curl"] });
+        assert_eq!(
+            str_array_or_empty(&params, "packages").unwrap(),
+            vec!["vim".to_string(), "curl".to_string()]
+        );
+    }
+
+    #[test]
+    fn str_array_or_empty_returns_empty_when_key_absent() {
+        let params = json!({});
+        assert_eq!(str_array_or_empty(&params, "packages").unwrap(), Vec::<String>::new());
+    }
+
     /// Every action that claims `rollback_available: true` MUST have a
     /// corresponding entry in `rollback_spec_for()`; every action that claims
     /// `false` MUST NOT. This prevents the spec and the executor from
