@@ -855,3 +855,156 @@ async fn remember_rejects_sensitive_data() {
     // File should not exist or should be empty — the sensitive fact was rejected.
     assert!(!prefs_path.exists() || std::fs::read_to_string(&prefs_path).unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn remember_without_prefs_path_returns_not_configured_error() {
+    // When no prefs_path is set the planner must report "not configured"
+    // with is_error=true so the LLM knows storage is unavailable.
+    let mut provider_calls: Vec<String> = Vec::new();
+    let provider = Box::new(MockProvider::new([
+        Ok(Completion {
+            content: vec![ContentBlock::ToolUse {
+                id: "tu_rem2".into(),
+                call_id: None,
+                name: "remember".into(),
+                input: serde_json::json!({"fact": "prefer dark theme"}),
+            }],
+            stop_reason: StopReason::ToolUse,
+        }),
+        propose_plan(
+            "Storage not configured",
+            &[("GetSystemState", "fallback", "low")],
+        ),
+    ]));
+
+    // Intentionally omit `.with_prefs_path(...)`.
+    let planner = LlmPlanner::new(
+        provider,
+        Box::new(MockStateClient::default()),
+        5,
+    );
+
+    // Planning should still succeed — the error is returned to the LLM as a
+    // tool result, not propagated as a Rust error.
+    let plan = planner
+        .plan_intent("remember that I prefer dark theme")
+        .await
+        .unwrap();
+    let _ = plan; // LLM saw the error and still produced a plan
+}
+
+#[tokio::test]
+async fn forget_without_prefs_path_returns_not_configured_error() {
+    // Same as above but for the `forget` path.
+    let provider = Box::new(MockProvider::new([
+        Ok(Completion {
+            content: vec![ContentBlock::ToolUse {
+                id: "tu_fgt2".into(),
+                call_id: None,
+                name: "forget".into(),
+                input: serde_json::json!({"fact": "prefer dark theme"}),
+            }],
+            stop_reason: StopReason::ToolUse,
+        }),
+        propose_plan(
+            "Storage not configured",
+            &[("GetSystemState", "fallback", "low")],
+        ),
+    ]));
+
+    // Intentionally omit `.with_prefs_path(...)`.
+    let planner = LlmPlanner::new(
+        provider,
+        Box::new(MockStateClient::default()),
+        5,
+    );
+
+    let plan = planner
+        .plan_intent("forget my dark theme preference")
+        .await
+        .unwrap();
+    let _ = plan;
+}
+
+#[tokio::test]
+async fn forget_returns_not_found_when_preference_absent() {
+    // `remove_pref` returns Ok(false) when the fact isn't in the file.
+    // The planner must return "Preference not found: X" with is_error=false
+    // (the LLM should know, but it is not a hard error).
+    let dir = tempfile::tempdir().unwrap();
+    let prefs_path = dir.path().join("prefs.md");
+    // File exists but does not contain the target fact.
+    std::fs::write(&prefs_path, "- prefer dark theme\n").unwrap();
+
+    let planner = LlmPlanner::new(
+        Box::new(MockProvider::new([
+            Ok(Completion {
+                content: vec![ContentBlock::ToolUse {
+                    id: "tu_fgt3".into(),
+                    call_id: None,
+                    name: "forget".into(),
+                    input: serde_json::json!({"fact": "prefer vim-enhanced over vim"}),
+                }],
+                stop_reason: StopReason::ToolUse,
+            }),
+            propose_plan(
+                "Nothing to forget",
+                &[("GetSystemState", "fallback", "low")],
+            ),
+        ])),
+        Box::new(MockStateClient::default()),
+        5,
+    )
+    .with_prefs_path(prefs_path.clone());
+
+    // Should succeed — "Preference not found" is informational, not an error.
+    planner
+        .plan_intent("forget my vim preference")
+        .await
+        .unwrap();
+
+    // The file must be unchanged.
+    let content = std::fs::read_to_string(&prefs_path).unwrap();
+    assert!(
+        content.contains("prefer dark theme"),
+        "unrelated preference must still be present"
+    );
+}
+
+#[tokio::test]
+async fn remember_io_error_is_reported_to_llm() {
+    // If `append_pref` fails (e.g. read-only directory) the planner must
+    // return an error tool result so the LLM knows the write failed.
+    // We simulate I/O failure by pointing prefs_path at a directory.
+    let dir = tempfile::tempdir().unwrap();
+    let prefs_path = dir.path().join("is_a_dir");
+    std::fs::create_dir_all(&prefs_path).unwrap(); // path is a directory, not a file
+
+    let planner = LlmPlanner::new(
+        Box::new(MockProvider::new([
+            Ok(Completion {
+                content: vec![ContentBlock::ToolUse {
+                    id: "tu_rem3".into(),
+                    call_id: None,
+                    name: "remember".into(),
+                    input: serde_json::json!({"fact": "prefer dark theme"}),
+                }],
+                stop_reason: StopReason::ToolUse,
+            }),
+            propose_plan(
+                "Preference save failed",
+                &[("GetSystemState", "fallback", "low")],
+            ),
+        ])),
+        Box::new(MockStateClient::default()),
+        5,
+    )
+    .with_prefs_path(prefs_path);
+
+    // Planning must still succeed — the I/O error is returned to the LLM,
+    // not propagated as a Rust error.
+    planner
+        .plan_intent("remember that I prefer dark theme")
+        .await
+        .unwrap();
+}

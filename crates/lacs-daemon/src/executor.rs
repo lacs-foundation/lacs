@@ -1130,6 +1130,103 @@ mod tests {
         assert_eq!(str_array_or_empty(&params, "packages").unwrap(), Vec::<String>::new());
     }
 
+    // ── validated_safe_kernel_arg ─────────────────────────────────────────
+
+    #[test]
+    fn kernel_arg_allows_safe_args() {
+        assert!(validated_safe_kernel_arg("quiet").is_ok());
+        assert!(validated_safe_kernel_arg("mitigations=off").is_ok());
+        assert!(validated_safe_kernel_arg("rd.driver.blacklist=nouveau").is_ok());
+        assert!(validated_safe_kernel_arg("console=ttyS0,115200").is_ok());
+    }
+
+    #[test]
+    fn kernel_arg_blocks_init_override() {
+        assert!(matches!(
+            validated_safe_kernel_arg("init=/bin/sh"),
+            Err(ExecutorError::InvalidParam("add"))
+        ));
+        assert!(matches!(
+            validated_safe_kernel_arg("INIT=/sbin/bash"),
+            Err(ExecutorError::InvalidParam("add"))
+        ));
+    }
+
+    #[test]
+    fn kernel_arg_blocks_selinux_disable() {
+        assert!(matches!(
+            validated_safe_kernel_arg("selinux=0"),
+            Err(ExecutorError::InvalidParam("add"))
+        ));
+        assert!(matches!(
+            validated_safe_kernel_arg("enforcing=0"),
+            Err(ExecutorError::InvalidParam("add"))
+        ));
+    }
+
+    #[test]
+    fn kernel_arg_blocks_security_override() {
+        assert!(matches!(
+            validated_safe_kernel_arg("security=none"),
+            Err(ExecutorError::InvalidParam("add"))
+        ));
+    }
+
+    #[test]
+    fn kernel_arg_blocks_module_blacklist() {
+        assert!(matches!(
+            validated_safe_kernel_arg("module_blacklist=dm_crypt"),
+            Err(ExecutorError::InvalidParam("add"))
+        ));
+    }
+
+    #[test]
+    fn kernel_arg_blocks_systemd_unit_emergency_rescue() {
+        assert!(matches!(
+            validated_safe_kernel_arg("systemd.unit=emergency.target"),
+            Err(ExecutorError::InvalidParam("add"))
+        ));
+        assert!(matches!(
+            validated_safe_kernel_arg("systemd.unit=rescue.target"),
+            Err(ExecutorError::InvalidParam("add"))
+        ));
+        assert!(matches!(
+            validated_safe_kernel_arg("systemd.unit=single.target"),
+            Err(ExecutorError::InvalidParam("add"))
+        ));
+    }
+
+    #[test]
+    fn kernel_arg_blocks_single_user_shortcuts() {
+        // Runlevel shortcuts that drop to a root shell.
+        assert!(matches!(
+            validated_safe_kernel_arg("single"),
+            Err(ExecutorError::InvalidParam("add"))
+        ));
+        assert!(matches!(
+            validated_safe_kernel_arg("s"),
+            Err(ExecutorError::InvalidParam("add"))
+        ));
+        assert!(matches!(
+            validated_safe_kernel_arg("1"),
+            Err(ExecutorError::InvalidParam("add"))
+        ));
+    }
+
+    #[test]
+    fn kernel_arg_build_spec_rejects_dangerous_arg() {
+        // End-to-end: build_action_spec must propagate the blocklist error.
+        let err = build_action_spec(
+            "SetKernelArguments",
+            &json!({ "add": ["init=/bin/bash"], "remove": [] }),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, ExecutorError::InvalidParam("add")),
+            "expected InvalidParam(add), got {err:?}"
+        );
+    }
+
     /// Every action that claims `rollback_available: true` MUST have a
     /// corresponding entry in `rollback_spec_for()`; every action that claims
     /// `false` MUST NOT. This prevents the spec and the executor from

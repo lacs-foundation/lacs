@@ -665,6 +665,37 @@ mod tests {
         assert_eq!(result, input);
     }
 
+    #[test]
+    fn sanitize_error_msg_strips_ampersand_key_param() {
+        // Subsequent-position `&key=` must also be redacted.
+        let input = "https://api.example.com/v1?foo=bar&key=sk-secret123";
+        let result = sanitize_error_msg(input);
+        assert_eq!(result, "https://api.example.com/v1?foo=bar&[REDACTED]");
+    }
+
+    #[test]
+    fn sanitize_error_msg_strips_ampersand_api_key_param() {
+        // Subsequent-position `&api_key=` must also be redacted.
+        let input = "https://api.example.com/v1?model=gpt-4&api_key=sk-secret123";
+        let result = sanitize_error_msg(input);
+        assert_eq!(
+            result,
+            "https://api.example.com/v1?model=gpt-4&[REDACTED]"
+        );
+    }
+
+    #[test]
+    fn sanitize_error_msg_strips_all_occurrences() {
+        // Two different key-bearing URLs in the same error string — both must be redacted.
+        let input =
+            "first: https://api1.com?key=secret1 second: https://api2.com?api_key=secret2";
+        let result = sanitize_error_msg(input);
+        assert_eq!(
+            result,
+            "first: https://api1.com?[REDACTED] second: https://api2.com?[REDACTED]"
+        );
+    }
+
     /// Verify that the empty-content guard fires: if every block is filtered
     /// out (e.g. all Reasoning), `from_rig_response` returns a Parse error.
     ///
