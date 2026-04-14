@@ -54,14 +54,11 @@ pub fn append_pref(path: &Path, fact: &str) -> Result<(), io::Error> {
     // Check size limit.
     if let Ok(meta) = std::fs::metadata(path) {
         if meta.len() >= PREFS_MAX_BYTES {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!(
-                    "preferences file exceeds size limit ({} bytes); \
-                     remove unused preferences before adding new ones",
-                    PREFS_MAX_BYTES
-                ),
-            ));
+            return Err(io::Error::other(format!(
+                "preferences file exceeds size limit ({} bytes); \
+                 remove unused preferences before adding new ones",
+                PREFS_MAX_BYTES
+            )));
         }
     }
 

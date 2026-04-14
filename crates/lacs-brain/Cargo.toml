@@ -8,6 +8,7 @@ repository.workspace = true
 [dependencies]
 async-trait = { workspace = true }
 futures = "0.3"
+lacs-core = { path = "../lacs-core" }
 lacs-types = { path = "../lacs-types" }
 rig-core = "0.34.0"
 serde = { workspace = true, features = ["derive"] }

@@ -745,3 +745,113 @@ fn planning_error_messages_are_stable() {
         "planner ended without proposing a plan"
     );
 }
+
+// ---------------------------------------------------------------------------
+// remember / forget tool calls
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn remember_tool_saves_preference_and_planner_continues() {
+    let dir = tempfile::tempdir().unwrap();
+    let prefs_path = dir.path().join("prefs.md");
+
+    let planner = LlmPlanner::new(
+        Box::new(MockProvider::new([
+            Ok(Completion {
+                content: vec![ContentBlock::ToolUse {
+                    id: "tu_rem".into(),
+                    call_id: None,
+                    name: "remember".into(),
+                    input: serde_json::json!({"fact": "prefer vim-enhanced over vim"}),
+                }],
+                stop_reason: StopReason::ToolUse,
+            }),
+            propose_plan(
+                "Confirm preference saved",
+                &[("GetSystemState", "Confirm system is accessible", "low")],
+            ),
+        ])),
+        Box::new(MockStateClient::default()),
+        5,
+    )
+    .with_prefs_path(prefs_path.clone());
+
+    let plan = planner
+        .plan_intent("remember that I prefer vim-enhanced over vim")
+        .await
+        .unwrap();
+    assert_eq!(plan.steps()[0].action_name(), "GetSystemState");
+
+    // Verify the preference was written.
+    let content = std::fs::read_to_string(&prefs_path).unwrap();
+    assert!(content.contains("prefer vim-enhanced over vim"));
+}
+
+#[tokio::test]
+async fn forget_tool_removes_preference() {
+    let dir = tempfile::tempdir().unwrap();
+    let prefs_path = dir.path().join("prefs.md");
+    // Pre-seed a preference.
+    std::fs::write(&prefs_path, "- prefer vim-enhanced over vim\n").unwrap();
+
+    let planner = LlmPlanner::new(
+        Box::new(MockProvider::new([
+            Ok(Completion {
+                content: vec![ContentBlock::ToolUse {
+                    id: "tu_fgt".into(),
+                    call_id: None,
+                    name: "forget".into(),
+                    input: serde_json::json!({"fact": "prefer vim-enhanced over vim"}),
+                }],
+                stop_reason: StopReason::ToolUse,
+            }),
+            propose_plan(
+                "Preference removed",
+                &[("GetSystemState", "Confirm system", "low")],
+            ),
+        ])),
+        Box::new(MockStateClient::default()),
+        5,
+    )
+    .with_prefs_path(prefs_path.clone());
+
+    planner
+        .plan_intent("forget my vim preference")
+        .await
+        .unwrap();
+
+    let content = std::fs::read_to_string(&prefs_path).unwrap();
+    assert!(!content.contains("vim-enhanced"));
+}
+
+#[tokio::test]
+async fn remember_rejects_sensitive_data() {
+    let dir = tempfile::tempdir().unwrap();
+    let prefs_path = dir.path().join("prefs.md");
+
+    let planner = LlmPlanner::new(
+        Box::new(MockProvider::new([
+            Ok(Completion {
+                content: vec![ContentBlock::ToolUse {
+                    id: "tu_rem".into(),
+                    call_id: None,
+                    name: "remember".into(),
+                    input: serde_json::json!({"fact": "my password is hunter2"}),
+                }],
+                stop_reason: StopReason::ToolUse,
+            }),
+            propose_plan(
+                "Cannot save sensitive data",
+                &[("GetSystemState", "System check", "low")],
+            ),
+        ])),
+        Box::new(MockStateClient::default()),
+        5,
+    )
+    .with_prefs_path(prefs_path.clone());
+
+    planner.plan_intent("remember my password").await.unwrap();
+
+    // File should not exist or should be empty — the sensitive fact was rejected.
+    assert!(!prefs_path.exists() || std::fs::read_to_string(&prefs_path).unwrap().is_empty());
+}
