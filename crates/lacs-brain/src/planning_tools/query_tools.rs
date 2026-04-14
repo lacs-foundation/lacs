@@ -173,7 +173,7 @@ pub fn query_tools() -> Vec<ToolDefinition> {
                     },
                     "status_filter": {
                         "type": "string",
-                        "description": "Filter by status: 'succeeded', 'failed', 'queued', 'running', 'canceled'"
+                        "description": "Filter by status: 'succeeded', 'failed', 'queued', 'running', 'canceled', 'rolled_back', 'needs_reboot'"
                     },
                     "action_filter": {
                         "type": "string",

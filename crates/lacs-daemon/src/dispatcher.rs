@@ -508,14 +508,21 @@ async fn handle_query_action(
     // store rather than executing a system command. Handle it here to
     // avoid routing through the ActionSpec/executor path.
     if action_name == "ListJobHistory" {
-        let limit = params
-            .get("limit")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(20) as u32;
-        let offset = params
-            .get("offset")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as u32;
+        let limit = match params.get("limit") {
+            Some(v) => match v.as_u64() {
+                Some(n) => n as u32,
+                None => {
+                    return send_error(
+                        framed,
+                        request_id,
+                        "validation_failure",
+                        format!("'limit' must be an integer, got: {v}"),
+                    )
+                    .await;
+                }
+            },
+            None => 20,
+        };
         let status_filter = params
             .get("status_filter")
             .and_then(|v| v.as_str())
@@ -524,14 +531,24 @@ async fn handle_query_action(
             .get("action_filter")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        let since_hours = params
-            .get("since_hours")
-            .and_then(|v| v.as_u64())
-            .map(|h| h as u32);
+        let since_hours = match params.get("since_hours") {
+            Some(v) => match v.as_u64() {
+                Some(n) => Some(n as u32),
+                None => {
+                    return send_error(
+                        framed,
+                        request_id,
+                        "validation_failure",
+                        format!("'since_hours' must be an integer, got: {v}"),
+                    )
+                    .await;
+                }
+            },
+            None => None,
+        };
 
         let records = match transactions.list_transactions(
             limit,
-            offset,
             status_filter.as_deref(),
             action_filter.as_deref(),
             since_hours,
@@ -548,7 +565,26 @@ async fn handle_query_action(
             }
         };
 
-        let output = format_job_history(&records);
+        let output = if records.is_empty() {
+            let mut msg = "No transactions found".to_string();
+            let mut filters = Vec::new();
+            if let Some(s) = &status_filter {
+                filters.push(format!("status={s}"));
+            }
+            if let Some(a) = &action_filter {
+                filters.push(format!("action={a}"));
+            }
+            if let Some(h) = since_hours {
+                filters.push(format!("since_hours={h}"));
+            }
+            if !filters.is_empty() {
+                msg.push_str(&format!(" (filters: {})", filters.join(", ")));
+            }
+            msg.push('.');
+            msg
+        } else {
+            format_job_history(&records)
+        };
         return send_response(
             framed,
             &DaemonResponse::QueryActionResponse {

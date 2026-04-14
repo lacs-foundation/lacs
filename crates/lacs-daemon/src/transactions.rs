@@ -248,15 +248,14 @@ impl TransactionStore {
     /// List transactions with optional filters, ordered by newest first.
     ///
     /// - `limit`: max number of rows (capped at 100)
-    /// - `offset`: skip this many rows
     /// - `status_filter`: if set, only return rows matching this status
-    ///   (e.g. `"succeeded"`, `"failed"`, `"queued"`)
+    ///   (must be a valid `JobState` variant: `"succeeded"`, `"failed"`,
+    ///   `"queued"`, `"running"`, `"canceled"`, `"rolled_back"`, `"needs_reboot"`)
     /// - `action_filter`: if set, only return rows with this exact action name
     /// - `since_hours`: if set, only return rows created within the last N hours
     pub fn list_transactions(
         &self,
         limit: u32,
-        offset: u32,
         status_filter: Option<&str>,
         action_filter: Option<&str>,
         since_hours: Option<u32>,
@@ -272,7 +271,11 @@ impl TransactionStore {
         let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
         if let Some(status) = status_filter {
-            let status_json = format!("\"{status}\"");
+            // Validate against known JobState variants to avoid silent empty
+            // results from typos (e.g. "success" instead of "succeeded").
+            // deserialize_field returns serde_json::Error → TransactionStoreError::Json.
+            let validated: JobState = deserialize_field(&format!("\"{status}\""))?;
+            let status_json = serialize_field(&validated)?;
             sql.push_str(" AND status = ?");
             param_values.push(Box::new(status_json));
         }
@@ -283,14 +286,12 @@ impl TransactionStore {
         }
 
         if let Some(hours) = since_hours {
-            sql.push_str(&format!(
-                " AND created_at > datetime('now', '-{hours} hours')"
-            ));
+            sql.push_str(" AND created_at > datetime('now', '-' || ? || ' hours')");
+            param_values.push(Box::new(hours));
         }
 
-        sql.push_str(" ORDER BY rowid DESC LIMIT ? OFFSET ?");
+        sql.push_str(" ORDER BY rowid DESC LIMIT ?");
         param_values.push(Box::new(limit));
-        param_values.push(Box::new(offset));
 
         let params_ref: Vec<&dyn rusqlite::types::ToSql> =
             param_values.iter().map(|b| b.as_ref()).collect();
@@ -305,7 +306,7 @@ impl TransactionStore {
         Ok(results)
     }
 
-    pub(crate) fn connection(&self) -> Result<Connection, TransactionStoreError> {
+    fn connection(&self) -> Result<Connection, TransactionStoreError> {
         Ok(Connection::open(&self.path)?)
     }
 
@@ -790,7 +791,7 @@ mod tests {
     fn list_transactions_returns_empty_for_fresh_store() {
         let dir = tempdir().unwrap();
         let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
-        let results = store.list_transactions(10, 0, None, None, None).unwrap();
+        let results = store.list_transactions(10, None, None, None).unwrap();
         assert!(results.is_empty());
     }
 
@@ -805,7 +806,7 @@ mod tests {
         second.risk_level = RiskLevel::Low;
         store.record(second).unwrap();
 
-        let results = store.list_transactions(10, 0, None, None, None).unwrap();
+        let results = store.list_transactions(10, None, None, None).unwrap();
         assert_eq!(results.len(), 2);
         // Most recent first (GetDiskUsage was recorded second).
         assert_eq!(results[0].action_name, "GetDiskUsage");
@@ -819,19 +820,8 @@ mod tests {
         for _ in 0..5 {
             store.record(queued_transaction()).unwrap();
         }
-        let results = store.list_transactions(3, 0, None, None, None).unwrap();
+        let results = store.list_transactions(3, None, None, None).unwrap();
         assert_eq!(results.len(), 3);
-    }
-
-    #[test]
-    fn list_transactions_respects_offset() {
-        let dir = tempdir().unwrap();
-        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
-        for _ in 0..5 {
-            store.record(queued_transaction()).unwrap();
-        }
-        let results = store.list_transactions(10, 3, None, None, None).unwrap();
-        assert_eq!(results.len(), 2);
     }
 
     #[test]
@@ -850,13 +840,13 @@ mod tests {
         store.record(queued_transaction()).unwrap();
 
         let succeeded = store
-            .list_transactions(10, 0, Some("succeeded"), None, None)
+            .list_transactions(10, Some("succeeded"), None, None)
             .unwrap();
         assert_eq!(succeeded.len(), 1);
         assert_eq!(succeeded[0].status, JobState::Succeeded);
 
         let queued = store
-            .list_transactions(10, 0, Some("queued"), None, None)
+            .list_transactions(10, Some("queued"), None, None)
             .unwrap();
         assert_eq!(queued.len(), 1);
         assert_eq!(queued[0].status, JobState::Queued);
@@ -873,7 +863,7 @@ mod tests {
         store.record(disk).unwrap();
 
         let results = store
-            .list_transactions(10, 0, None, Some("GetDiskUsage"), None)
+            .list_transactions(10, None, Some("GetDiskUsage"), None)
             .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].action_name, "GetDiskUsage");
@@ -898,15 +888,20 @@ mod tests {
         store.record(queued_transaction()).unwrap();
 
         // since_hours=24 should only return the fresh one.
-        let results = store
-            .list_transactions(10, 0, None, None, Some(24))
-            .unwrap();
+        let results = store.list_transactions(10, None, None, Some(24)).unwrap();
         assert_eq!(results.len(), 1);
 
         // since_hours=72 should return both.
-        let results = store
-            .list_transactions(10, 0, None, None, Some(72))
-            .unwrap();
+        let results = store.list_transactions(10, None, None, Some(72)).unwrap();
         assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn list_transactions_rejects_invalid_status_filter() {
+        let dir = tempdir().unwrap();
+        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        store.record(queued_transaction()).unwrap();
+        let result = store.list_transactions(10, Some("bogus"), None, None);
+        assert!(result.is_err(), "invalid status filter should return error");
     }
 }

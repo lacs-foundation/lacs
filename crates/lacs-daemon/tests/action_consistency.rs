@@ -99,8 +99,7 @@ fn every_spec_action_has_a_policy_entry() {
 /// `MissingParam` or `InvalidParam` is fine — that means the name is known).
 #[test]
 fn every_spec_action_is_recognised_by_executor() {
-    let dispatcher_internal: BTreeSet<&str> =
-        DISPATCHER_INTERNAL_ACTIONS.iter().copied().collect();
+    let dispatcher_internal: BTreeSet<&str> = DISPATCHER_INTERNAL_ACTIONS.iter().copied().collect();
     let mut missing = Vec::new();
     for name in all_spec_action_names() {
         // Dispatcher-internal actions are handled before reaching the executor.
