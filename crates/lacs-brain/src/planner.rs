@@ -25,6 +25,7 @@ use crate::provider::{
     ContentBlock, LlmProvider, Message, ProviderError, Role, StopReason, ToolDefinition,
     ToolResultBlock,
 };
+use crate::providers::openai_adapter::AsyncOpenAiAdapter;
 use crate::providers::rig_adapter::RigCompletionAdapter;
 use crate::state_client::StateClient;
 use rig::client::CompletionClient;
@@ -439,19 +440,12 @@ impl LlmPlanner {
                 Box::new(RigCompletionAdapter::new(completion_model).with_additional_params(params))
             }
             ProviderConfig::OpenAI { api_key, model } => {
-                // Use the Chat Completions API, not the Responses API (rig's default).
-                // The Responses API intermittently emits reasoning-only responses for
-                // standard gpt-4o models, causing "unsupported content types" errors.
-                // Chat Completions does not have reasoning items, so tool calls stream
-                // reliably. The call_id fallback in rig_adapter.rs handles the single-ID
-                // format correctly (same path as Anthropic/Ollama/Gemini).
-                let client = rig::providers::openai::Client::builder()
-                    .api_key(api_key)
-                    .build()
-                    .map_err(|e| format!("failed to initialize openai provider: {e}"))?
-                    .completions_api();
-                let completion_model = client.completion_model(&model);
-                Box::new(RigCompletionAdapter::new(completion_model))
+                // Use async-openai directly with the Chat Completions API.
+                // rig's OpenAI backend defaults to the Responses API, which:
+                //   - emits reasoning-only items on some gpt-4o variants → parse errors
+                //   - places the system prompt in a user message (rig issue #1599)
+                // async-openai targets /v1/chat/completions, has none of these issues.
+                Box::new(AsyncOpenAiAdapter::new(api_key, model))
             }
             ProviderConfig::Gemini { api_key, model } => {
                 let client = rig::providers::gemini::Client::builder()
@@ -595,10 +589,10 @@ impl LlmPlanner {
                     return Err(PlanningError::NoPlanProposed);
                 }
                 StopReason::EndTurn => {
-                    // Some providers (e.g. OpenAI via Rig's Responses API) may
-                    // output the plan as a plain-text JSON block instead of
-                    // calling propose_plan. Inject a correction and let the
-                    // model retry — but only if we have turns remaining.
+                    // Some providers (e.g. Gemini via rig) may output the plan
+                    // as a plain-text JSON block instead of calling propose_plan.
+                    // Inject a correction and let the model retry — but only if
+                    // we have turns remaining.
                     let has_text = completion
                         .content
                         .iter()
