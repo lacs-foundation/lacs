@@ -120,6 +120,7 @@ pub fn propose_plan_tool_def() -> ToolDefinition {
             .into(),
         input_schema: serde_json::json!({
             "type": "object",
+            "additionalProperties": false,
             "properties": {
                 "summary": {
                     "type": "string",
@@ -132,9 +133,9 @@ pub fn propose_plan_tool_def() -> ToolDefinition {
                 "steps": {
                     "type": "array",
                     "description": "Ordered list of LACS actions. Steps execute in order; a failure stops the plan.",
-                    "minItems": 1,
                     "items": {
                         "type": "object",
+                        "additionalProperties": false,
                         "properties": {
                             "action_name": {
                                 "type": "string",
@@ -151,8 +152,8 @@ pub fn propose_plan_tool_def() -> ToolDefinition {
                                 "description": "Risk classification for this step."
                             },
                             "params": {
-                                "type": "object",
-                                "description": "Action-specific parameters. May be empty {} for read-only actions."
+                                "type": "string",
+                                "description": "Action parameters encoded as a JSON string. Use \"{}\" for read-only actions (GetDiskUsage, GetMemoryInfo, ListServices, etc.). For parameterized actions encode as JSON: e.g. \"{\\\"unit\\\":\\\"sshd.service\\\"}\" for GetServiceLogs, \"{\\\"package\\\":\\\"vim\\\"}\" for AddLayeredPackage."
                             }
                         },
                         "required": ["action_name", "summary", "risk_level", "params"]
@@ -243,10 +244,15 @@ pub fn parse_proposed_plan(intent: &str, input: &serde_json::Value) -> Result<Pl
             }
         };
 
-        let params = step_val
-            .get("params")
-            .cloned()
-            .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+        // `params` may arrive as a JSON-encoded string (OpenAI Responses API
+        // strict-mode providers) or as a plain object (Ollama and others).
+        // Both are normalised to a JSON object here.
+        let params = match step_val.get("params") {
+            Some(serde_json::Value::String(s)) => serde_json::from_str(s)
+                .unwrap_or(serde_json::Value::Object(serde_json::Map::new())),
+            Some(v) => v.clone(),
+            None => serde_json::Value::Object(serde_json::Map::new()),
+        };
 
         steps.push(PlanStep::new(
             action_name,

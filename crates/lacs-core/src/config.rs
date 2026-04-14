@@ -29,9 +29,14 @@
 //!
 //! [llm]
 //! provider     = "ollama"              # "ollama" | "anthropic" | "openai" | "gemini" | ...
-//! model        = "qwen3:8b"
+//! model        = "qwen3:8b"            # default — see lacs-brain DEFAULT_OLLAMA_MODEL
 //! ollama_url   = "http://localhost:11434"
 //! max_turns    = 5
+//! # Optional: override the auto-detected thinking mode for Ollama.
+//! # Default: auto-detect from the model name (qwen3 / qwq / deepseek-r → true).
+//! # Set to `false` on CPU-only hosts running thinking models — thinking
+//! # traces exceed Ollama's internal request timeout on 4 vCPUs.
+//! # ollama_think = false
 //! ```
 
 use std::path::PathBuf;
@@ -74,6 +79,10 @@ pub struct LlmSection {
     pub anthropic_url: Option<String>,
     /// Planning loop turn limit. Maps to `LACS_BRAIN_MAX_TURNS`.
     pub max_turns: Option<u32>,
+    /// Override Ollama thinking-mode auto-detection. `None` means
+    /// `lacs-brain` decides based on the model name. Maps to
+    /// `LACS_OLLAMA_THINK` (`"true"` or `"false"`).
+    pub ollama_think: Option<bool>,
 }
 
 // ---------------------------------------------------------------------------
@@ -147,6 +156,12 @@ impl LacsConfig {
             }
             if let Some(turns) = llm.max_turns {
                 set_if_absent("LACS_BRAIN_MAX_TURNS", &turns.to_string());
+            }
+            if let Some(think) = llm.ollama_think {
+                // `lacs-brain::planner::resolve_ollama_think` parses
+                // case-insensitive "true"/"false"; emit the canonical
+                // form for clarity in ps/systemctl output.
+                set_if_absent("LACS_OLLAMA_THINK", if think { "true" } else { "false" });
             }
         }
     }
@@ -306,6 +321,92 @@ socket = "/tmp/test.sock"
             std::env::remove_var("LACS_LISTEN_URI");
         }
         assert_eq!(uri, "unix:///tmp/test.sock");
+    }
+
+    #[test]
+    fn ollama_think_false_emits_env_var() {
+        let dir = tempfile::tempdir().unwrap();
+        let lacs_dir = dir.path().join("lacs");
+        std::fs::create_dir_all(&lacs_dir).unwrap();
+        std::fs::write(
+            lacs_dir.join("config.toml"),
+            r#"
+[llm]
+ollama_think = false
+"#,
+        )
+        .unwrap();
+
+        let _g = ENV_LOCK.lock().unwrap();
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", dir.path());
+            std::env::remove_var("LACS_OLLAMA_THINK");
+        }
+        let cfg = LacsConfig::load();
+        cfg.apply_defaults_to_env();
+        let think = std::env::var("LACS_OLLAMA_THINK").unwrap();
+        unsafe {
+            std::env::remove_var("XDG_CONFIG_HOME");
+            std::env::remove_var("LACS_OLLAMA_THINK");
+        }
+        assert_eq!(think, "false");
+    }
+
+    #[test]
+    fn ollama_think_true_emits_env_var() {
+        let dir = tempfile::tempdir().unwrap();
+        let lacs_dir = dir.path().join("lacs");
+        std::fs::create_dir_all(&lacs_dir).unwrap();
+        std::fs::write(
+            lacs_dir.join("config.toml"),
+            r#"
+[llm]
+ollama_think = true
+"#,
+        )
+        .unwrap();
+
+        let _g = ENV_LOCK.lock().unwrap();
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", dir.path());
+            std::env::remove_var("LACS_OLLAMA_THINK");
+        }
+        let cfg = LacsConfig::load();
+        cfg.apply_defaults_to_env();
+        let think = std::env::var("LACS_OLLAMA_THINK").unwrap();
+        unsafe {
+            std::env::remove_var("XDG_CONFIG_HOME");
+            std::env::remove_var("LACS_OLLAMA_THINK");
+        }
+        assert_eq!(think, "true");
+    }
+
+    #[test]
+    fn ollama_think_absent_does_not_set_env_var() {
+        let dir = tempfile::tempdir().unwrap();
+        let lacs_dir = dir.path().join("lacs");
+        std::fs::create_dir_all(&lacs_dir).unwrap();
+        std::fs::write(
+            lacs_dir.join("config.toml"),
+            r#"
+[llm]
+model = "qwen3:8b"
+"#,
+        )
+        .unwrap();
+
+        let _g = ENV_LOCK.lock().unwrap();
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", dir.path());
+            std::env::remove_var("LACS_OLLAMA_THINK");
+        }
+        let cfg = LacsConfig::load();
+        cfg.apply_defaults_to_env();
+        let think_set = std::env::var_os("LACS_OLLAMA_THINK").is_some();
+        unsafe {
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
+        assert!(!think_set, "absent ollama_think must not set the env var");
     }
 
     use std::sync::Mutex;

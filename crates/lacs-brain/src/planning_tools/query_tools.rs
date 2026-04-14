@@ -6,7 +6,7 @@
 use crate::provider::ToolDefinition;
 
 pub fn query_tools() -> Vec<ToolDefinition> {
-    let empty_schema = serde_json::json!({"type": "object", "properties": {}, "required": []});
+    let empty_schema = serde_json::json!({"type": "object", "properties": {}, "required": [], "additionalProperties": false});
     vec![
         ToolDefinition {
             name: "query_services".into(),
@@ -46,6 +46,7 @@ pub fn query_tools() -> Vec<ToolDefinition> {
             description: "Show recent systemd journal logs for a specific service unit.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
+                "additionalProperties": false,
                 "properties": {
                     "unit": {
                         "type": "string",
@@ -80,6 +81,7 @@ pub fn query_tools() -> Vec<ToolDefinition> {
             description: "Show detailed info for an installed Flatpak application.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
+                "additionalProperties": false,
                 "properties": {
                     "app_id": {
                         "type": "string",
@@ -94,6 +96,7 @@ pub fn query_tools() -> Vec<ToolDefinition> {
             description: "Show detailed info for a specific container.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
+                "additionalProperties": false,
                 "properties": {
                     "name": {
                         "type": "string",
@@ -144,6 +147,7 @@ pub fn query_tools() -> Vec<ToolDefinition> {
             description: "Show SSH authorized keys for a user account.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
+                "additionalProperties": false,
                 "properties": {
                     "username": {
                         "type": "string",
