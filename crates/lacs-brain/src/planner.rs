@@ -424,8 +424,9 @@ impl LlmPlanner {
     /// Attach a progress channel for real-time planning feedback.
     ///
     /// The planner emits [`PlanEvent`]s on `tx` as it progresses through the
-    /// tool-use loop. When `plan_intent` returns, the sender is dropped,
-    /// closing the channel so consumers can detect completion naturally.
+    /// tool-use loop. The sender is owned by this `LlmPlanner` and closes
+    /// when the planner itself is dropped. Drop the planner explicitly after
+    /// `plan_intent` returns if you need the receiver to drain before proceeding.
     pub fn with_progress(mut self, tx: tokio::sync::mpsc::UnboundedSender<PlanEvent>) -> Self {
         self.progress_tx = Some(tx);
         self

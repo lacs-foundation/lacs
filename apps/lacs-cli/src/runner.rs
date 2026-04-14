@@ -420,7 +420,9 @@ pub async fn run_intent(intent: String, opts: &RunOpts, log: &Logger) -> Result<
     // Drop the planner to close the UnboundedSender, which closes the channel
     // and allows event_task to drain and exit.
     drop(planner);
-    let _ = event_task.await;
+    if let Err(e) = event_task.await {
+        eprintln!("lacs: event task panicked: {e}");
+    }
 
     if let Some(ref pb) = spinner {
         pb.finish_and_clear();
@@ -530,7 +532,7 @@ pub async fn run_intent(intent: String, opts: &RunOpts, log: &Logger) -> Result<
         }
 
         // Preview the step.
-        let (preview, _tx_id) = exec_client.preview(step.action_name(), step.params()).await?;
+        let preview = exec_client.preview(step.action_name(), step.params()).await?;
 
         if opts.json {
             log.println(
@@ -553,7 +555,7 @@ pub async fn run_intent(intent: String, opts: &RunOpts, log: &Logger) -> Result<
         let exec_spinner_ref = exec_spinner.clone();
         let mut first_line = true;
 
-        exec_client
+        let exec_result = exec_client
             .execute(step.action_name(), step.params(), &preview.request_hash, |line| {
                 if first_line {
                     if let Some(ref pb) = exec_spinner_ref {
@@ -567,19 +569,25 @@ pub async fn run_intent(intent: String, opts: &RunOpts, log: &Logger) -> Result<
                     crate::render::print_output_line(line, log);
                 }
             })
-            .await
-            .map(|result| {
-                if let Some(ref pb) = exec_spinner {
-                    pb.finish_and_clear();
-                }
-                if opts.json {
-                    log.println(
-                        &serde_json::to_string(&result).expect("ResultEnvelope is Serialize"),
-                    );
-                } else {
-                    crate::render::print_step_done(&result, log);
-                }
-            })?;
+            .await;
+
+        // Always clear the exec spinner regardless of success or error.
+        // If the callback already fired, finish_and_clear() is idempotent.
+        // If execute() errored before the first output line, this prevents
+        // the spinner artifact from being left on the terminal.
+        if let Some(ref pb) = exec_spinner {
+            pb.finish_and_clear();
+        }
+
+        exec_result.map(|result| {
+            if opts.json {
+                log.println(
+                    &serde_json::to_string(&result).expect("ResultEnvelope is Serialize"),
+                );
+            } else {
+                crate::render::print_step_done(&result, log);
+            }
+        })?;
     }
 
     if !opts.json {
@@ -613,10 +621,19 @@ pub async fn run_repl(opts: &RunOpts, log: &Logger) -> Result<(), CliError> {
     if let Some(ref p) = history_path {
         // Ensure the parent directory exists before the first load/save.
         if let Some(parent) = p.parent() {
-            let _ = std::fs::create_dir_all(parent);
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                eprintln!("lacs: failed to create history directory {}: {e}", parent.display());
+            }
         }
-        // Absence of a history file is not an error.
-        let _ = rl.load_history(p);
+        // Absence of the history file is not an error; any other failure is.
+        match rl.load_history(p) {
+            Ok(()) => {}
+            Err(rustyline::error::ReadlineError::Io(e))
+                if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                eprintln!("lacs: failed to load history from {}: {e}", p.display());
+            }
+        }
     }
 
     loop {
@@ -648,7 +665,9 @@ pub async fn run_repl(opts: &RunOpts, log: &Logger) -> Result<(), CliError> {
     }
 
     if let Some(ref p) = history_path {
-        let _ = rl.save_history(p);
+        if let Err(e) = rl.save_history(p) {
+            eprintln!("lacs: failed to save history to {}: {e}", p.display());
+        }
     }
 
     Ok(())

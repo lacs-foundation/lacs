@@ -263,14 +263,13 @@ impl DaemonClient {
 
     /// Preview a plan step.
     ///
-    /// Returns the [`PreviewEnvelope`] (which contains `request_hash`) and the
-    /// `transaction_id`. Pass `request_hash` verbatim to [`DaemonClient::execute`]
-    /// as `approval_hash`.
+    /// Returns the [`PreviewEnvelope`] which contains `request_hash`.
+    /// Pass `request_hash` verbatim to [`DaemonClient::execute`] as `approval_hash`.
     pub async fn preview(
         &self,
         action_name: &str,
         params: &Value,
-    ) -> Result<(PreviewEnvelope, String), CliError> {
+    ) -> Result<PreviewEnvelope, CliError> {
         let mut stream = tokio::net::UnixStream::connect(&self.socket_path)
             .await
             .map_err(|e| {
@@ -301,15 +300,11 @@ impl DaemonClient {
 
         match resp["type"].as_str() {
             Some("preview_response") => {
-                let tx_id = resp["transaction_id"]
-                    .as_str()
-                    .ok_or_else(|| CliError::ConfigOrDaemon("missing transaction_id".into()))?
-                    .to_string();
                 let envelope: PreviewEnvelope =
                     serde_json::from_value(resp["preview"].clone()).map_err(|e| {
                         CliError::ConfigOrDaemon(format!("parse preview envelope: {e}"))
                     })?;
-                Ok((envelope, tx_id))
+                Ok(envelope)
             }
             Some("error_response") => Err(CliError::PlanningFailed(format!(
                 "{}: {}",
@@ -591,7 +586,7 @@ mod tests {
         });
 
         let client = DaemonClient::new(socket_path.clone());
-        let (envelope, tx_id) = client
+        let envelope = client
             .preview("GetDiskUsage", &serde_json::json!({}))
             .await
             .unwrap();
@@ -603,7 +598,6 @@ mod tests {
         assert_eq!(envelope.summary, "Collect disk usage statistics");
         assert_eq!(envelope.risk_level, RiskLevel::Low);
         assert!(!envelope.reboot_required);
-        assert_eq!(tx_id, "tx-abc123");
     }
 
     // -----------------------------------------------------------------------
