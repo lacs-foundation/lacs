@@ -3,6 +3,7 @@ pub mod audit;
 pub mod config;
 pub mod planner;
 pub mod planning_tools;
+pub mod prefs;
 pub mod prompt;
 pub mod provider;
 pub mod providers;

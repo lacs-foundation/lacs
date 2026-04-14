@@ -325,15 +325,16 @@ impl From<PlanValidationError> for PlanningError {
 
 /// Drives the LLM planning loop.
 ///
-/// The system prompt and tool definitions are built once at construction time
-/// and reused across all planning calls on this instance.
+/// Tool definitions are built once at construction time and reused across all
+/// planning calls. The system prompt is rebuilt per `plan_intent()` call to
+/// include current user preferences.
 pub struct LlmPlanner {
     provider: Box<dyn LlmProvider>,
     state_client: Box<dyn StateClient>,
     max_turns: usize,
-    system_prompt: String,
     tools: Vec<ToolDefinition>,
     audit_log: Option<SafetyAuditLog>,
+    prefs_path: Option<std::path::PathBuf>,
 }
 
 impl LlmPlanner {
@@ -351,14 +352,16 @@ impl LlmPlanner {
             provider,
             state_client,
             max_turns,
-            system_prompt: build_system_prompt(),
             tools: {
                 let mut t = vec![get_state_tool_def()];
                 t.extend(query_tools());
+                t.push(crate::planning_tools::preferences::remember_tool_def());
+                t.push(crate::planning_tools::preferences::forget_tool_def());
                 t.push(propose_plan_tool_def());
                 t
             },
             audit_log: None,
+            prefs_path: None,
         }
     }
 
@@ -367,6 +370,16 @@ impl LlmPlanner {
     /// is appended to the log file in addition to being printed to stderr.
     pub fn with_audit_log(mut self, log: SafetyAuditLog) -> Self {
         self.audit_log = Some(log);
+        self
+    }
+
+    /// Set the path to the user preferences file.
+    ///
+    /// When set, preferences are read at the start of each `plan_intent()`
+    /// call and injected into the system prompt. The `remember` and `forget`
+    /// tools write to this file.
+    pub fn with_prefs_path(mut self, path: std::path::PathBuf) -> Self {
+        self.prefs_path = Some(path);
         self
     }
 
@@ -459,7 +472,9 @@ impl LlmPlanner {
                 Box::new(RigCompletionAdapter::new(completion_model))
             }
         };
-        Ok(Self::new(provider, state_client, config.max_turns))
+        let mut planner = Self::new(provider, state_client, config.max_turns);
+        planner.prefs_path = Some(lacs_core::config::prefs_path());
+        Ok(planner)
     }
 
     /// Expose the current system state from the underlying `StateClient`.
@@ -522,10 +537,29 @@ impl LlmPlanner {
 
         let mut messages: Vec<Message> = vec![Message::user_text(intent)];
 
+        // Rebuild the system prompt with current preferences on each call
+        // so that preferences saved during a prior `plan_intent` are visible.
+        let effective_prompt = {
+            let prefs_content = match self.prefs_path.as_ref() {
+                Some(p) => match crate::prefs::read_prefs(p) {
+                    Ok(content) => content,
+                    Err(e) => {
+                        eprintln!(
+                            "[lacs-brain] failed to read preferences from {}: {e}",
+                            p.display()
+                        );
+                        None
+                    }
+                },
+                None => None,
+            };
+            build_system_prompt(prefs_content.as_deref())
+        };
+
         for turn in 0..self.max_turns {
             let completion = self
                 .provider
-                .complete(&self.system_prompt, &messages, &self.tools, 4096)
+                .complete(&effective_prompt, &messages, &self.tools, 4096)
                 .await
                 .map_err(PlanningError::from)?;
 
@@ -643,6 +677,79 @@ impl LlmPlanner {
                                         });
                                     }
                                 }
+                            }
+                            "remember" => {
+                                let fact = input.get("fact").and_then(|v| v.as_str()).unwrap_or("");
+                                let (result_text, err) = if fact.is_empty() {
+                                    (
+                                        "Error: 'fact' parameter must not be empty.".to_string(),
+                                        true,
+                                    )
+                                } else if crate::prefs::contains_sensitive(fact) {
+                                    (
+                                        "Error: preference rejected — it appears to contain \
+                                         sensitive data (passwords, tokens, keys). Preferences \
+                                         must not store secrets."
+                                            .to_string(),
+                                        true,
+                                    )
+                                } else if let Some(ref prefs_path) = self.prefs_path {
+                                    match crate::prefs::append_pref(prefs_path, fact) {
+                                        Ok(()) => (format!("Preference saved: {fact}"), false),
+                                        Err(e) => {
+                                            eprintln!(
+                                                "[lacs-brain] failed to save preference to {}: {e}",
+                                                prefs_path.display()
+                                            );
+                                            (format!("Error saving preference: {e}"), true)
+                                        }
+                                    }
+                                } else {
+                                    (
+                                        "Error: preference storage is not configured.".to_string(),
+                                        true,
+                                    )
+                                };
+                                tool_results.push(ToolResultBlock {
+                                    tool_use_id: id.clone(),
+                                    call_id: call_id.clone(),
+                                    content: result_text,
+                                    is_error: err,
+                                });
+                            }
+                            "forget" => {
+                                let fact = input.get("fact").and_then(|v| v.as_str()).unwrap_or("");
+                                let (result_text, err) = if fact.is_empty() {
+                                    (
+                                        "Error: 'fact' parameter must not be empty.".to_string(),
+                                        true,
+                                    )
+                                } else if let Some(ref prefs_path) = self.prefs_path {
+                                    match crate::prefs::remove_pref(prefs_path, fact) {
+                                        Ok(true) => (format!("Preference removed: {fact}"), false),
+                                        Ok(false) => {
+                                            (format!("Preference not found: {fact}"), false)
+                                        }
+                                        Err(e) => {
+                                            eprintln!(
+                                                "[lacs-brain] failed to remove preference from {}: {e}",
+                                                prefs_path.display()
+                                            );
+                                            (format!("Error removing preference: {e}"), true)
+                                        }
+                                    }
+                                } else {
+                                    (
+                                        "Error: preference storage is not configured.".to_string(),
+                                        true,
+                                    )
+                                };
+                                tool_results.push(ToolResultBlock {
+                                    tool_use_id: id.clone(),
+                                    call_id: call_id.clone(),
+                                    content: result_text,
+                                    is_error: err,
+                                });
                             }
                             other_name => {
                                 if let Some((action_name, params)) =

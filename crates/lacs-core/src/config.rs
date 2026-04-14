@@ -171,16 +171,27 @@ impl LacsConfig {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Returns the path to `~/.config/lacs/config.toml`, respecting
-/// `XDG_CONFIG_HOME` if set.
-pub fn config_path() -> PathBuf {
-    let config_dir = std::env::var("XDG_CONFIG_HOME")
+/// Returns `~/.config/lacs`, respecting `XDG_CONFIG_HOME` if set.
+fn config_dir() -> PathBuf {
+    let base = std::env::var("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
             let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
             PathBuf::from(home).join(".config")
         });
-    config_dir.join("lacs").join("config.toml")
+    base.join("lacs")
+}
+
+/// Returns the path to `~/.config/lacs/config.toml`, respecting
+/// `XDG_CONFIG_HOME` if set.
+pub fn config_path() -> PathBuf {
+    config_dir().join("config.toml")
+}
+
+/// Returns the path to `~/.config/lacs/prefs.md`, respecting
+/// `XDG_CONFIG_HOME` if set. Same directory as `config.toml`.
+pub fn prefs_path() -> PathBuf {
+    config_dir().join("prefs.md")
 }
 
 /// Set `key` to `value` only if `key` is absent from the process environment.
@@ -407,6 +418,14 @@ model = "qwen3:8b"
             std::env::remove_var("XDG_CONFIG_HOME");
         }
         assert!(!think_set, "absent ollama_think must not set the env var");
+    }
+
+    #[test]
+    fn prefs_path_lives_alongside_config() {
+        let prefs = prefs_path();
+        let config = config_path();
+        assert_eq!(prefs.parent(), config.parent());
+        assert_eq!(prefs.file_name().unwrap(), "prefs.md");
     }
 
     use std::sync::Mutex;
