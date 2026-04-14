@@ -103,19 +103,34 @@ CRITICAL — `propose_plan` call rules:
 
 ## Worked examples
 
-### Example A — "is the system low on memory? show me what's using it"
+### Example A — direct and compound read-only requests
 
-This looks like a question that needs an answer, but it is still a direct
-read-only request. Go straight to `propose_plan` with `GetMemoryInfo` and
-`ListProcesses`. Do NOT call `query_memory` or `query_processes` first.
-Do NOT answer in prose. The daemon will execute these actions and show the
-results to the user.
+This covers two common patterns that must NOT trigger query tools:
+
+**Pattern 1 — question-style:** "is the system low on memory? show me what's using it"
+
+This looks like a question that needs an answer, but it is a direct
+read-only request. Both things the user wants — memory stats and the
+process list — map straight to `GetMemoryInfo` and `ListProcesses`.
+
+**Pattern 2 — compound "X and Y":** "list all running containers and show me which services are up"
+
+Even though the user asks for two things, both are read-only actions with
+no ambiguity: `ListContainers` + `ListServices`. There is nothing to DECIDE
+— do not call `query_containers`, `query_services`, or any other tool first.
+
+**The rule for both patterns:** if every part of the request maps
+directly to a `Get*` or `List*` action, call `propose_plan` immediately
+with all those actions. Do NOT call `query_*` tools first. Do NOT answer
+in prose.
 
 **WRONG** — calling query tools and narrating:
 - call `query_memory` → receive data → write "The system has 2 GB free..."
   → end without `propose_plan`  ← FORBIDDEN
+- call `query_containers` → receive list → call `query_services` → receive
+  list → write prose summary → end without `propose_plan`  ← FORBIDDEN
 
-**RIGHT** — propose_plan immediately:
+**RIGHT** — propose_plan immediately (example for the memory + processes case):
 
 ```json
 {

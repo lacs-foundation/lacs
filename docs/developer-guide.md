@@ -101,6 +101,28 @@ cargo run -p lacs-daemon &
 socat - UNIX-CONNECT:/tmp/lacs-daemon.sock
 ```
 
+**Run the E2E user stories on your dev machine (no VM):**
+
+`tests/e2e/dev-stories.sh` builds the daemon and test CLI, starts the
+daemon on `/tmp/lacs-daemon.sock`, and runs the 7 read-only stories. It
+tests plan structure (the LLM's JSON output) — not whether the actions
+actually execute on your host. Works on any Linux machine.
+
+```sh
+# With an API key (auto-detected)
+ANTHROPIC_API_KEY=sk-ant-... tests/e2e/dev-stories.sh
+OPENAI_API_KEY=sk-proj-...  tests/e2e/dev-stories.sh
+
+# With local Ollama
+tests/e2e/dev-stories.sh
+
+# Specific stories
+OPENAI_API_KEY=sk-... tests/e2e/dev-stories.sh 3 6 7
+```
+
+See [docs/contributing/testing.md](../docs/contributing/testing.md) for
+details on expected results and when to use each test tier.
+
 ### Configuration
 
 All settings can be placed in `~/.config/lacs/config.toml` (created manually):

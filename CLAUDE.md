@@ -104,6 +104,11 @@ wrong for direct read-only requests and causes two failure modes:
 > **Direct read-only request → skip all query tools → call `propose_plan`
 > immediately with the matching `Get*` / `List*` action.**
 
+This applies to **both** single-action and compound ("X and Y") intents.
+"List containers and show services" is two read-only actions — go straight
+to `propose_plan` with `ListContainers` + `ListServices`. Never query first
+just because the intent mentions two things.
+
 Use `query_*` tools ONLY when the intent is genuinely ambiguous and you need
 information to DECIDE between two or more possible plans (e.g. "install vim"
 → query layered packages to check if it is already there before proposing

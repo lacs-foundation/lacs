@@ -11,6 +11,7 @@ validation before a release.
 | Unit tests (Rust) | Individual functions, parsers, traits | <5s | Every commit, every CI run |
 | Unit tests (TypeScript) | React components, reducers, IPC shims | <5s | Every commit, every CI run |
 | Integration (Rust) | Daemon IPC, safety fence, policy | <10s | Every commit, every CI run |
+| **Dev stories (local, no VM)** | LLM plan structure for stories 1-7; runs on any Linux host | 1-3 min | After brain/prompt changes |
 | CI smoke (container) | Daemon + Ollama + read-only stories in a Linux runner | 5-10 min | Opt-in (PR label `e2e` or manual trigger) |
 | E2E Silverblue VM | **Real Silverblue** in QEMU/KVM, full stack, all 10 stories | 15-30 min first boot; 2-3 min subsequent | Local / pre-release |
 | Manual QA | Real Silverblue/Kinoite hardware, destructive actions, GUI | 30-60 min | Before releases + demo video |
@@ -33,6 +34,67 @@ pnpm install --frozen-lockfile
 pnpm test
 pnpm exec tsc --noEmit
 ```
+
+## Running stories on your dev machine (no VM required)
+
+`tests/e2e/dev-stories.sh` runs the 7 read-only user stories directly on
+your workstation. It builds the daemon and test CLI, starts the daemon on
+`/tmp/lacs-daemon.sock`, runs the stories, and then stops the daemon.
+
+**What it validates:** the LLM proposes the correct plan (right action
+names, risk levels, parameters). It does **not** execute the actions — it
+tests plan structure only. This works on any Linux host because the story
+scripts check the JSON plan output, not the results of `df`, `ps`, etc.
+
+**LLM provider:** auto-detected from environment variables (same logic as
+the product's `BrainConfig::from_env`):
+
+| Variable set | Provider used | Model |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | `anthropic` | `claude-sonnet-4-6` |
+| `OPENAI_API_KEY` | `openai` | `gpt-4o` |
+| `GEMINI_API_KEY` | `gemini` | `gemini-2.0-flash` |
+| neither | `ollama` | `qwen3:8b` (must be pulled first) |
+
+Override with `LACS_LLM_PROVIDER` and `LACS_LLM_MODEL`.
+
+```sh
+# Run stories 1-7 with an Anthropic key
+ANTHROPIC_API_KEY=sk-ant-... tests/e2e/dev-stories.sh
+
+# Run stories 1-7 with OpenAI
+OPENAI_API_KEY=sk-proj-... tests/e2e/dev-stories.sh
+
+# Run with local Ollama (must have qwen3:8b or llama3.2:3b pulled)
+tests/e2e/dev-stories.sh
+
+# Run specific stories
+OPENAI_API_KEY=sk-... tests/e2e/dev-stories.sh 3 6 7
+
+# Stories 8-10 require LACS_ALLOW_DESTRUCTIVE=1 — they will fail on a
+# non-Fedora-Atomic host because query_packages / query_authorized_keys
+# call rpm-ostree and SSH tools that are not installed. This is expected.
+# Run them on a provisioned VM for real coverage.
+LACS_ALLOW_DESTRUCTIVE=1 OPENAI_API_KEY=sk-... tests/e2e/dev-stories.sh
+```
+
+**When to use this tier:**
+- After any change to `crates/lacs-brain/src/prompt.rs`
+- After adding or changing a `query_*` tool or `Get*`/`List*` action
+- As a quick sanity check for brain/planner changes before pushing
+
+**Expected results on a dev machine:**
+- Stories 1-7: all pass
+- Story 8 (install vim): fails — model calls `query_packages`, daemon
+  can't run `rpm-ostree`, model escalates to `get_system_state` →
+  `StateUnavailable`. Passes on a real VM where `rpm-ostree` is present.
+- Story 9 (create toolbox): may pass plan-structure check (plan
+  structure only, no toolbox is created).
+- Story 10 (add SSH key): fails for the same reason as story 8 —
+  `query_authorized_keys` fails without the SSH tooling. Passes on a
+  real VM.
+
+For full story 8 and 10 coverage, use the VM path.
 
 ## Running the CI smoke test (opt-in)
 
