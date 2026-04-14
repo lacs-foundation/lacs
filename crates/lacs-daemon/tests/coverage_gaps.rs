@@ -8,13 +8,13 @@
 use std::io;
 use std::sync::Arc;
 
-use lacs_daemon::dispatcher::connection_handler_with_executor;
 use lacs_daemon::actions::ActionSpec;
+use lacs_daemon::dispatcher::connection_handler_with_executor;
 use lacs_daemon::executor::{ActionExecutor, ExecutionOutput, ExecutorError};
 use lacs_daemon::state::{DaemonConfig, DaemonState};
 use lacs_daemon::state_collector::CommandRunner;
-use lacs_daemon::transport::{framing::FramedStream, grpc::ListenTarget};
 use lacs_daemon::transactions::{NewTransaction, TransactionStore};
+use lacs_daemon::transport::{framing::FramedStream, grpc::ListenTarget};
 use lacs_types::{CallerRole, JobState, RiskLevel};
 use serde_json::{json, Value};
 use tempfile::tempdir;
@@ -58,14 +58,10 @@ fn test_state(dir: &tempfile::TempDir) -> DaemonState {
     DaemonState::open(config).unwrap()
 }
 
-async fn spawn_handler_with_role(
-    state: DaemonState,
-    role: CallerRole,
-) -> FramedStream<UnixStream> {
+async fn spawn_handler_with_role(state: DaemonState, role: CallerRole) -> FramedStream<UnixStream> {
     let (client, server) = UnixStream::pair().unwrap();
     let runner: Arc<dyn CommandRunner + Send + Sync> = Arc::new(MockRunner);
-    let executor: Arc<dyn ActionExecutor> =
-        Arc::new(MockExecutor { exit_code: 0 });
+    let executor: Arc<dyn ActionExecutor> = Arc::new(MockExecutor { exit_code: 0 });
     tokio::spawn(async move {
         connection_handler_with_executor(server, state, runner, executor, role).await;
     });
@@ -84,7 +80,10 @@ async fn query_action(
         "action_name": action_name,
         "params": params,
     });
-    framed.send(&serde_json::to_vec(&req).unwrap()).await.unwrap();
+    framed
+        .send(&serde_json::to_vec(&req).unwrap())
+        .await
+        .unwrap();
     let raw = framed.recv().await.unwrap();
     serde_json::from_slice(&raw).unwrap()
 }
@@ -108,8 +107,7 @@ fn make_transaction(action: &str) -> NewTransaction {
 #[test]
 fn list_transactions_limit_is_capped_at_100() {
     let dir = tempdir().unwrap();
-    let store =
-        TransactionStore::open(dir.path().join("tx.sqlite")).expect("open store");
+    let store = TransactionStore::open(dir.path().join("tx.sqlite")).expect("open store");
 
     // Insert 110 transactions.
     for i in 0..110 {
@@ -145,8 +143,7 @@ fn list_transactions_limit_is_capped_at_100() {
 #[test]
 fn list_transactions_combined_action_and_status_filter() {
     let dir = tempdir().unwrap();
-    let store =
-        TransactionStore::open(dir.path().join("tx-filter.sqlite")).expect("open store");
+    let store = TransactionStore::open(dir.path().join("tx-filter.sqlite")).expect("open store");
 
     // Insert different actions with default Queued status.
     store.record(make_transaction("UpdateSystem")).unwrap();
@@ -162,7 +159,9 @@ fn list_transactions_combined_action_and_status_filter() {
         .transaction_id
         .clone();
     store.update_status(&update_id, JobState::Running).unwrap();
-    store.update_status(&update_id, JobState::Succeeded).unwrap();
+    store
+        .update_status(&update_id, JobState::Succeeded)
+        .unwrap();
 
     // Filter: action=UpdateSystem + status=succeeded → exactly 1 row.
     let filtered = store
@@ -291,13 +290,7 @@ async fn query_action_rejects_non_observer_action() {
     let dir = tempdir().unwrap();
     let state = test_state(&dir);
     let mut framed = spawn_handler_with_role(state, CallerRole::Admin).await;
-    let resp = query_action(
-        &mut framed,
-        "UpdateSystem",
-        json!({}),
-        "non-observer-req",
-    )
-    .await;
+    let resp = query_action(&mut framed, "UpdateSystem", json!({}), "non-observer-req").await;
 
     assert_eq!(
         resp["type"], "error_response",

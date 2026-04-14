@@ -323,6 +323,10 @@ mod tests {
     fn system_prompt_contains_example_c() {
         let prompt = build_system_prompt(None);
         assert!(prompt.contains("query_job_history"));
-        assert!(prompt.contains("Example C") || prompt.contains("example C") || prompt.contains("### C"));
+        assert!(
+            prompt.contains("Example C")
+                || prompt.contains("example C")
+                || prompt.contains("### C")
+        );
     }
 }

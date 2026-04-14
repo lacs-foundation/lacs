@@ -233,11 +233,17 @@ pub fn query_tool_to_action(
         "query_groups" => Ok(Some(("ListGroups", serde_json::json!({})))),
         "query_flatpak_info" => {
             let app_id = require_str_param(input, "app_id", tool_name)?;
-            Ok(Some(("GetFlatpakAppInfo", serde_json::json!({"app_id": app_id}))))
+            Ok(Some((
+                "GetFlatpakAppInfo",
+                serde_json::json!({"app_id": app_id}),
+            )))
         }
         "query_container_info" => {
             let name = require_str_param(input, "name", tool_name)?;
-            Ok(Some(("GetContainerInfo", serde_json::json!({"name": name}))))
+            Ok(Some((
+                "GetContainerInfo",
+                serde_json::json!({"name": name}),
+            )))
         }
         "query_package_repos" => Ok(Some(("ListPackageRepositories", serde_json::json!({})))),
         "query_diagnostics" => Ok(Some(("CollectDiagnostics", serde_json::json!({})))),
@@ -248,7 +254,10 @@ pub fn query_tool_to_action(
         "query_network" => Ok(Some(("GetNetworkStatus", serde_json::json!({})))),
         "query_authorized_keys" => {
             let username = require_str_param(input, "username", tool_name)?;
-            Ok(Some(("GetAuthorizedKeys", serde_json::json!({"username": username}))))
+            Ok(Some((
+                "GetAuthorizedKeys",
+                serde_json::json!({"username": username}),
+            )))
         }
         "query_job_history" => {
             let mut params = serde_json::json!({});

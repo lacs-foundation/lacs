@@ -878,11 +878,7 @@ async fn remember_without_prefs_path_returns_not_configured_error() {
     ]));
 
     // Intentionally omit `.with_prefs_path(...)`.
-    let planner = LlmPlanner::new(
-        provider,
-        Box::new(MockStateClient::default()),
-        5,
-    );
+    let planner = LlmPlanner::new(provider, Box::new(MockStateClient::default()), 5);
 
     // Planning should still succeed — the error is returned to the LLM as a
     // tool result, not propagated as a Rust error.
@@ -913,11 +909,7 @@ async fn forget_without_prefs_path_returns_not_configured_error() {
     ]));
 
     // Intentionally omit `.with_prefs_path(...)`.
-    let planner = LlmPlanner::new(
-        provider,
-        Box::new(MockStateClient::default()),
-        5,
-    );
+    let planner = LlmPlanner::new(provider, Box::new(MockStateClient::default()), 5);
 
     let plan = planner
         .plan_intent("forget my dark theme preference")

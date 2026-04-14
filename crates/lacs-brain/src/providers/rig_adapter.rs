@@ -678,17 +678,13 @@ mod tests {
         // Subsequent-position `&api_key=` must also be redacted.
         let input = "https://api.example.com/v1?model=gpt-4&api_key=sk-secret123";
         let result = sanitize_error_msg(input);
-        assert_eq!(
-            result,
-            "https://api.example.com/v1?model=gpt-4&[REDACTED]"
-        );
+        assert_eq!(result, "https://api.example.com/v1?model=gpt-4&[REDACTED]");
     }
 
     #[test]
     fn sanitize_error_msg_strips_all_occurrences() {
         // Two different key-bearing URLs in the same error string — both must be redacted.
-        let input =
-            "first: https://api1.com?key=secret1 second: https://api2.com?api_key=secret2";
+        let input = "first: https://api1.com?key=secret1 second: https://api2.com?api_key=secret2";
         let result = sanitize_error_msg(input);
         assert_eq!(
             result,

@@ -322,7 +322,11 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
                 .and_then(|v| v.as_str())
                 .map(|h| validated_safe_arg(h, "home"))
                 .transpose()?;
-            Ok(users::create_user(&username, shell.as_deref(), home.as_deref()))
+            Ok(users::create_user(
+                &username,
+                shell.as_deref(),
+                home.as_deref(),
+            ))
         }
         "DeleteUser" => {
             let username = validated_username(require_str(params, "username")?, "username")?;
@@ -1131,7 +1135,10 @@ mod tests {
     #[test]
     fn str_array_or_empty_returns_empty_when_key_absent() {
         let params = json!({});
-        assert_eq!(str_array_or_empty(&params, "packages").unwrap(), Vec::<String>::new());
+        assert_eq!(
+            str_array_or_empty(&params, "packages").unwrap(),
+            Vec::<String>::new()
+        );
     }
 
     // ── validated_safe_kernel_arg ─────────────────────────────────────────

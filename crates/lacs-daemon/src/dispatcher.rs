@@ -202,7 +202,9 @@ fn read_gid_map() -> std::collections::HashMap<u32, String> {
             }
         };
         match gid_str.parse::<u32>() {
-            Ok(gid) => { map.insert(gid, name.to_string()); }
+            Ok(gid) => {
+                map.insert(gid, name.to_string());
+            }
             Err(_) => {
                 eprintln!("[lacs-daemon] WARNING: malformed /etc/group line {line_no} (group={name:?}): GID {gid_str:?} is not a number");
             }
@@ -704,34 +706,33 @@ async fn handle_preview(
     // State is best-effort: if collection fails, the preview is generated with
     // an empty state and a warning is logged rather than aborting the preview.
     let runner_for_preview = Arc::clone(&runner);
-    let current_state = match tokio::task::spawn_blocking(move || collect_state(&*runner_for_preview))
-        .await
-    {
-        Err(e) => {
-            eprintln!(
-                "[lacs-daemon] handle_preview: collect_state task failed ({e}); \
-                 generating preview with empty state"
-            );
-            Value::Null
-        }
-        Ok(Err(e)) => {
-            eprintln!(
-                "[lacs-daemon] handle_preview: state collection failed ({e}); \
-                 generating preview with empty state"
-            );
-            Value::Null
-        }
-        Ok(Ok(s)) => match serde_json::to_value(&s) {
-            Ok(v) => v,
+    let current_state =
+        match tokio::task::spawn_blocking(move || collect_state(&*runner_for_preview)).await {
             Err(e) => {
                 eprintln!(
-                    "[lacs-daemon] handle_preview: failed to serialize collected state ({e}); \
-                     using empty state"
+                    "[lacs-daemon] handle_preview: collect_state task failed ({e}); \
+                 generating preview with empty state"
                 );
                 Value::Null
             }
-        },
-    };
+            Ok(Err(e)) => {
+                eprintln!(
+                    "[lacs-daemon] handle_preview: state collection failed ({e}); \
+                 generating preview with empty state"
+                );
+                Value::Null
+            }
+            Ok(Ok(s)) => match serde_json::to_value(&s) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!(
+                        "[lacs-daemon] handle_preview: failed to serialize collected state ({e}); \
+                     using empty state"
+                    );
+                    Value::Null
+                }
+            },
+        };
     let proposed_change = json!({ "action": action_name, "params": params });
 
     let envelope = RequestEnvelope {

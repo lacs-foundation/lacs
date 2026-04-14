@@ -203,16 +203,14 @@ fn config_dir() -> PathBuf {
         }
     });
 
-    let base = xdg_valid.unwrap_or_else(|| {
-        match std::env::var("HOME") {
-            Ok(home) => PathBuf::from(home).join(".config"),
-            Err(_) => {
-                eprintln!(
-                    "[lacs] warning: HOME is not set; using relative path ./.config \
+    let base = xdg_valid.unwrap_or_else(|| match std::env::var("HOME") {
+        Ok(home) => PathBuf::from(home).join(".config"),
+        Err(_) => {
+            eprintln!(
+                "[lacs] warning: HOME is not set; using relative path ./.config \
                      for config and preferences — ensure HOME is set in production"
-                );
-                PathBuf::from(".config")
-            }
+            );
+            PathBuf::from(".config")
         }
     });
     base.join("lacs")

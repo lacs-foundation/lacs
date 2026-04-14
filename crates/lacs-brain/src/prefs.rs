@@ -26,8 +26,8 @@ const SENSITIVE_PATTERNS: &[&str] = &[
     "token",
     "credential",
     "-----begin",
-    "bearer ",  // OAuth2 Bearer tokens ("Bearer eyJ...")
-    "akia",     // AWS Access Key ID prefix
+    "bearer ", // OAuth2 Bearer tokens ("Bearer eyJ...")
+    "akia",    // AWS Access Key ID prefix
 ];
 
 /// String prefixes that indicate well-known secret formats (API keys, access tokens, PATs).
