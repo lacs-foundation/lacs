@@ -48,7 +48,7 @@ pub struct ActionSpec {
     pub rollback_available: bool,
 }
 
-fn command(
+pub(crate) fn command_mechanism(
     program: &'static str,
     args: impl IntoIterator<Item = impl Into<String>>,
 ) -> ActionMechanism {
@@ -58,14 +58,17 @@ fn command(
     }
 }
 
-fn file_write(path: impl Into<String>, content: impl Into<String>) -> ActionMechanism {
+pub(crate) fn file_write_mechanism(
+    path: impl Into<String>,
+    content: impl Into<String>,
+) -> ActionMechanism {
     ActionMechanism::FileWrite {
         path: path.into(),
         content: content.into(),
     }
 }
 
-fn file_patch(
+pub(crate) fn file_patch_mechanism(
     path: impl Into<String>,
     search: impl Into<String>,
     replace: impl Into<String>,
@@ -77,36 +80,10 @@ fn file_patch(
     }
 }
 
-fn file_delete(path: impl Into<String>) -> ActionMechanism {
-    ActionMechanism::FileDelete { path: path.into() }
-}
-
-pub(crate) fn command_mechanism(
-    program: &'static str,
-    args: impl IntoIterator<Item = impl Into<String>>,
-) -> ActionMechanism {
-    command(program, args)
-}
-
-pub(crate) fn file_write_mechanism(
-    path: impl Into<String>,
-    content: impl Into<String>,
-) -> ActionMechanism {
-    file_write(path, content)
-}
-
-pub(crate) fn file_patch_mechanism(
-    path: impl Into<String>,
-    search: impl Into<String>,
-    replace: impl Into<String>,
-) -> ActionMechanism {
-    file_patch(path, search, replace)
-}
-
 pub(crate) fn file_scan_mechanism(path: impl Into<String>) -> ActionMechanism {
     ActionMechanism::FileScan { path: path.into() }
 }
 
 pub(crate) fn file_delete_mechanism(path: impl Into<String>) -> ActionMechanism {
-    file_delete(path)
+    ActionMechanism::FileDelete { path: path.into() }
 }

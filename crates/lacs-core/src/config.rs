@@ -31,7 +31,7 @@
 //! provider     = "ollama"              # "ollama" | "anthropic" | "openai" | "gemini" | ...
 //! model        = "qwen3:8b"            # default — see lacs-brain DEFAULT_OLLAMA_MODEL
 //! ollama_url   = "http://localhost:11434"
-//! max_turns    = 5
+//! max_turns    = 10
 //! # Optional: override the auto-detected thinking mode for Ollama.
 //! # Default: auto-detect from the model name (qwen3 / qwq / deepseek-r → true).
 //! # Set to `false` on CPU-only hosts running thinking models — thinking

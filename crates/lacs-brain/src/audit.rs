@@ -122,7 +122,7 @@ impl SafetyAuditLog {
     }
 
     /// Return the path this log writes to (for testing).
-    pub fn path(&self) -> &PathBuf {
+    pub fn path(&self) -> &std::path::Path {
         &self.path
     }
 }
