@@ -46,7 +46,8 @@ pub fn min_role_for_action(action_name: &str) -> Option<CallerRole> {
         | "GetMemoryInfo"
         | "GetAuthorizedKeys"
         | "ListUsers"
-        | "ListGroups" => CallerRole::Observer,
+        | "ListGroups"
+        | "ListJobHistory" => CallerRole::Observer,
 
         // ── Medium-risk mutations (Dev) ──────────────────────────────────
         //
@@ -193,6 +194,7 @@ mod tests {
         assert!(action_allowed(&role, "GetMemoryInfo"));
         assert!(action_allowed(&role, "GetNetworkStatus"));
         assert!(action_allowed(&role, "GetAuthorizedKeys"));
+        assert!(action_allowed(&role, "ListJobHistory"));
     }
 
     // ------------------------------------------------------------------

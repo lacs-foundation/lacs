@@ -399,6 +399,7 @@ pub async fn connection_handler_with_executor(
                 handle_query_action(
                     &mut framed,
                     Arc::clone(&executor),
+                    &state.transactions,
                     &caller_role,
                     action_name,
                     params,
@@ -459,6 +460,7 @@ async fn handle_query_state(
 async fn handle_query_action(
     framed: &mut FramedStream<UnixStream>,
     executor: Arc<dyn ActionExecutor>,
+    transactions: &crate::transactions::TransactionStore,
     caller_role: &CallerRole,
     action_name: &str,
     params: &Value,
@@ -498,6 +500,62 @@ async fn handle_query_action(
             request_id,
             "authorization_failure",
             format!("{action_name} is not a read-only action; use preview+execute instead"),
+        )
+        .await;
+    }
+
+    // Special case: ListJobHistory queries the daemon's own transaction
+    // store rather than executing a system command. Handle it here to
+    // avoid routing through the ActionSpec/executor path.
+    if action_name == "ListJobHistory" {
+        let limit = params
+            .get("limit")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(20) as u32;
+        let offset = params
+            .get("offset")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32;
+        let status_filter = params
+            .get("status_filter")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let action_filter = params
+            .get("action_filter")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let since_hours = params
+            .get("since_hours")
+            .and_then(|v| v.as_u64())
+            .map(|h| h as u32);
+
+        let records = match transactions.list_transactions(
+            limit,
+            offset,
+            status_filter.as_deref(),
+            action_filter.as_deref(),
+            since_hours,
+        ) {
+            Ok(r) => r,
+            Err(e) => {
+                return send_error(
+                    framed,
+                    request_id,
+                    "execution_failure",
+                    format!("failed to query transaction log: {e}"),
+                )
+                .await;
+            }
+        };
+
+        let output = format_job_history(&records);
+        return send_response(
+            framed,
+            &DaemonResponse::QueryActionResponse {
+                request_id: request_id.to_string(),
+                action_name: action_name.to_string(),
+                output,
+            },
         )
         .await;
     }
@@ -1002,6 +1060,24 @@ fn job_state_str(state: &JobState) -> &'static str {
 enum HandlerError {
     #[error("framing error: {0}")]
     Framing(#[from] FramingError),
+}
+
+fn format_job_history(records: &[lacs_types::TransactionRecord]) -> String {
+    if records.is_empty() {
+        return "No transactions found.".to_string();
+    }
+
+    let mut output = format!("Transaction history ({} entries):\n\n", records.len());
+    for r in records {
+        output.push_str(&format!(
+            "  {}  {:30}  {:12}  {}\n",
+            r.transaction_id.chars().take(8).collect::<String>(),
+            r.action_name,
+            format!("{:?}", r.status).to_lowercase(),
+            r.summary,
+        ));
+    }
+    output
 }
 
 async fn send_response(
