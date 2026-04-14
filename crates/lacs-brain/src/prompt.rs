@@ -1,8 +1,8 @@
 //! System prompt for the LACS planning agent.
 //!
 //! The prompt tells the LLM its role, available action families, risk
-//! classification rules, and hard constraints. It is assembled once and
-//! injected into every planning request.
+//! classification rules, and hard constraints. It is rebuilt per
+//! `plan_intent()` call to incorporate current user preferences.
 //!
 //! # Worked examples — do not remove
 //!

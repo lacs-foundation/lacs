@@ -1,8 +1,8 @@
 //! `remember` and `forget` planning tools.
 //!
 //! These tools let the LLM save or remove user preferences during planning.
-//! They are brain-side-only — they write directly to `~/.config/lacs/prefs.md`
-//! and never touch the daemon.
+//! They are brain-side-only and never touch the daemon. The actual file I/O
+//! is handled by `crate::prefs` and dispatched in `planner.rs`.
 
 use crate::provider::ToolDefinition;
 

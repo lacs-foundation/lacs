@@ -540,10 +540,19 @@ impl LlmPlanner {
         // Rebuild the system prompt with current preferences on each call
         // so that preferences saved during a prior `plan_intent` are visible.
         let effective_prompt = {
-            let prefs_content = self
-                .prefs_path
-                .as_ref()
-                .and_then(|p| crate::prefs::read_prefs(p));
+            let prefs_content = match self.prefs_path.as_ref() {
+                Some(p) => match crate::prefs::read_prefs(p) {
+                    Ok(content) => content,
+                    Err(e) => {
+                        eprintln!(
+                            "[lacs-brain] failed to read preferences from {}: {e}",
+                            p.display()
+                        );
+                        None
+                    }
+                },
+                None => None,
+            };
             build_system_prompt(prefs_content.as_deref())
         };
 
@@ -671,46 +680,75 @@ impl LlmPlanner {
                             }
                             "remember" => {
                                 let fact = input.get("fact").and_then(|v| v.as_str()).unwrap_or("");
-                                let result_text = if fact.is_empty() {
-                                    "Error: 'fact' parameter must not be empty.".to_string()
+                                let (result_text, err) = if fact.is_empty() {
+                                    (
+                                        "Error: 'fact' parameter must not be empty.".to_string(),
+                                        true,
+                                    )
                                 } else if crate::prefs::contains_sensitive(fact) {
-                                    "Error: preference rejected — it appears to contain \
-                                     sensitive data (passwords, tokens, keys). Preferences \
-                                     must not store secrets."
-                                        .to_string()
+                                    (
+                                        "Error: preference rejected — it appears to contain \
+                                         sensitive data (passwords, tokens, keys). Preferences \
+                                         must not store secrets."
+                                            .to_string(),
+                                        true,
+                                    )
                                 } else if let Some(ref prefs_path) = self.prefs_path {
                                     match crate::prefs::append_pref(prefs_path, fact) {
-                                        Ok(()) => format!("Preference saved: {fact}"),
-                                        Err(e) => format!("Error saving preference: {e}"),
+                                        Ok(()) => (format!("Preference saved: {fact}"), false),
+                                        Err(e) => {
+                                            eprintln!(
+                                                "[lacs-brain] failed to save preference to {}: {e}",
+                                                prefs_path.display()
+                                            );
+                                            (format!("Error saving preference: {e}"), true)
+                                        }
                                     }
                                 } else {
-                                    "Error: preference storage is not configured.".to_string()
+                                    (
+                                        "Error: preference storage is not configured.".to_string(),
+                                        true,
+                                    )
                                 };
                                 tool_results.push(ToolResultBlock {
                                     tool_use_id: id.clone(),
                                     call_id: call_id.clone(),
                                     content: result_text,
-                                    is_error: false,
+                                    is_error: err,
                                 });
                             }
                             "forget" => {
                                 let fact = input.get("fact").and_then(|v| v.as_str()).unwrap_or("");
-                                let result_text = if fact.is_empty() {
-                                    "Error: 'fact' parameter must not be empty.".to_string()
+                                let (result_text, err) = if fact.is_empty() {
+                                    (
+                                        "Error: 'fact' parameter must not be empty.".to_string(),
+                                        true,
+                                    )
                                 } else if let Some(ref prefs_path) = self.prefs_path {
                                     match crate::prefs::remove_pref(prefs_path, fact) {
-                                        Ok(true) => format!("Preference removed: {fact}"),
-                                        Ok(false) => format!("Preference not found: {fact}"),
-                                        Err(e) => format!("Error removing preference: {e}"),
+                                        Ok(true) => (format!("Preference removed: {fact}"), false),
+                                        Ok(false) => {
+                                            (format!("Preference not found: {fact}"), false)
+                                        }
+                                        Err(e) => {
+                                            eprintln!(
+                                                "[lacs-brain] failed to remove preference from {}: {e}",
+                                                prefs_path.display()
+                                            );
+                                            (format!("Error removing preference: {e}"), true)
+                                        }
                                     }
                                 } else {
-                                    "Error: preference storage is not configured.".to_string()
+                                    (
+                                        "Error: preference storage is not configured.".to_string(),
+                                        true,
+                                    )
                                 };
                                 tool_results.push(ToolResultBlock {
                                     tool_use_id: id.clone(),
                                     call_id: call_id.clone(),
                                     content: result_text,
-                                    is_error: false,
+                                    is_error: err,
                                 });
                             }
                             other_name => {

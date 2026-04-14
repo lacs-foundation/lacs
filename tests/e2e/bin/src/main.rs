@@ -26,8 +26,7 @@ use std::time::Duration;
 
 use lacs_brain::config::BrainConfig;
 use lacs_brain::planner::{
-    resolve_ollama_think, LlmPlanner, PlanningError, OLLAMA_NUM_PREDICT,
-    THINKING_MODEL_PREFIXES,
+    resolve_ollama_think, LlmPlanner, PlanningError, OLLAMA_NUM_PREDICT, THINKING_MODEL_PREFIXES,
 };
 use lacs_brain::state_client::{CuratedState, StateClient};
 use lacs_core::DEFAULT_LISTEN_URI;
@@ -53,12 +52,8 @@ impl StateClient for TestDaemonClient {
 
         let mut stream = UnixStream::connect(&self.socket_path)
             .map_err(|e| PlanningError::StateUnavailable(format!("connect: {e}")))?;
-        stream
-            .set_read_timeout(Some(Duration::from_secs(10)))
-            .ok();
-        stream
-            .set_write_timeout(Some(Duration::from_secs(10)))
-            .ok();
+        stream.set_read_timeout(Some(Duration::from_secs(10))).ok();
+        stream.set_write_timeout(Some(Duration::from_secs(10))).ok();
 
         let req = serde_json::to_vec(&serde_json::json!({
             "type": "query_state",
@@ -115,12 +110,8 @@ impl StateClient for TestDaemonClient {
 
         let mut stream = UnixStream::connect(&self.socket_path)
             .map_err(|e| PlanningError::StateUnavailable(format!("connect: {e}")))?;
-        stream
-            .set_read_timeout(Some(Duration::from_secs(10)))
-            .ok();
-        stream
-            .set_write_timeout(Some(Duration::from_secs(10)))
-            .ok();
+        stream.set_read_timeout(Some(Duration::from_secs(10))).ok();
+        stream.set_write_timeout(Some(Duration::from_secs(10))).ok();
 
         let req = serde_json::to_vec(&serde_json::json!({
             "type": "query_action",
@@ -139,9 +130,7 @@ impl StateClient for TestDaemonClient {
             .map_err(|e| PlanningError::StateUnavailable(format!("parse: {e}")))?;
 
         match resp["type"].as_str() {
-            Some("query_action_response") => {
-                Ok(resp["output"].as_str().unwrap_or("").to_string())
-            }
+            Some("query_action_response") => Ok(resp["output"].as_str().unwrap_or("").to_string()),
             Some("error_response") => Err(PlanningError::StateUnavailable(format!(
                 "daemon error: {}",
                 resp["message"].as_str().unwrap_or("unknown")
@@ -456,10 +445,7 @@ fn check_daemon(socket_path: &str) -> CheckStatus {
 
 /// Query `{ollama_url}/api/tags` to confirm Ollama is up, then check
 /// whether `model` appears in the returned tag list.
-async fn check_ollama(
-    ollama_url: &str,
-    model: &str,
-) -> (CheckStatus, CheckStatus) {
+async fn check_ollama(ollama_url: &str, model: &str) -> (CheckStatus, CheckStatus) {
     let url = format!("{}/api/tags", ollama_url.trim_end_matches('/'));
     let client = match reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
@@ -550,4 +536,3 @@ fn think_source(model: &str) -> String {
         "auto: model not in thinking-prefix list".into()
     }
 }
-

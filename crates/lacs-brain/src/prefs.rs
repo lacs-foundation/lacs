@@ -1,9 +1,10 @@
 //! User preference file operations.
 //!
-//! Preferences are stored as a flat markdown file at `~/.config/lacs/prefs.md`.
-//! Each preference is a single line prefixed with `- `. The file is read by the
-//! planner at the start of each `plan_intent()` call and injected into the
-//! system prompt.
+//! Preferences are stored as a flat markdown file (default
+//! `~/.config/lacs/prefs.md`, respects `XDG_CONFIG_HOME`). The path is
+//! provided by the caller. Each preference is a single line prefixed with
+//! `- `. The file is read by the planner at the start of each `plan_intent()`
+//! call and injected into the system prompt.
 
 use std::io;
 use std::path::Path;
@@ -27,7 +28,7 @@ const SENSITIVE_PATTERNS: &[&str] = &[
     "-----begin",
 ];
 
-/// Key prefixes that indicate API keys or tokens.
+/// String prefixes that indicate well-known secret formats (API keys, access tokens, PATs).
 const SENSITIVE_PREFIXES: &[&str] = &[
     "sk-",         // Anthropic / OpenAI
     "ghp_",        // GitHub personal access token
@@ -37,47 +38,57 @@ const SENSITIVE_PREFIXES: &[&str] = &[
     "xoxp-",       // Slack user token
 ];
 
-pub fn read_prefs(path: &Path) -> Option<String> {
-    let content = std::fs::read_to_string(path).ok()?;
-    if content.trim().is_empty() {
-        return None;
+/// Read the user preferences file. Returns `Ok(None)` if the file does not
+/// exist or is empty; returns `Ok(Some(content))` on success; propagates I/O
+/// errors other than `NotFound`.
+pub fn read_prefs(path: &Path) -> Result<Option<String>, io::Error> {
+    match std::fs::read_to_string(path) {
+        Ok(content) if content.trim().is_empty() => Ok(None),
+        Ok(content) => Ok(Some(content)),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
     }
-    Some(content)
 }
 
 pub fn append_pref(path: &Path, fact: &str) -> Result<(), io::Error> {
+    // Reject facts containing newlines — they would corrupt the file format
+    // and could bypass the sensitive-data filter.
+    if fact.contains('\n') || fact.contains('\r') {
+        return Err(io::Error::other("preference must be a single line"));
+    }
+
     // Create parent directories if needed.
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
 
-    // Check size limit.
-    if let Ok(meta) = std::fs::metadata(path) {
-        if meta.len() >= PREFS_MAX_BYTES {
-            return Err(io::Error::other(format!(
-                "preferences file exceeds size limit ({} bytes); \
-                 remove unused preferences before adding new ones",
-                PREFS_MAX_BYTES
-            )));
-        }
+    // Single read: check size, dedup, and build combined content.
+    let existing = match std::fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(e),
+    };
+
+    if existing.len() as u64 >= PREFS_MAX_BYTES {
+        return Err(io::Error::other(format!(
+            "preferences file exceeds size limit ({} bytes); \
+             remove unused preferences before adding new ones",
+            PREFS_MAX_BYTES
+        )));
     }
 
     // Check for duplicates.
-    if let Some(existing) = read_prefs(path) {
-        if existing.lines().any(|line| {
-            line.strip_prefix("- ")
-                .is_some_and(|stripped| stripped == fact)
-        }) {
-            return Ok(()); // Already present, no-op.
-        }
+    if existing.lines().any(|line| {
+        line.strip_prefix("- ")
+            .is_some_and(|stripped| stripped == fact)
+    }) {
+        return Ok(()); // Already present, no-op.
     }
 
     let new_line = format!("- {fact}\n");
-
-    // Atomic write: read existing content, append, write to temp, rename.
-    let existing = std::fs::read_to_string(path).unwrap_or_default();
     let combined = format!("{existing}{new_line}");
 
+    // Write via temp-file + rename for crash safety (not concurrency-safe).
     let dir = path.parent().unwrap_or(Path::new("."));
     let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
     std::io::Write::write_all(&mut tmp, combined.as_bytes())?;
@@ -140,7 +151,7 @@ mod tests {
     fn read_prefs_returns_none_when_file_absent() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("prefs.md");
-        assert!(read_prefs(&path).is_none());
+        assert!(read_prefs(&path).unwrap().is_none());
     }
 
     #[test]
@@ -148,7 +159,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("prefs.md");
         std::fs::write(&path, "").unwrap();
-        assert!(read_prefs(&path).is_none());
+        assert!(read_prefs(&path).unwrap().is_none());
     }
 
     #[test]
@@ -241,5 +252,24 @@ mod tests {
         assert!(!contains_sensitive(
             "skip large downloads on metered connections"
         ));
+    }
+
+    #[test]
+    fn append_pref_rejects_newlines() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("prefs.md");
+        let result = append_pref(&path, "innocent\nsk-secret-key");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("single line"));
+        // File should not have been created.
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn append_pref_rejects_carriage_returns() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("prefs.md");
+        let result = append_pref(&path, "line one\rline two");
+        assert!(result.is_err());
     }
 }
