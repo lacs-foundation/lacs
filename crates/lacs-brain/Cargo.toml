@@ -10,6 +10,7 @@ async-trait = { workspace = true }
 futures = "0.3"
 lacs-core = { path = "../lacs-core" }
 lacs-types = { path = "../lacs-types" }
+async-openai = { version = "0.34", features = ["chat-completion"] }
 rig-core = "0.34.0"
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
