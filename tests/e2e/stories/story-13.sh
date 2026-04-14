@@ -15,21 +15,21 @@ INTENT="show me the logs for the firewalld service"
 echo "=== Story 13: Service logs for firewalld ==="
 echo "Intent: $INTENT"
 
-PLAN=$(echo "$INTENT" | lacs-test-cli 2>/tmp/lacs-story-13-stderr.log)
+PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-13-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 
 # --- Assertions ---
 
 # GetServiceLogs must be present (possibly alongside other diagnostic steps).
-GET_LOGS_STEP=$(echo "$PLAN" | jq '.steps[] | select(.action_name == "GetServiceLogs")')
+GET_LOGS_STEP=$(echo "$PLAN" | jq '.plan.steps[] | select(.action == "GetServiceLogs")')
 if [[ -z "$GET_LOGS_STEP" || "$GET_LOGS_STEP" == "null" ]]; then
   echo "FAIL: no GetServiceLogs step found"
-  echo "Actions: $(echo "$PLAN" | jq -r '.steps[].action_name')"
+  echo "Actions: $(echo "$PLAN" | jq -r '.plan.steps[].action')"
   exit 1
 fi
 
-RISK=$(echo "$GET_LOGS_STEP" | jq -r '.risk_level')
+RISK=$(echo "$GET_LOGS_STEP" | jq -r '.risk')
 if [[ "$RISK" != "low" ]]; then
   echo "FAIL: expected GetServiceLogs risk low, got $RISK"
   exit 1

@@ -19,7 +19,7 @@ INTENT="install vim as a layered package"
 echo "=== Story 8: Layer vim via rpm-ostree ==="
 echo "Intent: $INTENT"
 
-PLAN=$(echo "$INTENT" | lacs-test-cli 2>/tmp/lacs-story-8-stderr.log)
+PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-8-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 
@@ -27,20 +27,20 @@ echo "$PLAN" | jq .
 
 # Find the install step (could be InstallPackages or AddLayeredPackage).
 INSTALL_STEP=$(echo "$PLAN" | jq '
-  .steps[] | select(
-    .action_name == "InstallPackages" or
-    .action_name == "AddLayeredPackage"
+  .plan.steps[] | select(
+    .action == "InstallPackages" or
+    .action == "AddLayeredPackage"
   )
 ')
 
 if [[ -z "$INSTALL_STEP" || "$INSTALL_STEP" == "null" ]]; then
   echo "FAIL: no InstallPackages or AddLayeredPackage step found"
-  echo "Actions: $(echo "$PLAN" | jq -r '.steps[].action_name')"
+  echo "Actions: $(echo "$PLAN" | jq -r '.plan.steps[].action')"
   exit 1
 fi
 
 # Check risk level is high.
-RISK=$(echo "$INSTALL_STEP" | jq -r '.risk_level')
+RISK=$(echo "$INSTALL_STEP" | jq -r '.risk')
 if [[ "$RISK" != "high" ]]; then
   echo "FAIL: expected risk high, got $RISK"
   exit 1

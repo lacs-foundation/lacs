@@ -22,17 +22,17 @@ INTENT="add the user devops to the wheel group so they can use sudo"
 echo "=== Story 20: Add devops to wheel group ==="
 echo "Intent: $INTENT"
 
-PLAN=$(echo "$INTENT" | lacs-test-cli 2>/tmp/lacs-story-20-stderr.log)
+PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-20-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 
 # --- Assertions ---
 
 # AddUserToGroup must be present (model may add a preliminary ListUsers check).
-ADD_STEP=$(echo "$PLAN" | jq '.steps[] | select(.action_name == "AddUserToGroup")')
+ADD_STEP=$(echo "$PLAN" | jq '.plan.steps[] | select(.action == "AddUserToGroup")')
 if [[ -z "$ADD_STEP" || "$ADD_STEP" == "null" ]]; then
   echo "FAIL: no AddUserToGroup step found"
-  echo "Actions: $(echo "$PLAN" | jq -r '.steps[].action_name')"
+  echo "Actions: $(echo "$PLAN" | jq -r '.plan.steps[].action')"
   exit 1
 fi
 
@@ -53,7 +53,7 @@ fi
 
 # Adding to the wheel group grants sudo — accept "medium" or "high".
 # Both are reasonable: medium reflects the scoped change, high reflects the privilege impact.
-RISK=$(echo "$PLAN" | jq -r '.steps[0].risk_level')
+RISK=$(echo "$PLAN" | jq -r '.plan.steps[0].risk')
 if [[ "$RISK" != "high" && "$RISK" != "medium" ]]; then
   echo "FAIL: expected risk high or medium, got $RISK"
   exit 1

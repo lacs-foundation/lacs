@@ -2,7 +2,7 @@
 # dev-stories.sh — run E2E user stories on your dev machine (no VM required).
 #
 # What this does:
-#   1. Builds lacs-daemon and lacs-test-cli (release mode).
+#   1. Builds lacs-daemon and lacs (release mode).
 #   2. Starts lacs-daemon in the background on /tmp/lacs-daemon.sock if it is
 #      not already running there.
 #   3. Runs the requested stories (default: 1-7, the read-only ones).
@@ -65,8 +65,8 @@ trap cleanup EXIT
 # Build
 # ---------------------------------------------------------------------------
 
-echo "Building lacs-daemon and lacs-test-cli..."
-cargo build -p lacs-daemon -p lacs-test-cli --release --quiet \
+echo "Building lacs-daemon and lacs..."
+cargo build -p lacs-daemon -p lacs-cli --release --quiet \
     --manifest-path "$REPO_ROOT/Cargo.toml"
 echo "Build done."
 echo ""

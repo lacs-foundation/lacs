@@ -133,6 +133,26 @@ pub fn resolve_ollama_think(model: &str) -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// PlanEvent
+// ---------------------------------------------------------------------------
+
+/// Progress events emitted by the LLM planning loop.
+///
+/// Consumers (e.g. the `lacs` CLI) subscribe via an
+/// `tokio::sync::mpsc::UnboundedSender<PlanEvent>` and update a spinner
+/// message in real time.  Events are fire-and-forget; a closed channel is
+/// silently ignored.
+#[derive(Debug, Clone)]
+pub enum PlanEvent {
+    /// The planner sent the first prompt to the LLM.
+    Thinking,
+    /// The LLM called a query or state tool by the given name.
+    QueryingTool(String),
+    /// The LLM called `propose_plan` with a valid proposal.
+    ProposingPlan,
+}
+
+// ---------------------------------------------------------------------------
 // Risk level
 // ---------------------------------------------------------------------------
 
@@ -351,6 +371,7 @@ pub struct LlmPlanner {
     tools: Vec<ToolDefinition>,
     audit_log: Option<SafetyAuditLog>,
     prefs_path: Option<std::path::PathBuf>,
+    progress_tx: Option<tokio::sync::mpsc::UnboundedSender<PlanEvent>>,
 }
 
 impl LlmPlanner {
@@ -378,6 +399,7 @@ impl LlmPlanner {
             },
             audit_log: None,
             prefs_path: None,
+            progress_tx: None,
         }
     }
 
@@ -397,6 +419,27 @@ impl LlmPlanner {
     pub fn with_prefs_path(mut self, path: std::path::PathBuf) -> Self {
         self.prefs_path = Some(path);
         self
+    }
+
+    /// Attach a progress channel for real-time planning feedback.
+    ///
+    /// The planner emits [`PlanEvent`]s on `tx` as it progresses through the
+    /// tool-use loop. The sender is owned by this `LlmPlanner` and closes
+    /// when the planner itself is dropped. Drop the planner explicitly after
+    /// `plan_intent` returns if you need the receiver to drain before proceeding.
+    pub fn with_progress(mut self, tx: tokio::sync::mpsc::UnboundedSender<PlanEvent>) -> Self {
+        self.progress_tx = Some(tx);
+        self
+    }
+
+    /// Send a [`PlanEvent`] to the progress channel, if one is attached.
+    ///
+    /// A closed or absent channel is silently ignored — progress events are
+    /// advisory and must never affect planning behaviour.
+    fn emit(&self, event: PlanEvent) {
+        if let Some(ref tx) = self.progress_tx {
+            let _ = tx.send(event);
+        }
     }
 
     /// Construct a planner from a [`BrainConfig`].
@@ -573,6 +616,7 @@ impl LlmPlanner {
         };
 
         for turn in 0..self.max_turns {
+            self.emit(PlanEvent::Thinking);
             let completion = self
                 .provider
                 .complete(&effective_prompt, &messages, &self.tools, PLANNING_MAX_TOKENS)
@@ -642,6 +686,13 @@ impl LlmPlanner {
                         Vec::with_capacity(tool_calls.len());
 
                     for (id, call_id, name, input) in &tool_calls {
+                        // Emit a progress event before dispatching each tool.
+                        self.emit(match name.as_str() {
+                            "propose_plan"     => PlanEvent::ProposingPlan,
+                            "get_system_state" => PlanEvent::QueryingTool("system state".into()),
+                            other              => PlanEvent::QueryingTool(other.replace('_', " ")),
+                        });
+
                         match name.as_str() {
                             "get_system_state" => {
                                 let state = self.state_client.curated_state()?;

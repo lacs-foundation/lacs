@@ -16,22 +16,22 @@ INTENT="create a toolbox container called dev-test for development work"
 echo "=== Story 9: Create a toolbox ==="
 echo "Intent: $INTENT"
 
-PLAN=$(echo "$INTENT" | lacs-test-cli 2>/tmp/lacs-story-9-stderr.log)
+PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-9-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 
 # --- Assertions ---
 
-TOOLBOX_STEP=$(echo "$PLAN" | jq '.steps[] | select(.action_name == "CreateToolbox")')
+TOOLBOX_STEP=$(echo "$PLAN" | jq '.plan.steps[] | select(.action == "CreateToolbox")')
 
 if [[ -z "$TOOLBOX_STEP" || "$TOOLBOX_STEP" == "null" ]]; then
   echo "FAIL: no CreateToolbox step found"
-  echo "Actions: $(echo "$PLAN" | jq -r '.steps[].action_name')"
+  echo "Actions: $(echo "$PLAN" | jq -r '.plan.steps[].action')"
   exit 1
 fi
 
 # Check risk level is medium.
-RISK=$(echo "$TOOLBOX_STEP" | jq -r '.risk_level')
+RISK=$(echo "$TOOLBOX_STEP" | jq -r '.risk')
 if [[ "$RISK" != "medium" ]]; then
   echo "FAIL: expected risk medium, got $RISK"
   exit 1

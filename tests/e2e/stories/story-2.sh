@@ -11,29 +11,29 @@ INTENT="is the system low on memory? show me what's using it"
 echo "=== Story 2: Memory pressure diagnosis ==="
 echo "Intent: $INTENT"
 
-PLAN=$(echo "$INTENT" | lacs-test-cli 2>/tmp/lacs-story-2-stderr.log)
+PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-2-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 
 # --- Assertions ---
 
 # 1. Exactly 2 steps.
-STEP_COUNT=$(echo "$PLAN" | jq '.steps | length')
+STEP_COUNT=$(echo "$PLAN" | jq '.plan.steps | length')
 if [[ "$STEP_COUNT" != "2" ]]; then
   echo "FAIL: expected 2 steps, got $STEP_COUNT"
   exit 1
 fi
 
 # 2. Both steps are low risk.
-RISK_0=$(echo "$PLAN" | jq -r '.steps[0].risk_level')
-RISK_1=$(echo "$PLAN" | jq -r '.steps[1].risk_level')
+RISK_0=$(echo "$PLAN" | jq -r '.plan.steps[0].risk')
+RISK_1=$(echo "$PLAN" | jq -r '.plan.steps[1].risk')
 if [[ "$RISK_0" != "low" ]] || [[ "$RISK_1" != "low" ]]; then
   echo "FAIL: expected both steps low risk, got $RISK_0 and $RISK_1"
   exit 1
 fi
 
 # 3. Contains GetMemoryInfo and ListProcesses (in either order).
-ACTIONS=$(echo "$PLAN" | jq -r '.steps[].action_name' | sort)
+ACTIONS=$(echo "$PLAN" | jq -r '.plan.steps[].action' | sort)
 EXPECTED=$'GetMemoryInfo\nListProcesses'
 if [[ "$ACTIONS" != "$EXPECTED" ]]; then
   echo "FAIL: expected GetMemoryInfo + ListProcesses, got:"

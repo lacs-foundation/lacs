@@ -17,14 +17,14 @@ INTENT="restart the bluetooth service"
 echo "=== Story 18: Restart the bluetooth service ==="
 echo "Intent: $INTENT"
 
-PLAN=$(echo "$INTENT" | lacs-test-cli 2>/tmp/lacs-story-18-stderr.log)
+PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-18-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 
 # --- Assertions ---
 
-STEP_COUNT=$(echo "$PLAN" | jq '.steps | length')
-ACTIONS=$(echo "$PLAN" | jq -r '.steps[].action_name')
+STEP_COUNT=$(echo "$PLAN" | jq '.plan.steps | length')
+ACTIONS=$(echo "$PLAN" | jq -r '.plan.steps[].action')
 
 # Accept either a single RestartService step, or a Stop+Start sequence.
 # Both are valid implementations; RestartService is preferred but not required.
@@ -34,14 +34,14 @@ if echo "$ACTIONS" | grep -q "RestartService"; then
     echo "FAIL: RestartService found but expected 1 step total, got $STEP_COUNT"
     exit 1
   fi
-  UNIT=$(echo "$PLAN" | jq -r '.steps[0].params.unit // ""')
+  UNIT=$(echo "$PLAN" | jq -r '.plan.steps[0].params.unit // ""')
 elif echo "$ACTIONS" | grep -q "StopService" && echo "$ACTIONS" | grep -q "StartService"; then
   # Two-step Stop+Start — also acceptable.
   if [[ "$STEP_COUNT" != "2" ]]; then
     echo "FAIL: Stop+Start found but expected 2 steps, got $STEP_COUNT"
     exit 1
   fi
-  UNIT=$(echo "$PLAN" | jq -r '.steps[] | select(.action_name == "StopService") | .params.unit // ""')
+  UNIT=$(echo "$PLAN" | jq -r '.plan.steps[] | select(.action == "StopService") | .params.unit // ""')
 else
   echo "FAIL: expected RestartService or StopService+StartService"
   echo "Actions: $ACTIONS"
@@ -55,7 +55,7 @@ if [[ "$UNIT" != "bluetooth" && "$UNIT" != "bluetooth.service" ]]; then
 fi
 
 # All steps should be medium risk.
-RISKS=$(echo "$PLAN" | jq -r '.steps[].risk_level')
+RISKS=$(echo "$PLAN" | jq -r '.plan.steps[].risk')
 while IFS= read -r risk; do
   if [[ "$risk" != "medium" ]]; then
     echo "FAIL: expected risk medium, got '$risk'"

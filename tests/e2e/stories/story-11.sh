@@ -12,13 +12,13 @@ INTENT="show me the current deployment status and what kernel arguments are set"
 echo "=== Story 11: Deployment status + kernel arguments ==="
 echo "Intent: $INTENT"
 
-PLAN=$(echo "$INTENT" | lacs-test-cli 2>/tmp/lacs-story-11-stderr.log)
+PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-11-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 
 # --- Assertions ---
 
-ACTIONS=$(echo "$PLAN" | jq -r '.steps[].action_name')
+ACTIONS=$(echo "$PLAN" | jq -r '.plan.steps[].action')
 
 # Accept either the specific compound plan or the general-purpose fallback.
 HAS_KERNEL=$(echo "$ACTIONS" | grep -c "GetKernelArguments" || true)
@@ -36,7 +36,7 @@ else
 fi
 
 # All steps must be low risk (these are read-only).
-RISKS=$(echo "$PLAN" | jq -r '.steps[].risk_level')
+RISKS=$(echo "$PLAN" | jq -r '.plan.steps[].risk')
 while IFS= read -r risk; do
   if [[ "$risk" != "low" ]]; then
     echo "FAIL: expected all steps low risk, got '$risk'"
