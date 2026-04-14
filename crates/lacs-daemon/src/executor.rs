@@ -579,7 +579,7 @@ fn validated_safe_kernel_arg(arg: &str) -> Result<(), ExecutorError> {
         }
     }
     // Guard against the base arg matching dangerous exact values even with =.
-    if BLOCKED_EXACT.iter().any(|e| base == *e) {
+    if BLOCKED_EXACT.contains(&base) {
         return Err(ExecutorError::InvalidParam("add"));
     }
     Ok(())

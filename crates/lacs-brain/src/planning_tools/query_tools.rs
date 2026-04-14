@@ -199,7 +199,7 @@ pub fn query_tools() -> Vec<ToolDefinition> {
 /// - `Ok(Some(...))` — known tool with all required params present
 /// - `Ok(None)`      — unknown tool name (not a query tool)
 /// - `Err(msg)`      — known tool with a missing required parameter;
-///                     `msg` is a human-readable description for the LLM
+///   `msg` is a human-readable description for the LLM
 fn require_str_param<'a>(
     input: &'a serde_json::Value,
     key: &'static str,
