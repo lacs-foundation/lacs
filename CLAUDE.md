@@ -119,6 +119,13 @@ information to DECIDE between two or more possible plans (e.g. "install vim"
 Run the E2E harness against a live VM (or at minimum against the no-daemon
 test CLI path) before and after. A story that passed before must not regress.
 
+### Example C — transaction history
+
+Example C ("did LACS successfully update recently?") teaches the model to use
+`query_job_history` for questions about past LACS actions. Without it, the model
+defaults to `query_deployments` or `get_system_state`, which show current system
+state — not LACS's own transaction log.
+
 ## User Preferences — `prefs.md`
 
 User preferences live in `~/.config/lacs/prefs.md` and are injected into the

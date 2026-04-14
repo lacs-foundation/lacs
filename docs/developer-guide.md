@@ -166,6 +166,17 @@ Manage preferences through natural language:
 
 Or edit `~/.config/lacs/prefs.md` directly.
 
+### Transaction history
+
+The `ListJobHistory` action and `query_job_history` planning tool expose
+the daemon's SQLite transaction log. Users can ask "what has LACS done
+recently?" or "did my update succeed?" and the planner will query the
+transaction store rather than system state.
+
+`ListJobHistory` is Observer-level (read-only, no approval required) and
+is intercepted in the dispatcher before reaching the executor — it queries
+the daemon's own database, not a system command.
+
 ## Working Style
 
 - keep changes small and reviewable
