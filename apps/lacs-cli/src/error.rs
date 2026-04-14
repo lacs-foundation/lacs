@@ -1,5 +1,7 @@
 use lacs_brain::planner::PlanRiskLevel;
 
+use crate::approval::MaxRisk;
+
 /// All CLI error categories with their exit-code mapping.
 #[derive(Debug, thiserror::Error)]
 pub enum CliError {
@@ -17,15 +19,25 @@ pub enum CliError {
 
     #[error("plan contains a {} step, but --max-risk ceiling is {}", .highest.as_str(), .ceiling.as_str())]
     RiskCeilingExceeded {
+        /// The highest risk level present in the plan (from the domain type).
         highest: PlanRiskLevel,
-        ceiling: PlanRiskLevel,
+        /// The CLI-supplied ceiling (from the `--max-risk` flag).
+        ceiling: MaxRisk,
     },
+
+    /// Produced when `ApprovalDecision::RequiresInteraction` occurs: the plan
+    /// needs human approval but `--non-interactive` was set.
+    ///
+    /// Exit code 1 — same bucket as `Rejected`: both mean "cannot proceed,
+    /// a human decision is required before this can run".
+    #[error("plan requires interactive approval but --non-interactive was set")]
+    NonInteractive,
 }
 
 impl CliError {
     pub fn exit_code(&self) -> i32 {
         match self {
-            Self::Rejected | Self::RiskCeilingExceeded { .. } => 1,
+            Self::Rejected | Self::RiskCeilingExceeded { .. } | Self::NonInteractive => 1,
             Self::ExecutionFailed(_) => 2,
             Self::PlanningFailed(_) => 3,
             Self::ConfigOrDaemon(_) => 4,
@@ -47,11 +59,16 @@ mod tests {
         assert_eq!(
             CliError::RiskCeilingExceeded {
                 highest: PlanRiskLevel::High,
-                ceiling: PlanRiskLevel::Medium,
+                ceiling: MaxRisk::Medium,
             }
             .exit_code(),
             1
         );
+    }
+
+    #[test]
+    fn exit_code_non_interactive_is_1() {
+        assert_eq!(CliError::NonInteractive.exit_code(), 1);
     }
 
     #[test]

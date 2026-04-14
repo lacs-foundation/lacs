@@ -2162,8 +2162,6 @@ name = "lacs-cli"
 version = "0.1.0"
 dependencies = [
  "lacs-brain",
- "lacs-core",
- "lacs-types",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
