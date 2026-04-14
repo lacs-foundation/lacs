@@ -276,6 +276,42 @@ mod tests {
             query_tool_to_action("query_deployment_history", &empty),
             Some(("GetDeploymentHistory", serde_json::json!({})))
         );
+        assert_eq!(
+            query_tool_to_action("query_disk_usage", &empty),
+            Some(("GetDiskUsage", serde_json::json!({})))
+        );
+        assert_eq!(
+            query_tool_to_action("query_processes", &empty),
+            Some(("ListProcesses", serde_json::json!({})))
+        );
+        assert_eq!(
+            query_tool_to_action("query_memory", &empty),
+            Some(("GetMemoryInfo", serde_json::json!({})))
+        );
+        assert_eq!(
+            query_tool_to_action("query_network", &empty),
+            Some(("GetNetworkStatus", serde_json::json!({})))
+        );
+    }
+
+    #[test]
+    fn query_authorized_keys_maps_to_get_authorized_keys() {
+        let input = serde_json::json!({"username": "alice"});
+        assert_eq!(
+            query_tool_to_action("query_authorized_keys", &input),
+            Some((
+                "GetAuthorizedKeys",
+                serde_json::json!({"username": "alice"})
+            ))
+        );
+    }
+
+    #[test]
+    fn query_authorized_keys_defaults_to_empty_username() {
+        assert_eq!(
+            query_tool_to_action("query_authorized_keys", &empty_input()),
+            Some(("GetAuthorizedKeys", serde_json::json!({"username": ""})))
+        );
     }
 
     #[test]

@@ -408,10 +408,7 @@ impl LlmPlanner {
                 if think {
                     params["think"] = serde_json::Value::Bool(true);
                 }
-                Box::new(
-                    RigCompletionAdapter::new(completion_model)
-                        .with_additional_params(params),
-                )
+                Box::new(RigCompletionAdapter::new(completion_model).with_additional_params(params))
             }
             ProviderConfig::OpenAI { api_key, model } => {
                 let client = rig::providers::openai::Client::builder()
@@ -558,6 +555,14 @@ impl LlmPlanner {
                         ));
                         continue;
                     }
+                    if has_text {
+                        eprintln!(
+                            "[lacs-brain] LLM returned text instead of propose_plan on \
+                             the final turn (turn {}/{max}); discarding output.",
+                            turn + 1,
+                            max = self.max_turns
+                        );
+                    }
                     return Err(PlanningError::NoPlanProposed);
                 }
                 StopReason::ToolUse => {
@@ -565,7 +570,13 @@ impl LlmPlanner {
                         .content
                         .iter()
                         .filter_map(|b| {
-                            if let ContentBlock::ToolUse { id, call_id, name, input } = b {
+                            if let ContentBlock::ToolUse {
+                                id,
+                                call_id,
+                                name,
+                                input,
+                            } = b
+                            {
                                 Some((id.clone(), call_id.clone(), name.clone(), input.clone()))
                             } else {
                                 None
@@ -689,7 +700,6 @@ impl LlmPlanner {
     }
 }
 
-
 // ---------------------------------------------------------------------------
 // Unit tests (module-local helpers only — integration tests live in
 // crates/lacs-brain/tests/planner.rs).
@@ -764,4 +774,3 @@ mod tests {
         assert!(!llama, "unparseable value should NOT force think on");
     }
 }
-

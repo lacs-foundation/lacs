@@ -7,7 +7,7 @@
 //! # Worked examples — do not remove
 //!
 //! The prompt contains two worked examples (A and B). They are load-bearing:
-//! removing them causes 7/10 E2E stories to fail with GPT-4o. Without them the
+//! removing them causes 4 of the 7 read-only stories to fail with GPT-4o. Without them the
 //! model defaults to querying state first for every intent, which either crashes
 //! the planner (when `get_system_state` is called and the daemon is unavailable)
 //! or produces incorrect fallback plans.

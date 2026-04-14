@@ -179,7 +179,7 @@ impl BrainConfig {
     /// Load from environment variables.
     ///
     /// Returns `Err(ConfigError::InvalidMaxTurns)` if `LACS_BRAIN_MAX_TURNS` is
-    /// set to a non-positive integer or an unparseable value. Unset → default of 5.
+    /// set to a non-positive integer or an unparseable value. Unset → default of 10.
     ///
     /// Returns `Err(ConfigError::MissingAnthropicKey)` if the provider is
     /// `anthropic` and `ANTHROPIC_API_KEY` is absent or empty.

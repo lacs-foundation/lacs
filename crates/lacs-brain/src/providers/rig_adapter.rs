@@ -95,11 +95,7 @@ where
         // `choice` correctly. We drain the stream here and read `choice` once
         // it is populated (at stream end). The `LlmProvider` interface stays
         // single-shot — callers see no difference.
-        let mut stream = self
-            .model
-            .stream(request)
-            .await
-            .map_err(map_rig_error)?;
+        let mut stream = self.model.stream(request).await.map_err(map_rig_error)?;
 
         while let Some(item) = stream.next().await {
             item.map_err(map_rig_error)?;
@@ -205,7 +201,12 @@ fn to_rig_messages(system: &str, messages: &[Message]) -> Vec<RigMessage> {
                             assistant_content
                                 .push(AssistantContent::Text(Text { text: text.clone() }));
                         }
-                        ContentBlock::ToolUse { id, call_id, name, input } => {
+                        ContentBlock::ToolUse {
+                            id,
+                            call_id,
+                            name,
+                            input,
+                        } => {
                             let mut tc = ToolCall::new(
                                 id.clone(),
                                 ToolFunction::new(name.clone(), input.clone()),
@@ -464,10 +465,39 @@ mod tests {
             RigMessage::User { content } => {
                 let first = content.first();
                 match first {
-                    UserContent::ToolResult(tr) => assert_eq!(tr.id, "tu_1"),
+                    UserContent::ToolResult(tr) => {
+                        assert_eq!(tr.id, "tu_1");
+                        // call_id falls back to tool_use_id when None is provided.
+                        assert_eq!(tr.call_id, Some("tu_1".into()));
+                    }
                     _ => panic!("expected tool result, got {:?}", first),
                 }
             }
+            _ => panic!("expected User message"),
+        }
+    }
+
+    #[test]
+    fn to_rig_messages_tool_result_with_explicit_call_id() {
+        // When call_id is explicitly set (OpenAI Responses API), it must be
+        // forwarded as-is rather than falling back to tool_use_id.
+        let messages = vec![Message::tool_results(vec![
+            crate::provider::ToolResultBlock {
+                tool_use_id: "fc_abc".into(),
+                call_id: Some("call_xyz".into()),
+                content: "result".into(),
+                is_error: false,
+            },
+        ])];
+        let rig_msgs = to_rig_messages("sys", &messages);
+        match &rig_msgs[1] {
+            RigMessage::User { content } => match content.first() {
+                UserContent::ToolResult(tr) => {
+                    assert_eq!(tr.id, "fc_abc");
+                    assert_eq!(tr.call_id, Some("call_xyz".into()));
+                }
+                _ => panic!("expected tool result"),
+            },
             _ => panic!("expected User message"),
         }
     }
@@ -488,10 +518,34 @@ mod tests {
                 match first {
                     AssistantContent::ToolCall(tc) => {
                         assert_eq!(tc.function.name, "get_system_state");
+                        // call_id falls back to id when None is provided.
+                        assert_eq!(tc.call_id, Some("tu_1".into()));
                     }
                     _ => panic!("expected tool call"),
                 }
             }
+            _ => panic!("expected Assistant message"),
+        }
+    }
+
+    #[test]
+    fn to_rig_messages_assistant_tool_use_with_explicit_call_id() {
+        // OpenAI dual-ID: id=fc_xxx (response-item), call_id=call_xxx (match key).
+        let messages = vec![Message::assistant(vec![ContentBlock::ToolUse {
+            id: "fc_abc".into(),
+            call_id: Some("call_xyz".into()),
+            name: "propose_plan".into(),
+            input: serde_json::json!({}),
+        }])];
+        let rig_msgs = to_rig_messages("sys", &messages);
+        match &rig_msgs[1] {
+            RigMessage::Assistant { content, .. } => match content.first() {
+                AssistantContent::ToolCall(tc) => {
+                    assert_eq!(tc.id, "fc_abc");
+                    assert_eq!(tc.call_id, Some("call_xyz".into()));
+                }
+                _ => panic!("expected tool call"),
+            },
             _ => panic!("expected Assistant message"),
         }
     }

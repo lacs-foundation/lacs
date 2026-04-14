@@ -18,6 +18,7 @@
 set -euo pipefail
 
 REPO_DIR="${REPO_DIR:-/home/lacsdev/lacs}"
+VM_USER="${VM_USER:-lacsdev}"
 MARKER="/var/lib/lacs-e2e/ready"
 LAYERED_MARKER="/var/lib/lacs-e2e/layered"
 LOG="/var/log/lacs-e2e-provision.log"

@@ -55,12 +55,8 @@ cleanup() {
         echo ""
         echo "Stopping lacs-daemon (pid $DAEMON_PID)..."
         kill "$DAEMON_PID" 2>/dev/null || true
-        # Wait briefly for the socket to be removed.
-        local i
-        for i in 1 2 3; do
-            sleep 1
-            [[ ! -e "$SOCKET_PATH" ]] && break
-        done
+        wait "$DAEMON_PID" 2>/dev/null || true
+        rm -f "$SOCKET_PATH" 2>/dev/null || true
     fi
 }
 trap cleanup EXIT
@@ -104,6 +100,12 @@ else
         cat "$LOG_DIR/daemon.log" || true
         exit 1
     fi
+    if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
+        echo "ERROR: lacs-daemon process exited before socket appeared."
+        echo "Daemon log ($LOG_DIR/daemon.log):"
+        cat "$LOG_DIR/daemon.log" || true
+        exit 1
+    fi
     echo "lacs-daemon started (pid $DAEMON_PID)."
 fi
 echo ""
@@ -114,7 +116,7 @@ echo ""
 
 # Respect explicit override first; then auto-detect from API keys.
 if [[ -z "${LACS_LLM_PROVIDER:-}" ]]; then
-    if [[ -n "${ANTHROPIC_API_KEY:-}" ]] && [[ "${ANTHROPIC_API_KEY}" != *[[:space:]]* || "${#ANTHROPIC_API_KEY}" -gt 5 ]]; then
+    if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
         export LACS_LLM_PROVIDER="anthropic"
     elif [[ -n "${OPENAI_API_KEY:-}" ]]; then
         export LACS_LLM_PROVIDER="openai"

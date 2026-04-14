@@ -246,10 +246,19 @@ pub fn parse_proposed_plan(intent: &str, input: &serde_json::Value) -> Result<Pl
 
         // `params` may arrive as a JSON-encoded string (OpenAI Responses API
         // strict-mode providers) or as a plain object (Ollama and others).
-        // Both are normalised to a JSON object here.
+        // Both are normalised to a JSON object here. Empty strings are treated
+        // as `{}`. Non-empty strings that are not valid JSON are rejected so
+        // that malformed params (e.g. the LLM passing a bare word like `"vim"`)
+        // are caught at parse time rather than silently becoming `{}`.
         let params = match step_val.get("params") {
-            Some(serde_json::Value::String(s)) => serde_json::from_str(s)
-                .unwrap_or(serde_json::Value::Object(serde_json::Map::new())),
+            Some(serde_json::Value::String(s)) if s.is_empty() => {
+                serde_json::Value::Object(serde_json::Map::new())
+            }
+            Some(serde_json::Value::String(s)) => serde_json::from_str(s).map_err(|_| {
+                PlanningError::InvalidPlanOutput(format!(
+                    "step {i}: 'params' is not valid JSON: {s:?}"
+                ))
+            })?,
             Some(v) => v.clone(),
             None => serde_json::Value::Object(serde_json::Map::new()),
         };
@@ -385,6 +394,41 @@ mod tests {
         });
         let plan = parse_proposed_plan("vim", &input).unwrap();
         assert_eq!(plan.steps()[0].params()["packages"][0], "vim");
+    }
+
+    #[test]
+    fn params_string_invalid_json_is_rejected() {
+        // A bare word like "vim" is not valid JSON and must not silently become {}.
+        let input = serde_json::json!({
+            "summary": "install vim",
+            "explanation": "layers vim",
+            "steps": [{
+                "action_name": "AddLayeredPackage",
+                "summary": "layer vim",
+                "risk_level": "high",
+                "params": "vim"
+            }]
+        });
+        assert!(matches!(
+            parse_proposed_plan("vim", &input).unwrap_err(),
+            PlanningError::InvalidPlanOutput(_)
+        ));
+    }
+
+    #[test]
+    fn params_string_empty_normalises_to_object() {
+        let input = serde_json::json!({
+            "summary": "read state",
+            "explanation": "reads state",
+            "steps": [{
+                "action_name": "GetSystemState",
+                "summary": "read",
+                "risk_level": "low",
+                "params": ""
+            }]
+        });
+        let plan = parse_proposed_plan("read", &input).unwrap();
+        assert_eq!(plan.steps()[0].params(), &serde_json::json!({}));
     }
 
     #[test]

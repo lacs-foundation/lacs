@@ -54,7 +54,7 @@ the product's `BrainConfig::from_env`):
 | `ANTHROPIC_API_KEY` | `anthropic` | `claude-sonnet-4-6` |
 | `OPENAI_API_KEY` | `openai` | `gpt-4o` |
 | `GEMINI_API_KEY` | `gemini` | `gemini-2.0-flash` |
-| neither | `ollama` | `qwen3:8b` (must be pulled first) |
+| neither | `ollama` | `qwen3:8b` (must be pulled; CPU-only is impractical — use `LACS_LLM_MODEL=llama3.2:3b` on CPU) |
 
 Override with `LACS_LLM_PROVIDER` and `LACS_LLM_MODEL`.
 

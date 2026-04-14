@@ -362,6 +362,23 @@ async fn auth_error_propagates() {
 }
 
 #[tokio::test]
+async fn end_turn_correction_succeeds_on_retry() {
+    // Turn 1: LLM outputs prose (EndTurn + text) instead of calling propose_plan.
+    //         The planner injects a correction message.
+    // Turn 2: LLM calls propose_plan correctly → plan is returned.
+    let planner = make_planner(MockProvider::new([
+        end_turn_text("Here is the plan in JSON: {...}"),
+        propose_plan(
+            "Inspect system",
+            &[("GetSystemState", "Read current deployment", "low")],
+        ),
+    ]));
+    let plan = planner.plan_intent("show me the system").await.unwrap();
+    assert_eq!(plan.steps()[0].action_name(), "GetSystemState");
+    assert_eq!(plan.intent(), "show me the system");
+}
+
+#[tokio::test]
 async fn end_turn_without_plan_returns_no_plan_proposed() {
     // Turn 1: LLM outputs prose instead of calling propose_plan → planner sends
     //         a correction message and retries.
