@@ -109,7 +109,7 @@ impl Command {
 }
 
 /// Arguments for `lacs history`.
-#[derive(Args, Debug)]
+#[derive(Args, Debug, Clone)]
 pub struct HistoryArgs {
     /// Filter by job status (succeeded, failed, canceled, …).
     #[arg(long, value_name = "STATUS")]
