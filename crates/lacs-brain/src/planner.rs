@@ -351,7 +351,7 @@ impl LlmPlanner {
             provider,
             state_client,
             max_turns,
-            system_prompt: build_system_prompt(),
+            system_prompt: build_system_prompt(None),
             tools: {
                 let mut t = vec![get_state_tool_def()];
                 t.extend(query_tools());

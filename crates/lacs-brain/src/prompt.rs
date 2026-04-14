@@ -24,8 +24,8 @@
 //!
 //! Validate any prompt change against the full E2E story suite before merging.
 
-pub fn build_system_prompt() -> String {
-    r#"You are lacs-brain, the unprivileged planning layer for LACS — the Linux Agent Control Standard.
+pub fn build_system_prompt(user_prefs: Option<&str>) -> String {
+    let mut prompt = r#"You are lacs-brain, the unprivileged planning layer for LACS — the Linux Agent Control Standard.
 LACS targets Fedora Atomic Desktops (Silverblue, Kinoite, Sway Atomic, Budgie Atomic, COSMIC Atomic)
 and other rpm-ostree-based immutable systems. The desktop environment varies; the system management
 layer (rpm-ostree, systemd, flatpak, podman, toolbox) is the same across all variants.
@@ -213,5 +213,65 @@ When in doubt, assign the higher risk level.
 - Steps are executed in order. A later step depends on earlier steps succeeding.
 - Each step must have a non-empty action_name, summary, valid risk_level, and a params object (may be empty {}).
 "#
-    .to_string()
+    .to_string();
+
+    prompt.push_str(
+        r#"
+## Preference tools — `remember` and `forget`
+
+Two additional tools let you manage user preferences:
+
+- `remember(fact)` — save a user preference. Call this when the user explicitly
+  asks "remember that I ...", "always do X", or "I prefer Y over Z". Only save
+  user preferences, not system facts (those are queryable live).
+- `forget(fact)` — remove a previously saved preference. The fact must match
+  an existing entry exactly.
+
+After calling `remember` or `forget`, you must still call `propose_plan` to
+finish. If the user's only intent was to save/remove a preference, propose a
+single `GetSystemState` low-risk step with a summary confirming the preference
+change.
+"#,
+    );
+
+    if let Some(prefs) = user_prefs {
+        prompt.push_str(&format!(
+            r#"
+## Your saved preferences
+
+These are preferences the user has explicitly asked you to remember.
+Apply them when relevant — they reflect the user's stated intentions.
+
+{prefs}"#
+        ));
+    }
+
+    prompt
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn system_prompt_without_prefs_does_not_contain_preferences_section() {
+        let prompt = build_system_prompt(None);
+        assert!(!prompt.contains("## Your saved preferences"));
+    }
+
+    #[test]
+    fn system_prompt_with_prefs_contains_preferences_section() {
+        let prefs = "- prefer vim-enhanced over vim\n- skip large downloads\n";
+        let prompt = build_system_prompt(Some(prefs));
+        assert!(prompt.contains("## Your saved preferences"));
+        assert!(prompt.contains("prefer vim-enhanced over vim"));
+        assert!(prompt.contains("skip large downloads"));
+    }
+
+    #[test]
+    fn system_prompt_documents_remember_and_forget_tools() {
+        let prompt = build_system_prompt(None);
+        assert!(prompt.contains("`remember`"));
+        assert!(prompt.contains("`forget`"));
+    }
 }
