@@ -589,10 +589,10 @@ impl LlmPlanner {
                     return Err(PlanningError::NoPlanProposed);
                 }
                 StopReason::EndTurn => {
-                    // Some providers (e.g. OpenAI via Rig's Responses API) may
-                    // output the plan as a plain-text JSON block instead of
-                    // calling propose_plan. Inject a correction and let the
-                    // model retry — but only if we have turns remaining.
+                    // Some providers (e.g. Gemini via rig) may output the plan
+                    // as a plain-text JSON block instead of calling propose_plan.
+                    // Inject a correction and let the model retry — but only if
+                    // we have turns remaining.
                     let has_text = completion
                         .content
                         .iter()
