@@ -115,6 +115,19 @@ information to DECIDE between two or more possible plans (e.g. "install vim"
 → query layered packages to check if it is already there before proposing
 `AddLayeredPackage`).
 
+### Never weaken story assertions to hide model misbehavior
+
+E2E story assertions are the ground truth for what the model must do.
+**Do not patch a failing story to accept wrong behavior.**
+
+If the model proposes a bad plan, fix the prompt — do not broaden the
+assertion to accept the bad plan as a valid alternative. Weakening an
+assertion destroys its discriminating power: a test that passes for both
+correct and incorrect behavior catches nothing.
+
+Specific rule: if the model silently drops a requested action after a
+query tool error, that is a model bug. Fix `prompt.rs`, not the story.
+
 ### Adding a new story or changing the prompt
 
 Run the E2E harness against a live VM (or at minimum against the no-daemon
