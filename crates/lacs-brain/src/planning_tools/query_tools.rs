@@ -157,6 +157,36 @@ pub fn query_tools() -> Vec<ToolDefinition> {
                 "required": ["username"]
             }),
         },
+        ToolDefinition {
+            name: "query_job_history".into(),
+            description: "Show recent LACS transaction history. Use this to check what \
+                          actions LACS has executed (or attempted) recently. Returns \
+                          action names, statuses, and summaries."
+                .into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max number of records to return (default 20, max 100)"
+                    },
+                    "status_filter": {
+                        "type": "string",
+                        "description": "Filter by status: 'succeeded', 'failed', 'queued', 'running', 'canceled'"
+                    },
+                    "action_filter": {
+                        "type": "string",
+                        "description": "Filter by exact action name, e.g. 'AddLayeredPackage'"
+                    },
+                    "since_hours": {
+                        "type": "integer",
+                        "description": "Only return records from the last N hours"
+                    }
+                },
+                "required": []
+            }),
+        },
     ]
 }
 
@@ -204,6 +234,22 @@ pub fn query_tool_to_action(
             "GetAuthorizedKeys",
             serde_json::json!({"username": input.get("username").and_then(|v| v.as_str()).unwrap_or("")}),
         )),
+        "query_job_history" => {
+            let mut params = serde_json::json!({});
+            if let Some(limit) = input.get("limit") {
+                params["limit"] = limit.clone();
+            }
+            if let Some(status) = input.get("status_filter") {
+                params["status_filter"] = status.clone();
+            }
+            if let Some(action) = input.get("action_filter") {
+                params["action_filter"] = action.clone();
+            }
+            if let Some(hours) = input.get("since_hours") {
+                params["since_hours"] = hours.clone();
+            }
+            Some(("ListJobHistory", params))
+        }
         _ => None,
     }
 }
@@ -370,12 +416,52 @@ mod tests {
     }
 
     #[test]
-    fn query_tools_returns_twenty_one_definitions() {
+    fn query_tools_returns_twenty_two_definitions() {
         let tools = query_tools();
-        assert_eq!(tools.len(), 21);
+        assert_eq!(tools.len(), 22);
         for tool in &tools {
             assert!(tool.name.starts_with("query_"));
             assert!(!tool.description.is_empty());
         }
+    }
+
+    #[test]
+    fn query_job_history_maps_to_list_job_history() {
+        let input = serde_json::json!({"limit": 20, "since_hours": 24});
+        let result = query_tool_to_action("query_job_history", &input);
+        assert_eq!(
+            result,
+            Some((
+                "ListJobHistory",
+                serde_json::json!({
+                    "limit": 20,
+                    "since_hours": 24
+                })
+            ))
+        );
+    }
+
+    #[test]
+    fn query_job_history_with_all_filters() {
+        let input = serde_json::json!({
+            "limit": 10,
+            "status_filter": "failed",
+            "action_filter": "UpdateSystem",
+            "since_hours": 48
+        });
+        let result = query_tool_to_action("query_job_history", &input);
+        assert!(result.is_some());
+        let (action, params) = result.unwrap();
+        assert_eq!(action, "ListJobHistory");
+        assert_eq!(params["status_filter"], "failed");
+        assert_eq!(params["action_filter"], "UpdateSystem");
+    }
+
+    #[test]
+    fn query_job_history_with_no_filters() {
+        let result = query_tool_to_action("query_job_history", &empty_input());
+        assert!(result.is_some());
+        let (action, _) = result.unwrap();
+        assert_eq!(action, "ListJobHistory");
     }
 }
