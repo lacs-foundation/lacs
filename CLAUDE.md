@@ -119,6 +119,16 @@ information to DECIDE between two or more possible plans (e.g. "install vim"
 Run the E2E harness against a live VM (or at minimum against the no-daemon
 test CLI path) before and after. A story that passed before must not regress.
 
+## User Preferences — `prefs.md`
+
+User preferences live in `~/.config/lacs/prefs.md` and are injected into the
+system prompt at the start of each `plan_intent()` call. The `remember` and
+`forget` planning tools modify this file during planning.
+
+Preferences are NOT system state. They are user-stated intentions that inform
+planning decisions. Do not store system facts as preferences — those are
+queryable live via `query_*` tools.
+
 ## OpenAI Responses API — Dual-ID Protocol
 
 The OpenAI Responses API uses two distinct identifiers per tool call:

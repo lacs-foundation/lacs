@@ -151,6 +151,21 @@ Config file values act as defaults. Environment variables always win.
 | `LACS_LLM_MODEL` | provider default | Override the model name |
 | `LACS_BRAIN_MAX_TURNS` | `5` | Planning loop turn limit |
 
+### User preferences
+
+LACS remembers user preferences in `~/.config/lacs/prefs.md`. When
+you tell LACS "remember that I prefer vim-enhanced over vim", the
+preference is saved and applied to all future planning sessions.
+
+Preferences are plain text, one per line, max 10 KB. Sensitive data
+(passwords, API keys, tokens) is rejected automatically.
+
+Manage preferences through natural language:
+- "Remember that I always prefer vim-enhanced"
+- "Forget my vim preference"
+
+Or edit `~/.config/lacs/prefs.md` directly.
+
 ## Working Style
 
 - keep changes small and reviewable
