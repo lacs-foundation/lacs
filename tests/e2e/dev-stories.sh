@@ -23,7 +23,7 @@
 #
 # LLM provider is auto-detected (same logic as BrainConfig::from_env):
 #   - ANTHROPIC_API_KEY set  → provider=anthropic, model=claude-sonnet-4-6
-#   - OPENAI_API_KEY set     → provider=openai,    model=gpt-4o
+#   - OPENAI_API_KEY set     → provider=openai,    model=gpt-4o-2024-11-20
 #   - GEMINI_API_KEY set     → provider=gemini,    model=gemini-2.0-flash
 #   - otherwise              → provider=ollama,    model=qwen3:8b (must be pulled)
 #
@@ -147,9 +147,24 @@ STORY_NAMES[7]="SSH key inventory"
 STORY_NAMES[8]="Layer vim via rpm-ostree (destructive)"
 STORY_NAMES[9]="Create a toolbox (destructive)"
 STORY_NAMES[10]="Add SSH authorized key (destructive)"
+STORY_NAMES[11]="Deployment status + kernel arguments"
+STORY_NAMES[12]="LACS activity log — today"
+STORY_NAMES[13]="Service logs for firewalld"
+STORY_NAMES[14]="Triple compound — disk + memory + services"
+STORY_NAMES[15]="Rollback history"
+STORY_NAMES[16]="Network status + firewall rules"
+STORY_NAMES[17]="Container list + specific info"
+STORY_NAMES[18]="Restart bluetooth service (destructive)"
+STORY_NAMES[19]="Update system (destructive)"
+STORY_NAMES[20]="Add user to wheel group (destructive)"
 
 ALLOW_DESTRUCTIVE="${LACS_ALLOW_DESTRUCTIVE:-0}"
 STORY_TIMEOUT="${LACS_STORY_TIMEOUT:-120}"
+# Delay between stories (seconds). Avoids TPM rate-limit errors when running
+# all 20 stories back-to-back against a cloud LLM. Each gpt-4o story uses
+# ~3 K tokens; at 30 K TPM the safe cadence is one story per ~6 s.
+# Default 10 s is conservative; set LACS_STORY_DELAY=0 to disable.
+STORY_DELAY="${LACS_STORY_DELAY:-10}"
 
 declare -a STORIES
 declare -A RESULTS
@@ -159,9 +174,9 @@ declare -A MESSAGES
 if [[ $# -gt 0 ]]; then
     STORIES=("$@")
 elif [[ "$ALLOW_DESTRUCTIVE" == "1" ]]; then
-    STORIES=(1 2 3 4 5 6 7 8 9 10)
+    STORIES=(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20)
 else
-    STORIES=(1 2 3 4 5 6 7)
+    STORIES=(1 2 3 4 5 6 7 11 12 13 14 15 16 17)
 fi
 
 # ---------------------------------------------------------------------------
@@ -226,9 +241,16 @@ echo "Date:        $(date --iso-8601=seconds 2>/dev/null || date)"
 echo "Stories:     ${STORIES[*]}"
 echo "Destructive: $ALLOW_DESTRUCTIVE"
 echo "Timeout:     ${STORY_TIMEOUT}s per story"
+echo "Delay:       ${STORY_DELAY}s between stories"
 echo ""
 
+first=1
 for n in "${STORIES[@]}"; do
+    if [[ "$first" == "1" ]]; then
+        first=0
+    elif [[ "$STORY_DELAY" -gt 0 ]]; then
+        sleep "$STORY_DELAY"
+    fi
     run_story "$n"
 done
 
@@ -277,7 +299,8 @@ echo ""
 if (( fail_count > 0 )); then
     echo "NOTE: On a non-Fedora-Atomic host, stories 8 and 10 are expected to fail"
     echo "because query_packages and query_authorized_keys call rpm-ostree and SSH"
-    echo "tools that are absent. Stories 1-7 should always pass on any Linux host."
+    echo "tools that are absent. Stories 1-7 and 11-17 should always pass on any"
+    echo "Linux host (plan-structure checks only, no execution)."
     echo "Run on a provisioned Silverblue VM for full coverage."
     echo ""
     exit 1

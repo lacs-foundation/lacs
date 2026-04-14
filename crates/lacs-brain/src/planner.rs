@@ -57,6 +57,21 @@ use thiserror::Error;
 /// anyway (CPU inference hits Ollama's internal request timeout first).
 pub const OLLAMA_NUM_PREDICT: u32 = 4096;
 
+/// Maximum output tokens for the planning loop.
+///
+/// Must be large enough for: a thinking trace (100–400 tokens),
+/// a `propose_plan` tool-call JSON (150–300 tokens), and a
+/// buffer for multi-turn retries. 4096 is generous for all
+/// providers — well-behaved runs rarely exceed 1000.
+pub const PLANNING_MAX_TOKENS: u32 = 4096;
+
+/// Maximum output tokens for the summarization endpoint.
+///
+/// Summarization produces short plain-language text (no tools,
+/// no structured output). 512 tokens is ample for a one-paragraph
+/// summary of daemon execution output.
+pub const SUMMARIZATION_MAX_TOKENS: u32 = 512;
+
 /// Model-name prefixes that signal thinking-mode capability in Ollama.
 ///
 /// Source of truth: Ollama documents which models accept the `think`
@@ -424,10 +439,17 @@ impl LlmPlanner {
                 Box::new(RigCompletionAdapter::new(completion_model).with_additional_params(params))
             }
             ProviderConfig::OpenAI { api_key, model } => {
+                // Use the Chat Completions API, not the Responses API (rig's default).
+                // The Responses API intermittently emits reasoning-only responses for
+                // standard gpt-4o models, causing "unsupported content types" errors.
+                // Chat Completions does not have reasoning items, so tool calls stream
+                // reliably. The call_id fallback in rig_adapter.rs handles the single-ID
+                // format correctly (same path as Anthropic/Ollama/Gemini).
                 let client = rig::providers::openai::Client::builder()
                     .api_key(api_key)
                     .build()
-                    .map_err(|e| format!("failed to initialize openai provider: {e}"))?;
+                    .map_err(|e| format!("failed to initialize openai provider: {e}"))?
+                    .completions_api();
                 let completion_model = client.completion_model(&model);
                 Box::new(RigCompletionAdapter::new(completion_model))
             }
@@ -498,7 +520,7 @@ impl LlmPlanner {
                 "You are a concise technical writer. Respond with a short plain-language summary. Do not use markdown formatting.",
                 &messages,
                 &[], // no tools
-                512, // short response
+                SUMMARIZATION_MAX_TOKENS,
             )
             .await
             .map_err(PlanningError::from)?;
@@ -559,7 +581,7 @@ impl LlmPlanner {
         for turn in 0..self.max_turns {
             let completion = self
                 .provider
-                .complete(&effective_prompt, &messages, &self.tools, 4096)
+                .complete(&effective_prompt, &messages, &self.tools, PLANNING_MAX_TOKENS)
                 .await
                 .map_err(PlanningError::from)?;
 

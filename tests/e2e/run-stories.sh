@@ -89,6 +89,16 @@ STORY_NAMES[7]="SSH key inventory"
 STORY_NAMES[8]="Layer vim via rpm-ostree (destructive)"
 STORY_NAMES[9]="Create a toolbox (destructive)"
 STORY_NAMES[10]="Add SSH authorized key (destructive)"
+STORY_NAMES[11]="Deployment status + kernel arguments"
+STORY_NAMES[12]="LACS activity log — today"
+STORY_NAMES[13]="Service logs for firewalld"
+STORY_NAMES[14]="Triple compound — disk + memory + services"
+STORY_NAMES[15]="Rollback history"
+STORY_NAMES[16]="Network status + firewall rules"
+STORY_NAMES[17]="Container list + specific info"
+STORY_NAMES[18]="Restart bluetooth service (destructive)"
+STORY_NAMES[19]="Update system (destructive)"
+STORY_NAMES[20]="Add user to wheel group (destructive)"
 
 declare -A RESULTS
 declare -A DURATIONS
@@ -99,9 +109,9 @@ if [[ $# -gt 0 ]]; then
   STORIES=("$@")
 else
   if [[ "$ALLOW_DESTRUCTIVE" == "1" ]]; then
-    STORIES=(1 2 3 4 5 6 7 8 9 10)
+    STORIES=(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20)
   else
-    STORIES=(1 2 3 4 5 6 7)
+    STORIES=(1 2 3 4 5 6 7 11 12 13 14 15 16 17)
   fi
 fi
 
@@ -122,8 +132,9 @@ run_story() {
     return
   fi
 
-  # Destructive stories (8-10) require explicit opt-in.
-  if [[ "$n" -ge 8 ]] && [[ "$ALLOW_DESTRUCTIVE" != "1" ]]; then
+  # Destructive stories (8-10, 18-20) require explicit opt-in.
+  if { [[ "$n" -ge 8 && "$n" -le 10 ]] || [[ "$n" -ge 18 && "$n" -le 20 ]]; } \
+      && [[ "$ALLOW_DESTRUCTIVE" != "1" ]]; then
     RESULTS[$n]="SKIP"
     MESSAGES[$n]="set LACS_ALLOW_DESTRUCTIVE=1 to run"
     DURATIONS[$n]="0.0"

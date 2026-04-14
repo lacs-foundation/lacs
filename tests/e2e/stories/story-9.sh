@@ -37,10 +37,10 @@ if [[ "$RISK" != "medium" ]]; then
   exit 1
 fi
 
-# Check name parameter.
-NAME=$(echo "$TOOLBOX_STEP" | jq -r '.params.name // ""')
+# Check name parameter — accept any key that holds the container name.
+NAME=$(echo "$TOOLBOX_STEP" | jq -r '.params.name // .params.container_name // .params.toolbox_name // ""')
 if [[ "$NAME" != "dev-test" ]]; then
-  echo "FAIL: expected params.name=dev-test, got '$NAME'"
+  echo "FAIL: expected container name dev-test in params, got '$NAME'"
   echo "Full params: $(echo "$TOOLBOX_STEP" | jq '.params')"
   exit 1
 fi

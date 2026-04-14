@@ -8,8 +8,9 @@
 #
 # 2. `container-smoke`: runs on workflow_dispatch or when a PR is labeled
 #    `e2e`. Boots Ollama and the daemon directly in the runner, pulls a
-#    small tool-capable model (llama3.2:3b), and runs the 7 read-only user
-#    stories. Slow (~5-10 min, most of it Ollama model load + inference).
+#    small tool-capable model (llama3.2:3b), and runs the 14 read-only user
+#    stories (1-7, 11-17). Slow (~10-20 min; most time is Ollama load +
+#    inference; stories 12/15 also exercise query_job_history).
 #
 # The full high-fidelity flow — real Fedora Silverblue in QEMU/KVM via
 # quickemu — is documented for local runs (see docs/contributing/testing.md).
