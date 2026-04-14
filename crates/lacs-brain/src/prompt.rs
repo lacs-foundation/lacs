@@ -207,31 +207,45 @@ about what LACS has done, not about current system state.
 Do NOT call `query_deployments` or `get_system_state` for this — those show
 current system state, not LACS transaction history.
 
-### Example D — Atomic-specific compound read-only requests
+### Example D — Complaint/diagnostic framing with explicit read-only actions
 
-User: "show me the current deployment status and what kernel arguments are set"
+**Key rule:** When the user describes a problem or symptom ("acting weird",
+"sluggish", "something feels off", "after the update") and then explicitly
+lists the information they want, treat it as a **direct read-only request** —
+not as an open-ended diagnosis. Go straight to `propose_plan` with the listed
+actions. Do NOT call `get_system_state` to "gather context" first.
 
-Both parts map directly to named read-only actions:
-- "deployment status" → `ListDeployments`
-- "kernel arguments" → `GetKernelArguments`
+User: "My system feels sluggish since the last update — show me the deployment history, what packages I've layered on top of the base, and how much disk space is left"
 
-Do NOT call `get_system_state`, `query_deployments`, or any other tool first.
+Three explicit read-only requests, each mapping directly to an action:
+- "deployment history" → `GetDeploymentHistory`
+- "packages I've layered on top of the base" → `GetLayeredPackages`
+- "how much disk space is left" → `GetDiskUsage`
+
+Do NOT call `get_system_state`, `query_deployments`, `query_packages`, or any
+query tool first. The complaint framing does NOT change the planning rule.
 Call `propose_plan` immediately:
 
 ```json
 {
-  "summary": "Show deployment status and kernel arguments",
-  "explanation": "The user asked for two read-only pieces of Atomic-specific information. ListDeployments shows the OSTree deployment state; GetKernelArguments shows the kargs. Both map directly to named actions — no query needed.",
+  "summary": "Show deployment history, layered packages, and disk usage",
+  "explanation": "The user described a symptom and then listed three specific read-only things to check. All three map directly to named actions — GetDeploymentHistory, GetLayeredPackages, GetDiskUsage. The complaint framing does not require a diagnostic state query first.",
   "steps": [
     {
-      "action_name": "ListDeployments",
-      "summary": "List current and pending OSTree deployments",
+      "action_name": "GetDeploymentHistory",
+      "summary": "List all OSTree deployments to check what changed",
       "risk_level": "low",
       "params": {}
     },
     {
-      "action_name": "GetKernelArguments",
-      "summary": "Show kernel boot arguments (kargs)",
+      "action_name": "GetLayeredPackages",
+      "summary": "List packages layered on top of the base OSTree image",
+      "risk_level": "low",
+      "params": {}
+    },
+    {
+      "action_name": "GetDiskUsage",
+      "summary": "Check available disk space on all filesystems",
       "risk_level": "low",
       "params": {}
     }
@@ -239,7 +253,19 @@ Call `propose_plan` immediately:
 }
 ```
 
-The same rule applies to any Atomic-specific read-only compound: "what's my current deployment and rollback?" → `ListDeployments`; "show deployment history and kernel args" → `GetDeploymentHistory` + `GetKernelArguments`. Always go straight to `propose_plan`.
+**WRONG** — calling get_system_state because the user said "sluggish":
+- call `get_system_state` → receive system snapshot → try to diagnose →
+  end without `propose_plan`  ← FORBIDDEN
+- call `query_deployments` to "check what changed" → then propose_plan  ← FORBIDDEN
+
+The same rule applies regardless of how many actions: "acting weird — show me
+X, Y, Z, and W" with four explicit read-only items → four steps in
+`propose_plan`, no queries first.
+
+The same rule applies to Atomic-specific compounds: "what are my rollback
+options?" → `ListDeployments` + `GetDeploymentHistory`. "Show kernel args and
+layered packages" → `GetKernelArguments` + `GetLayeredPackages`. Always straight
+to `propose_plan`.
 
 ## Available LACS actions
 
@@ -394,8 +420,12 @@ mod tests {
     #[test]
     fn system_prompt_contains_example_d() {
         let prompt = build_system_prompt(None);
-        assert!(prompt.contains("ListDeployments"));
-        assert!(prompt.contains("GetKernelArguments"));
+        // Example D covers complaint/diagnostic framing — must include the key
+        // actions and the explicit anti-pattern instruction.
+        assert!(prompt.contains("GetDeploymentHistory"));
+        assert!(prompt.contains("GetLayeredPackages"));
+        assert!(prompt.contains("GetDiskUsage"));
+        assert!(prompt.contains("complaint") || prompt.contains("sluggish") || prompt.contains("acting weird"));
         assert!(
             prompt.contains("Example D")
                 || prompt.contains("example D")

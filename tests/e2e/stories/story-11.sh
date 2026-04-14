@@ -1,15 +1,28 @@
 #!/usr/bin/env bash
-# Story 11: Deployment status + kernel arguments (compound read-only)
-# Intent: "show me the current deployment status and what kernel arguments are set"
-# Pass criteria (any of these is acceptable):
-#   A) Two steps: GetKernelArguments + ListDeployments/GetDeploymentHistory (in any order)
-#   B) Single step: GetSystemState (covers both deployment state and kernel args)
-#   - All steps have risk_level low
+# Story 11 (hard compound): Post-update diagnostic — 4 Atomic actions
+#
+# Intent: complaint/diagnostic framing with four distinct read-only actions.
+# The model must resist calling get_system_state or any query_* tool and go
+# straight to propose_plan with all four actions.
+#
+# Difficulty factors:
+#   - "acting weird since yesterday's update" → diagnostic framing lures the
+#     model toward get_system_state or query_system
+#   - "in a failed state" qualifier on services → tempts query_services first
+#   - "layered on top of the base" → OSTree-specific phrasing for GetLayeredPackages
+#   - 4-action compound spanning Atomic-specific + generic actions
+#   - None of these phrasing patterns appear verbatim in the prompt examples
+#
+# Pass criteria:
+#   - Plan contains ALL FOUR of: a deployment action, GetLayeredPackages,
+#     ListServices, GetDiskUsage
+#   - Deployment action is ListDeployments OR GetDeploymentHistory
+#   - All steps are low risk
 set -euo pipefail
 
-INTENT="show me the current deployment status and what kernel arguments are set"
+INTENT="My system has been acting weird since yesterday's rpm-ostree update — show me the full deployment history, what packages I've layered on top of the base, whether any systemd services are currently in a failed state, and how much disk space is left"
 
-echo "=== Story 11: Deployment status + kernel arguments ==="
+echo "=== Story 11: Post-update diagnostic (4-action compound) ==="
 echo "Intent: $INTENT"
 
 PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-11-stderr.log)
@@ -20,22 +33,36 @@ echo "$PLAN" | jq .
 
 ACTIONS=$(echo "$PLAN" | jq -r '.plan.steps[].action')
 
-# Accept either the specific compound plan or the general-purpose fallback.
-HAS_KERNEL=$(echo "$ACTIONS" | grep -c "GetKernelArguments" || true)
 HAS_DEPLOY=$(echo "$ACTIONS" | grep -cE "ListDeployments|GetDeploymentHistory" || true)
-HAS_STATE=$(echo "$ACTIONS" | grep -c "GetSystemState" || true)
+HAS_LAYERED=$(echo "$ACTIONS" | grep -c "GetLayeredPackages" || true)
+HAS_SERVICES=$(echo "$ACTIONS" | grep -c "ListServices" || true)
+HAS_DISK=$(echo "$ACTIONS" | grep -c "GetDiskUsage" || true)
 
-if [[ "$HAS_STATE" -ge 1 ]]; then
-  : # GetSystemState covers deployment status + kernel info — accepted
-elif [[ "$HAS_KERNEL" -ge 1 && "$HAS_DEPLOY" -ge 1 ]]; then
-  : # Specific compound plan — preferred
-else
-  echo "FAIL: expected (GetKernelArguments + deployment action) or GetSystemState"
+if [[ "$HAS_DEPLOY" -lt 1 ]]; then
+  echo "FAIL: expected ListDeployments or GetDeploymentHistory"
   echo "Actions: $ACTIONS"
   exit 1
 fi
 
-# All steps must be low risk (these are read-only).
+if [[ "$HAS_LAYERED" -lt 1 ]]; then
+  echo "FAIL: expected GetLayeredPackages"
+  echo "Actions: $ACTIONS"
+  exit 1
+fi
+
+if [[ "$HAS_SERVICES" -lt 1 ]]; then
+  echo "FAIL: expected ListServices"
+  echo "Actions: $ACTIONS"
+  exit 1
+fi
+
+if [[ "$HAS_DISK" -lt 1 ]]; then
+  echo "FAIL: expected GetDiskUsage"
+  echo "Actions: $ACTIONS"
+  exit 1
+fi
+
+# All steps must be low risk — these are all read-only.
 RISKS=$(echo "$PLAN" | jq -r '.plan.steps[].risk')
 while IFS= read -r risk; do
   if [[ "$risk" != "low" ]]; then
@@ -45,4 +72,5 @@ while IFS= read -r risk; do
   fi
 done <<< "$RISKS"
 
-echo "PASS: Story 11 — valid deployment+kernel plan, all low risk"
+echo "PASS: Story 11 — 4-action post-update diagnostic plan, all low risk"
+echo "  Actions: $(echo "$ACTIONS" | tr '\n' ' ')"
