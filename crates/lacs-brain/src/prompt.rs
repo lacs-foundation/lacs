@@ -6,11 +6,14 @@
 //!
 //! # Worked examples — do not remove
 //!
-//! The prompt contains three worked examples (A, B, C). They are load-bearing:
+//! The prompt contains two worked examples (B and C). They are load-bearing:
 //! removing them causes 7/10 E2E stories to fail with GPT-4o. Without them the
 //! model defaults to querying state first for every intent, which either crashes
 //! the planner (when `get_system_state` is called and the daemon is unavailable)
 //! or produces incorrect fallback plans.
+//!
+//! Example A ("check disk usage") was removed — it is a strict subset of the
+//! general rule stated in prose and adds no coverage beyond Example B.
 //!
 //! The examples encode the core planning rule:
 //!
@@ -99,27 +102,6 @@ CRITICAL — `propose_plan` call rules:
 - Each step's `action_name` MUST be one of the PascalCase names from the "Available LACS actions" list below (e.g. `GetDiskUsage`, `ListServices`). Do NOT use the snake_case query tool names (e.g. `query_disk_usage`) as action names in your plan — those are only for gathering information.
 
 ## Worked examples
-
-### Example A — "show me disk usage for all mounted filesystems"
-
-This is a direct read-only request. Go straight to `propose_plan` with
-`GetDiskUsage`. Do NOT call `query_disk_usage` first, and do NOT answer
-in prose.
-
-```json
-{
-  "summary": "Show disk usage for all mounted filesystems",
-  "explanation": "The user asked to see disk usage. GetDiskUsage is read-only and runs without approval.",
-  "steps": [
-    {
-      "action_name": "GetDiskUsage",
-      "summary": "List disk usage for each mounted filesystem",
-      "risk_level": "low",
-      "params": {}
-    }
-  ]
-}
-```
 
 ### Example B — "is the system low on memory? show me what's using it"
 

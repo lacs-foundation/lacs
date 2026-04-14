@@ -293,9 +293,15 @@ on PRs labeled `e2e`.
 
 ### Prompt engineering observations
 
-The system prompt in `crates/lacs-brain/src/prompt.rs` contains three worked
-examples (A, B, C). These are **load-bearing** — removing them causes 7 of 10
-stories to fail with GPT-4o.
+The system prompt in `crates/lacs-brain/src/prompt.rs` contains two worked
+examples (B and C). These are **load-bearing** — removing them causes 4 of 7
+read-only stories to fail with GPT-4o.
+
+Example A ("check disk usage") was removed — it is a strict subset of the
+prose rule and Example B, and adds no measurable coverage. B+C alone are
+equivalent to A+B+C for every testable story.
+
+Stories 8–10 require a live daemon and are skipped in the no-daemon CI run.
 
 **Why:** Without examples, GPT-4o defaults to always querying state first
 (`get_system_state` or a `query_*` tool) before proposing any plan. For
@@ -308,8 +314,8 @@ degraded fallback plan (e.g. `CollectDiagnostics` instead of `GetMemoryInfo`).
 immediately. Use `query_*` only when you need to DECIDE between plans (e.g.
 check if vim is already layered before proposing `AddLayeredPackage`).
 
-| Story | Without examples | With examples |
-|-------|-----------------|---------------|
+| Story | Without examples | With B+C |
+|-------|-----------------|---------|
 | 1 — disk usage | ✅ (lucky fallback) | ✅ |
 | 2 — memory pressure | ❌ wrong plan | ✅ |
 | 3 — service health | ❌ wrong plan | ✅ |
@@ -317,15 +323,21 @@ check if vim is already layered before proposing `AddLayeredPackage`).
 | 5 — layered packages | ❌ crash | ✅ |
 | 6 — containers + services | ❌ wrong plan | ✅ |
 | 7 — SSH key inventory | ✅ | ✅ |
-| 8 — install vim | ❌ crash | ✅ |
-| 9 — create toolbox | ✅ | ✅ |
-| 10 — add SSH key | ❌ crash | ✅ |
+| 8 — install vim | ❌ crash (daemon absent) | ❌ crash (daemon absent) |
+| 9 — create toolbox | ✅ (skipped/no-daemon) | ✅ (skipped/no-daemon) |
+| 10 — add SSH key | ❌ crash (daemon absent) | ❌ crash (daemon absent) |
 
 **Crash** = `get_system_state` propagates `StateUnavailable` immediately;
 planning returns with no plan produced.
 
 **Wrong plan** = `query_*` errors return as tool results; model falls back
 to an unrelated action (`CollectDiagnostics`, `GetDiskUsage`, etc.).
+
+Stories 8 and 10 crash due to daemon absence regardless of examples — the
+model correctly calls `query_packages` / `query_authorized_keys` (guided by
+Example C), but the no-daemon environment causes those calls to error, and the
+model then escalates to `get_system_state` which hard-crashes the planner.
+These pass on a real VM with the daemon running.
 
 See `CLAUDE.md` § "Prompt Engineering" for the full rule and the constraint
 that prompt changes must be validated against this story suite.

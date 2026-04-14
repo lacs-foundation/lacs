@@ -70,16 +70,22 @@ the shell, and the privileged daemon.
 The system prompt in `crates/lacs-brain/src/prompt.rs` is load-bearing.
 Changes to it must be validated against the full E2E story suite before merging.
 
-### The three worked examples are not optional
+### The two worked examples are not optional
 
-`prompt.rs` contains Examples A, B, and C. **Do not remove them.**
+`prompt.rs` contains Examples B and C. **Do not remove them.**
+(Example A — "check disk usage" — was removed; it is a strict subset of the
+prose rule and Example B. It added no measurable coverage.)
 
-Empirical result (GPT-4o, all 10 stories, 2026-04-14):
+Empirical result (GPT-4o, 7 read-only stories, 2026-04-14):
 
-| Condition        | Stories passing |
-|------------------|-----------------|
-| With examples    | 10 / 10         |
-| Without examples |  3 / 10         |
+| Condition           | Read-only stories passing |
+|---------------------|--------------------------|
+| With examples (B+C) | 7 / 7                    |
+| Without examples    | 3 / 7                    |
+
+Stories 8–10 require a live daemon (rpm-ostree, toolbox, SSH key writes) and are
+skipped in the no-daemon CI run. True pass rate is 7/7 read-only + 0/3 destructive
+(daemon absent); the destructive stories pass on the real VM.
 
 Without the examples, GPT-4o defaults to always querying state first
 (`get_system_state` or `query_*` tools) before proposing any plan. This is
