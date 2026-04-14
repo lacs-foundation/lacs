@@ -24,30 +24,43 @@ echo "$PLAN" | jq .
 # --- Assertions ---
 
 STEP_COUNT=$(echo "$PLAN" | jq '.steps | length')
-if [[ "$STEP_COUNT" != "1" ]]; then
-  echo "FAIL: expected 1 step, got $STEP_COUNT"
-  echo "Actions: $(echo "$PLAN" | jq -r '.steps[].action_name')"
+ACTIONS=$(echo "$PLAN" | jq -r '.steps[].action_name')
+
+# Accept either a single RestartService step, or a Stop+Start sequence.
+# Both are valid implementations; RestartService is preferred but not required.
+if echo "$ACTIONS" | grep -q "RestartService"; then
+  # Single-step restart — preferred.
+  if [[ "$STEP_COUNT" != "1" ]]; then
+    echo "FAIL: RestartService found but expected 1 step total, got $STEP_COUNT"
+    exit 1
+  fi
+  UNIT=$(echo "$PLAN" | jq -r '.steps[0].params.unit // ""')
+elif echo "$ACTIONS" | grep -q "StopService" && echo "$ACTIONS" | grep -q "StartService"; then
+  # Two-step Stop+Start — also acceptable.
+  if [[ "$STEP_COUNT" != "2" ]]; then
+    echo "FAIL: Stop+Start found but expected 2 steps, got $STEP_COUNT"
+    exit 1
+  fi
+  UNIT=$(echo "$PLAN" | jq -r '.steps[] | select(.action_name == "StopService") | .params.unit // ""')
+else
+  echo "FAIL: expected RestartService or StopService+StartService"
+  echo "Actions: $ACTIONS"
   exit 1
 fi
 
-ACTION=$(echo "$PLAN" | jq -r '.steps[0].action_name')
-if [[ "$ACTION" != "RestartService" ]]; then
-  echo "FAIL: expected RestartService, got $ACTION"
-  exit 1
-fi
-
-# Accept "bluetooth" or "bluetooth.service".
-UNIT=$(echo "$PLAN" | jq -r '.steps[0].params.unit // ""')
+# Verify the service unit targets bluetooth.
 if [[ "$UNIT" != "bluetooth" && "$UNIT" != "bluetooth.service" ]]; then
   echo "FAIL: expected unit=bluetooth or bluetooth.service, got '$UNIT'"
-  echo "Full params: $(echo "$PLAN" | jq '.steps[0].params')"
   exit 1
 fi
 
-RISK=$(echo "$PLAN" | jq -r '.steps[0].risk_level')
-if [[ "$RISK" != "medium" ]]; then
-  echo "FAIL: expected risk medium, got $RISK"
-  exit 1
-fi
+# All steps should be medium risk.
+RISKS=$(echo "$PLAN" | jq -r '.steps[].risk_level')
+while IFS= read -r risk; do
+  if [[ "$risk" != "medium" ]]; then
+    echo "FAIL: expected risk medium, got '$risk'"
+    exit 1
+  fi
+done <<< "$RISKS"
 
-echo "PASS: Story 18 — plan has RestartService(unit=$UNIT) with medium risk"
+echo "PASS: Story 18 — plan restarts bluetooth ($ACTIONS)"

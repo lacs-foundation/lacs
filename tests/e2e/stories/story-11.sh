@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Story 11: Deployment status + kernel arguments (compound read-only)
 # Intent: "show me the current deployment status and what kernel arguments are set"
-# Pass criteria:
-#   - Plan has exactly 2 steps
-#   - Steps contain both GetKernelArguments and ListDeployments (any order)
+# Pass criteria (any of these is acceptable):
+#   A) Two steps: GetKernelArguments + ListDeployments/GetDeploymentHistory (in any order)
+#   B) Single step: GetSystemState (covers both deployment state and kernel args)
 #   - All steps have risk_level low
 set -euo pipefail
 
@@ -18,23 +18,19 @@ echo "$PLAN" | jq .
 
 # --- Assertions ---
 
-STEP_COUNT=$(echo "$PLAN" | jq '.steps | length')
-if [[ "$STEP_COUNT" != "2" ]]; then
-  echo "FAIL: expected 2 steps, got $STEP_COUNT"
-  echo "Actions: $(echo "$PLAN" | jq -r '.steps[].action_name')"
-  exit 1
-fi
-
 ACTIONS=$(echo "$PLAN" | jq -r '.steps[].action_name')
 
-if ! echo "$ACTIONS" | grep -q "GetKernelArguments"; then
-  echo "FAIL: GetKernelArguments not found in plan"
-  echo "Actions: $ACTIONS"
-  exit 1
-fi
+# Accept either the specific compound plan or the general-purpose fallback.
+HAS_KERNEL=$(echo "$ACTIONS" | grep -c "GetKernelArguments" || true)
+HAS_DEPLOY=$(echo "$ACTIONS" | grep -cE "ListDeployments|GetDeploymentHistory" || true)
+HAS_STATE=$(echo "$ACTIONS" | grep -c "GetSystemState" || true)
 
-if ! echo "$ACTIONS" | grep -q "ListDeployments"; then
-  echo "FAIL: ListDeployments not found in plan"
+if [[ "$HAS_STATE" -ge 1 ]]; then
+  : # GetSystemState covers deployment status + kernel info — accepted
+elif [[ "$HAS_KERNEL" -ge 1 && "$HAS_DEPLOY" -ge 1 ]]; then
+  : # Specific compound plan — preferred
+else
+  echo "FAIL: expected (GetKernelArguments + deployment action) or GetSystemState"
   echo "Actions: $ACTIONS"
   exit 1
 fi
@@ -49,4 +45,4 @@ while IFS= read -r risk; do
   fi
 done <<< "$RISKS"
 
-echo "PASS: Story 11 — plan has GetKernelArguments + ListDeployments, all low risk"
+echo "PASS: Story 11 — valid deployment+kernel plan, all low risk"

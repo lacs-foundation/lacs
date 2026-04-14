@@ -120,16 +120,43 @@ Even though the user asks for two things, both are read-only actions with
 no ambiguity: `ListContainers` + `ListServices`. There is nothing to DECIDE
 — do not call `query_containers`, `query_services`, or any other tool first.
 
-**The rule for both patterns:** if every part of the request maps
-directly to a `Get*` or `List*` action, call `propose_plan` immediately
-with all those actions. Do NOT call `query_*` tools first. Do NOT answer
-in prose.
+**Pattern 3 — named-item read-only:** "list all running containers and give me detailed info on the container named 'postgres'"
+
+The user names a specific item (`postgres`). That name goes **directly into
+`params`** — no query needed. Call `propose_plan` immediately with
+`ListContainers` + `GetContainerInfo(name="postgres")`.
+
+Do NOT call `query_containers` to "verify the container exists" first.
+The container name is explicitly provided by the user.
+
+**The rule for all three patterns:** if every part of the request maps
+directly to a `Get*` or `List*` action (with any named params taken
+verbatim from the user's text), call `propose_plan` immediately with all
+those actions. Do NOT call `query_*` tools first. Do NOT answer in prose.
 
 **WRONG** — calling query tools and narrating:
 - call `query_memory` → receive data → write "The system has 2 GB free..."
   → end without `propose_plan`  ← FORBIDDEN
 - call `query_containers` → receive list → call `query_services` → receive
   list → write prose summary → end without `propose_plan`  ← FORBIDDEN
+- call `query_containers` to check if postgres exists → receive error →
+  retry → never call `propose_plan`  ← FORBIDDEN
+- call `query_firewall` → receive error → drop `GetFirewallState` from plan
+  → propose only partial plan  ← FORBIDDEN
+
+**CRITICAL — query errors never justify dropping plan actions:**
+If you call a `query_*` tool and it returns an error, that error is a
+planning-time failure — it does NOT predict whether the corresponding
+`Get*` / `List*` action will fail at execution time. The user explicitly
+requested those actions. Your job is to propose every action they asked
+for. If execution fails, the daemon reports it to the user — that is not
+your decision to make during planning.
+
+Never silently drop a requested action because a query tool errored.
+Never update the plan `summary` or `explanation` to say "X was excluded
+due to an error" — that is silent omission of a user request.
+Always call `propose_plan` with the complete set of actions the user
+asked for, regardless of what query tools returned.
 
 **RIGHT** — propose_plan immediately (example for the memory + processes case):
 

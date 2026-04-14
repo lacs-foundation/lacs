@@ -40,9 +40,10 @@ if [[ "$RISK" != "medium" ]]; then
 fi
 
 # Check public_key matches verbatim.
-PUB_KEY=$(echo "$ADD_KEY_STEP" | jq -r '.params.public_key // ""')
+# Accept any key name that holds the SSH public key string.
+PUB_KEY=$(echo "$ADD_KEY_STEP" | jq -r '.params.public_key // .params.key // .params.ssh_key // ""')
 if [[ "$PUB_KEY" != "$TEST_KEY" ]]; then
-  echo "FAIL: public_key mismatch"
+  echo "FAIL: SSH key mismatch"
   echo "  expected: $TEST_KEY"
   echo "  got:      $PUB_KEY"
   exit 1

@@ -23,7 +23,7 @@ pub const DEFAULT_ANTHROPIC_BASE_URL: &str = "https://api.anthropic.com";
 /// see `HACKING.md` §8 for the full matrix.
 pub const DEFAULT_OLLAMA_MODEL: &str = "qwen3:8b";
 pub const DEFAULT_OLLAMA_BASE_URL: &str = "http://localhost:11434";
-pub const DEFAULT_OPENAI_MODEL: &str = "gpt-5.1-mini";
+pub const DEFAULT_OPENAI_MODEL: &str = "gpt-4o-2024-11-20";
 pub const DEFAULT_GEMINI_MODEL: &str = "gemini-2.0-flash";
 pub const DEFAULT_GROQ_MODEL: &str = "llama-3.3-70b-versatile";
 pub const DEFAULT_DEEPSEEK_MODEL: &str = "deepseek-chat";

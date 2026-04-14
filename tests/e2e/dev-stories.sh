@@ -23,7 +23,7 @@
 #
 # LLM provider is auto-detected (same logic as BrainConfig::from_env):
 #   - ANTHROPIC_API_KEY set  → provider=anthropic, model=claude-sonnet-4-6
-#   - OPENAI_API_KEY set     → provider=openai,    model=gpt-5.1-mini
+#   - OPENAI_API_KEY set     → provider=openai,    model=gpt-4o-2024-11-20
 #   - GEMINI_API_KEY set     → provider=gemini,    model=gemini-2.0-flash
 #   - otherwise              → provider=ollama,    model=qwen3:8b (must be pulled)
 #
@@ -160,6 +160,11 @@ STORY_NAMES[20]="Add user to wheel group (destructive)"
 
 ALLOW_DESTRUCTIVE="${LACS_ALLOW_DESTRUCTIVE:-0}"
 STORY_TIMEOUT="${LACS_STORY_TIMEOUT:-120}"
+# Delay between stories (seconds). Avoids TPM rate-limit errors when running
+# all 20 stories back-to-back against a cloud LLM. Each gpt-4o story uses
+# ~3 K tokens; at 30 K TPM the safe cadence is one story per ~6 s.
+# Default 10 s is conservative; set LACS_STORY_DELAY=0 to disable.
+STORY_DELAY="${LACS_STORY_DELAY:-10}"
 
 declare -a STORIES
 declare -A RESULTS
@@ -236,9 +241,16 @@ echo "Date:        $(date --iso-8601=seconds 2>/dev/null || date)"
 echo "Stories:     ${STORIES[*]}"
 echo "Destructive: $ALLOW_DESTRUCTIVE"
 echo "Timeout:     ${STORY_TIMEOUT}s per story"
+echo "Delay:       ${STORY_DELAY}s between stories"
 echo ""
 
+first=1
 for n in "${STORIES[@]}"; do
+    if [[ "$first" == "1" ]]; then
+        first=0
+    elif [[ "$STORY_DELAY" -gt 0 ]]; then
+        sleep "$STORY_DELAY"
+    fi
     run_story "$n"
 done
 

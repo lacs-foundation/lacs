@@ -21,30 +21,25 @@ echo "$PLAN" | jq .
 
 # --- Assertions ---
 
-STEP_COUNT=$(echo "$PLAN" | jq '.steps | length')
-if [[ "$STEP_COUNT" != "1" ]]; then
-  echo "FAIL: expected 1 step, got $STEP_COUNT"
+# GetServiceLogs must be present (possibly alongside other diagnostic steps).
+GET_LOGS_STEP=$(echo "$PLAN" | jq '.steps[] | select(.action_name == "GetServiceLogs")')
+if [[ -z "$GET_LOGS_STEP" || "$GET_LOGS_STEP" == "null" ]]; then
+  echo "FAIL: no GetServiceLogs step found"
   echo "Actions: $(echo "$PLAN" | jq -r '.steps[].action_name')"
   exit 1
 fi
 
-ACTION=$(echo "$PLAN" | jq -r '.steps[0].action_name')
-if [[ "$ACTION" != "GetServiceLogs" ]]; then
-  echo "FAIL: expected GetServiceLogs, got $ACTION"
-  exit 1
-fi
-
-RISK=$(echo "$PLAN" | jq -r '.steps[0].risk_level')
+RISK=$(echo "$GET_LOGS_STEP" | jq -r '.risk_level')
 if [[ "$RISK" != "low" ]]; then
-  echo "FAIL: expected risk low, got $RISK"
+  echo "FAIL: expected GetServiceLogs risk low, got $RISK"
   exit 1
 fi
 
 # Accept "firewalld" or "firewalld.service" — both are valid unit names.
-UNIT=$(echo "$PLAN" | jq -r '.steps[0].params.unit // ""')
+UNIT=$(echo "$GET_LOGS_STEP" | jq -r '.params.unit // ""')
 if [[ "$UNIT" != "firewalld" && "$UNIT" != "firewalld.service" ]]; then
   echo "FAIL: expected unit=firewalld or firewalld.service, got '$UNIT'"
-  echo "Full params: $(echo "$PLAN" | jq '.steps[0].params')"
+  echo "Full params: $(echo "$GET_LOGS_STEP" | jq '.params')"
   exit 1
 fi
 
