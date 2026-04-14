@@ -225,7 +225,6 @@ fn previewed_transactions_persist_preview_state() {
         request_hash: "hash-preview".to_string(),
         action_name: "UpdateSystem".to_string(),
         risk_level: RiskLevel::High,
-        status: JobState::Queued,
         approval_id: Some("approval-preview".to_string()),
         summary: "Stage system update".to_string(),
         warnings: vec!["system reboot required".to_string()],

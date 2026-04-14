@@ -734,7 +734,6 @@ async fn handle_preview(
         request_hash,
         action_name: action_name.to_string(),
         risk_level: spec.risk_level,
-        status: JobState::Queued,
         approval_id: None,
         summary: preview.summary.clone(),
         warnings: preview.warnings.clone(),

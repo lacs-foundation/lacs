@@ -4,13 +4,17 @@ use serde::{de::DeserializeOwned, Serialize};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
+/// Data provided by the caller when recording a new transaction.
+///
+/// The initial `status` is always `Queued` — it is not caller-controllable.
+/// Hardcoding this in the store prevents callers from bypassing the state
+/// machine by recording a transaction in a terminal state.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NewTransaction {
     pub request_id: String,
     pub request_hash: String,
     pub action_name: String,
     pub risk_level: RiskLevel,
-    pub status: JobState,
     pub approval_id: Option<String>,
     pub summary: String,
     pub warnings: Vec<String>,
@@ -345,7 +349,8 @@ impl TransactionStore {
         let request_hash = transaction.request_hash;
         let action_name = transaction.action_name;
         let risk_level = transaction.risk_level;
-        let status = transaction.status;
+        // Initial status is always Queued — not caller-controllable.
+        let status = JobState::Queued;
         let approval_id = transaction.approval_id;
         let summary = transaction.summary;
         let warnings = transaction.warnings;
@@ -436,7 +441,6 @@ mod tests {
             request_hash: "hash-abc".to_string(),
             action_name: "UpdateSystem".to_string(),
             risk_level: RiskLevel::High,
-            status: JobState::Queued,
             approval_id: None,
             summary: "Upgrade the system".to_string(),
             warnings: vec![],
