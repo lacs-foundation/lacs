@@ -2,6 +2,7 @@ mod approval;
 mod cli;
 mod client;
 mod error;
+mod render;
 mod runner;
 
 use clap::Parser;

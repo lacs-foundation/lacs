@@ -22,7 +22,7 @@ use std::path::PathBuf;
 use clap::CommandFactory;
 use lacs_brain::config::BrainConfig;
 use lacs_brain::planner::{LlmPlanner, PlanRiskLevel};
-use lacs_types::{PreviewEnvelope, ResultEnvelope};
+use lacs_brain::PlanEvent;
 use serde_json::{json, Value};
 
 use lacs_brain::state_client::StateClient as _;
@@ -277,11 +277,13 @@ pub async fn run_doctor(
                 });
                 log.println(&serde_json::to_string(&out).expect("static JSON"));
             } else {
-                log.println("daemon ok");
-                log.println(&format!("  socket   {}", socket.display()));
-                log.println(&format!("  host     {}", state.host_name()));
-                log.println(&format!("  provider {}", config.provider_name()));
-                log.println(&format!("  model    {}", config.model_name()));
+                crate::render::print_doctor_ok(
+                    &socket.display().to_string(),
+                    state.host_name(),
+                    config.provider_name(),
+                    config.model_name(),
+                    log,
+                );
             }
             Ok(())
         }
@@ -289,6 +291,8 @@ pub async fn run_doctor(
             if json_out {
                 let out = json!({ "ok": false, "error": e.to_string() });
                 log.println(&serde_json::to_string(&out).expect("static JSON"));
+            } else {
+                crate::render::print_doctor_fail(&e.to_string());
             }
             Err(CliError::ConfigOrDaemon(e.to_string()))
         }
@@ -372,20 +376,57 @@ pub async fn run_intent(intent: String, opts: &RunOpts, log: &Logger) -> Result<
         .map_err(|e| CliError::ConfigOrDaemon(e.to_string()))?;
 
     let plan_client = DaemonClient::new(opts.socket.clone());
+
+    // Layer 3: planning event channel — planner emits PlanEvent as it works;
+    // the CLI subscribes and updates the spinner message in real time.
+    let (progress_tx, mut progress_rx) = tokio::sync::mpsc::unbounded_channel::<PlanEvent>();
+
     let planner = LlmPlanner::from_config(config, Box::new(plan_client))
         .map_err(CliError::ConfigOrDaemon)?
-        .with_prefs_path(prefs_path());
+        .with_prefs_path(prefs_path())
+        .with_progress(progress_tx);
+
+    // Layer 1: spinner — auto-hidden by indicatif when stderr is not a TTY.
+    let spinner = if !opts.json {
+        Some(crate::render::make_spinner(format!("Planning \"{intent}\"…")))
+    } else {
+        None
+    };
+
+    // Spawn event updater: receives PlanEvent and updates the spinner message.
+    // The task exits naturally when the channel closes (i.e. when the planner
+    // is dropped after plan_intent returns).
+    let spinner_for_task = spinner.clone();
+    let event_task = tokio::spawn(async move {
+        while let Some(event) = progress_rx.recv().await {
+            if let Some(ref pb) = spinner_for_task {
+                match event {
+                    PlanEvent::Thinking => pb.set_message("Thinking…"),
+                    PlanEvent::QueryingTool(ref name) => {
+                        pb.set_message(format!("Querying {name}…"))
+                    }
+                    PlanEvent::ProposingPlan => pb.set_message("Proposing plan…"),
+                }
+            }
+        }
+    });
 
     // `plan_intent` may call `StateClient::curated_state()` (a blocking sync
-    // Unix socket call) on the current async thread when the LLM invokes
-    // `get_system_state`.  This is tolerable on the multi-threaded runtime:
-    // the call is bounded by `SOCKET_TIMEOUT` (10 s) and ties up one worker
-    // thread for at most that duration.  A single-threaded runtime would
-    // require `spawn_blocking` + `block_on` to avoid deadlock.
-    let plan = planner
-        .plan_intent(&intent)
-        .await
-        .map_err(|e| CliError::PlanningFailed(e.to_string()))?;
+    // Unix socket call) on the current async thread.  This is tolerable on
+    // the multi-threaded runtime: the call is bounded by SOCKET_TIMEOUT (10 s)
+    // and ties up one worker thread for at most that duration.
+    let plan_result = planner.plan_intent(&intent).await;
+
+    // Drop the planner to close the UnboundedSender, which closes the channel
+    // and allows event_task to drain and exit.
+    drop(planner);
+    let _ = event_task.await;
+
+    if let Some(ref pb) = spinner {
+        pb.finish_and_clear();
+    }
+
+    let plan = plan_result.map_err(|e| CliError::PlanningFailed(e.to_string()))?;
 
     // ---- print plan --------------------------------------------------------
 
@@ -409,16 +450,7 @@ pub async fn run_intent(intent: String, opts: &RunOpts, log: &Logger) -> Result<
             .expect("static JSON"),
         );
     } else {
-        log.println(&format!("Plan: {}", plan.summary()));
-        for (i, step) in plan.steps().iter().enumerate() {
-            log.println(&format!(
-                "  {}. [{}] {} — {}",
-                i + 1,
-                step.risk_level().as_str(),
-                step.action_name(),
-                step.summary(),
-            ));
-        }
+        crate::render::print_plan(&plan, log);
     }
 
     if opts.dry_run {
@@ -436,7 +468,19 @@ pub async fn run_intent(intent: String, opts: &RunOpts, log: &Logger) -> Result<
         match policy.decide_plan(&plan) {
             ApprovalDecision::AutoApproved => {}
             ApprovalDecision::RequiresPrompt => {
-                if !prompt_confirm("Execute this plan?").await {
+                let n = plan.steps().len();
+                let highest = highest_risk(&plan).expect("plan has steps");
+                let msg = if opts.json {
+                    "Execute this plan?".to_owned()
+                } else {
+                    format!(
+                        "  {} step{}, {} risk — execute?",
+                        n,
+                        if n == 1 { "" } else { "s" },
+                        crate::render::risk_colored(highest),
+                    )
+                };
+                if !prompt_confirm(&msg).await {
                     return Err(CliError::Rejected);
                 }
             }
@@ -454,6 +498,7 @@ pub async fn run_intent(intent: String, opts: &RunOpts, log: &Logger) -> Result<
     // ---- execute steps -----------------------------------------------------
 
     let exec_client = DaemonClient::new(opts.socket.clone());
+    let start = std::time::Instant::now();
 
     for step in plan.steps() {
         // Step-by-step: approve each step before previewing it.
@@ -461,13 +506,16 @@ pub async fn run_intent(intent: String, opts: &RunOpts, log: &Logger) -> Result<
             match policy.decide_step(step.risk_level()) {
                 ApprovalDecision::AutoApproved => {}
                 ApprovalDecision::RequiresPrompt => {
-                    if !prompt_confirm(&format!(
-                        "Execute {} ({})?",
-                        step.action_name(),
-                        step.summary()
-                    ))
-                    .await
-                    {
+                    let msg = if opts.json {
+                        format!("Execute {} ({})?", step.action_name(), step.summary())
+                    } else {
+                        format!(
+                            "Execute {} ({} risk)?",
+                            step.action_name(),
+                            crate::render::risk_colored(step.risk_level()),
+                        )
+                    };
+                    if !prompt_confirm(&msg).await {
                         return Err(CliError::Rejected);
                     }
                 }
@@ -483,15 +531,59 @@ pub async fn run_intent(intent: String, opts: &RunOpts, log: &Logger) -> Result<
 
         // Preview the step.
         let (preview, _tx_id) = exec_client.preview(step.action_name(), step.params()).await?;
-        print_preview(&preview, opts.json, log);
 
-        // Execute the step.
+        if opts.json {
+            log.println(
+                &serde_json::to_string(&preview).expect("PreviewEnvelope is Serialize"),
+            );
+        } else {
+            crate::render::print_step_header(step.action_name(), &preview);
+        }
+
+        // Spinner clears on the first output line so execution output
+        // streams naturally without a spinner in the way.
+        let exec_spinner: Option<indicatif::ProgressBar> = if !opts.json {
+            Some(crate::render::make_spinner(format!(
+                "Executing {}…",
+                step.action_name()
+            )))
+        } else {
+            None
+        };
+        let exec_spinner_ref = exec_spinner.clone();
+        let mut first_line = true;
+
         exec_client
             .execute(step.action_name(), step.params(), &preview.request_hash, |line| {
-                log.println(line);
+                if first_line {
+                    if let Some(ref pb) = exec_spinner_ref {
+                        pb.finish_and_clear();
+                    }
+                    first_line = false;
+                }
+                if opts.json {
+                    log.println(line);
+                } else {
+                    crate::render::print_output_line(line, log);
+                }
             })
             .await
-            .map(|result| print_result(&result, opts.json, log))?;
+            .map(|result| {
+                if let Some(ref pb) = exec_spinner {
+                    pb.finish_and_clear();
+                }
+                if opts.json {
+                    log.println(
+                        &serde_json::to_string(&result).expect("ResultEnvelope is Serialize"),
+                    );
+                } else {
+                    crate::render::print_step_done(&result, log);
+                }
+            })?;
+    }
+
+    if !opts.json {
+        crate::render::print_success(start.elapsed().as_secs_f32(), log);
     }
 
     Ok(())
@@ -501,39 +593,34 @@ pub async fn run_intent(intent: String, opts: &RunOpts, log: &Logger) -> Result<
 // run_repl
 // ---------------------------------------------------------------------------
 
-/// Interactive REPL — reads intents from stdin until EOF or "exit" / "quit".
+/// Interactive REPL — reads intents using rustyline-async (arrow-key history,
+/// Ctrl+R reverse search, Ctrl+C to cancel, Ctrl+D to exit).
 ///
-/// Uses `tokio::io` for non-blocking reads so the async executor is not
-/// occupied by a blocking `stdin.read_line` call.
+/// History is persisted to `~/.local/share/lacs/history` between sessions.
 pub async fn run_repl(opts: &RunOpts, log: &Logger) -> Result<(), CliError> {
-    use tokio::io::AsyncBufReadExt as _;
+    use rustyline_async::{Readline, ReadlineEvent};
 
-    let stdin = tokio::io::stdin();
-    let mut reader = tokio::io::BufReader::new(stdin);
-    let mut line_buf = String::new();
+    let (mut rl, _writer) = Readline::new("lacs> ".to_owned())
+        .map_err(|e| CliError::ExecutionFailed(format!("readline init: {e}")))?;
 
     loop {
-        // Prompt on stderr so it does not pollute piped stdout.
-        eprint!("> ");
-        let _ = io::stderr().flush();
-
-        line_buf.clear();
-        match reader.read_line(&mut line_buf).await {
-            Ok(0) => break, // EOF
-            Ok(_) => {
-                let intent = line_buf.trim().to_string();
+        match rl.readline().await {
+            Ok(ReadlineEvent::Line(line)) => {
+                let intent = line.trim().to_string();
+                let _ = rl.add_history_entry(line.clone());
                 if intent.is_empty() {
                     continue;
                 }
-                if intent == "exit" || intent == "quit" {
+                if matches!(intent.as_str(), "exit" | "quit") {
                     break;
                 }
                 if let Err(e) = run_intent(intent, opts, log).await {
                     log.print_stderr(&format!("error: {e}"));
                 }
             }
+            Ok(ReadlineEvent::Eof | ReadlineEvent::Interrupted) => break,
             Err(e) => {
-                log.print_stderr(&format!("stdin read error: {e}"));
+                log.print_stderr(&format!("readline error: {e}"));
                 break;
             }
         }
@@ -581,38 +668,6 @@ async fn prompt_confirm(msg: &str) -> bool {
             false
         }
         Ok(_) => matches!(buf.trim().to_ascii_lowercase().as_str(), "y" | "yes"),
-    }
-}
-
-fn print_preview(env: &PreviewEnvelope, json_out: bool, log: &Logger) {
-    if json_out {
-        log.println(&serde_json::to_string(env).expect("PreviewEnvelope is Serialize"));
-    } else {
-        let risk = format!("{:?}", env.risk_level).to_lowercase();
-        log.println(&format!("  preview  {}", env.summary));
-        log.println(&format!("  risk     {risk}"));
-        if env.reboot_required {
-            log.println("  ! reboot required after this step");
-        }
-        for w in &env.warnings {
-            log.println(&format!("  ! {w}"));
-        }
-    }
-}
-
-fn print_result(env: &ResultEnvelope, json_out: bool, log: &Logger) {
-    if json_out {
-        log.println(&serde_json::to_string(env).expect("ResultEnvelope is Serialize"));
-    } else {
-        let status = format!("{:?}", env.status).to_lowercase();
-        log.println(&format!("  result   {status}"));
-        log.println(&format!("  {}", env.summary));
-        if env.needs_reboot {
-            log.println("  ! reboot required");
-        }
-        if let Some(ref id) = env.job_id {
-            log.println(&format!("  job      {id}"));
-        }
     }
 }
 
