@@ -28,6 +28,13 @@ test -r /dev/kvm || sudo usermod -aG kvm "$USER"   # then log out / back in
 ./tests/e2e/silverblue-vm.sh bootstrap   # offline patch: user/passwords/sshd/key
 ./tests/e2e/silverblue-vm.sh start       # headless boot with SSH forward
 ./tests/e2e/silverblue-vm.sh provision   # build + install LACS + pull model
+
+# Before running stories — sanity-check the whole stack in one command.
+# If any line comes back [fail], fix that before burning 10 min on a story.
+# See §11 for what each line means.
+./tests/e2e/silverblue-vm.sh ssh \
+    'sudo -E LACS_LISTEN_URI=unix:///run/lacs/daemon.sock lacs-test-cli --doctor'
+
 ./tests/e2e/silverblue-vm.sh stop
 ./tests/e2e/silverblue-vm.sh snapshot baseline    # snapshot before tests
 ./tests/e2e/silverblue-vm.sh start
@@ -36,6 +43,19 @@ LACS_ALLOW_DESTRUCTIVE=1 ./tests/e2e/silverblue-vm.sh run  # all 10
 ./tests/e2e/silverblue-vm.sh stop
 ./tests/e2e/silverblue-vm.sh restore baseline
 ```
+
+**Want qwen3:8b quality without GPU passthrough?** Run Ollama on the
+host with `OLLAMA_HOST=0.0.0.0:11434`, then from the guest point LACS
+at it:
+
+```sh
+LACS_OLLAMA_URL=http://10.0.2.2:11434 \
+LACS_LLM_MODEL=qwen3:8b \
+  ./tests/e2e/silverblue-vm.sh run
+```
+
+See §8 for the full story on why CPU-only qwen3 doesn't work and the
+`ollama_think` config option that lets you override auto-detection.
 
 Everything below is the _why_ behind each step — read when something
 breaks.
@@ -267,30 +287,127 @@ This runs Ollama as `lacsdev` with `~/.ollama` redirected to
 
 The LLM runs **inside the VM, on CPU**, unless you've set up GPU
 passthrough (which is out of scope for this guide — VFIO + IOMMU is a
-separate rabbit hole). That gives you:
+separate rabbit hole). Empirically, with the default 4 vCPU / 10 GB
+RAM VM on a mid-range laptop (Intel i5-13th gen), Ollama averages
+**≈ 1 token/sec** prompt eval and **≈ 1.5 token/sec** generation.
+LACS's planner prompt is ~1500-2000 tokens, so **expect 2–5 minutes per
+story** even with a small tool-capable model, and longer with thinking
+models.
 
-| Model | Size | Tool calling | CPU-only speed | Use case |
+Options we've tested live on this class of hardware:
+
+| Model | Size | Tool calling | Reality on 4 vCPU | Notes |
 |---|---|---|---|---|
-| `qwen3:0.6b` | 500 MB | unreliable | fast | never — too small to emit correct tool calls |
-| `qwen3:1.7b` | 1 GB | unreliable | fast | still too small for structured output |
-| `qwen3:4b` | 2.5 GB | marginal | medium | simple plans only |
-| **`qwen3:8b`** | **5 GB** | **reliable** | **20–45 s/story** | **default — sweet spot for CPU-only** |
-| `qwen3:14b` | 9 GB | very reliable | 3–10 min/story | impractical without GPU |
-| `qwen3:30b-a3b` | 18 GB | excellent | depends | MoE — only 3B active params, fast-ish |
+| `gemma3:1b` | 815 MB | **no** | fast (~3 s/msg) | Ollama returns `400: does not support tools`. Great for non-tool smoke tests, **not** LACS stories. |
+| `gemma3:4b` | 3.3 GB | marginal | slow | Occasionally emits tool calls; not reliable. |
+| `qwen2.5:3b` | 1.9 GB | yes | ~2-4 min/story | Lightest tool-capable Qwen; acceptable for dev. |
+| `llama3.2:3b` | 2.0 GB | yes | ~2-4 min/story | **CPU fallback.** No thinking mode; smaller context; tool calling works. Use when you don't have a GPU reachable and don't want to override thinking. |
+| **`qwen3:8b`** | **5.2 GB** | **yes** | **<60 s via host GPU** | **Default.** Most reliable tool-calling. Requires a GPU — either the host's via `LACS_OLLAMA_URL=http://10.0.2.2:11434`, or VFIO passthrough. On CPU-only, thinking exceeds Ollama's ~120 s request timeout: set `ollama_think = false` to force-off (slow but finishes) or switch to `llama3.2:3b`. |
+| `qwen3:14b` | 9.3 GB | very reliable | GPU-only | Minutes of thinking tokens per story on CPU. Host GPU via `10.0.2.2:11434` works; VFIO passthrough works; CPU does not. |
 
-Qwen3 also has a "thinking mode" that emits thousands of preamble
-tokens before the real answer. On CPU this explodes the latency. You
-can disable it inline by prepending `/nothink` to the prompt, or
-globally via the Modelfile's `/set nothink`, but our current provisioner
-doesn't do either — if speed matters, use `qwen3:8b` where even with
-thinking on, a plan finishes in about a minute.
+**The qwen3 thinking-mode trap — and the fix LACS now ships.**
+Qwen3 series defaults to "thinking mode": the model emits a long
+hidden reasoning trace before the real answer. On CPU this
+*dominates* latency. Ollama's `/api/chat` enforces a **~120 s
+request timeout** per our live testing; qwen3:8b on 4 vCPUs cannot
+finish its thinking in that budget, so Ollama returns HTTP 500 and
+the plan never arrives.
 
-Override the default via `LACS_TEST_MODEL`:
+LACS now exposes thinking mode as a first-class knob:
+
+- `lacs-brain` auto-detects thinking-capable models by name prefix
+  (`qwen3`, `qwq`, `deepseek-r`) and sends `think: true` for those;
+  everything else (llama3.2, gemma, mistral, qwen2.5) gets
+  `think: false`, so they no longer return HTTP 400 "does not
+  support thinking" in the planning loop. See `THINKING_MODEL_PREFIXES`
+  in `crates/lacs-brain/src/planner.rs` — that slice is the source
+  of truth; add a prefix only after verifying the model + Ollama
+  version accepts the field.
+- You can override the decision in `~/.config/lacs/config.toml`:
+
+  ```toml
+  [llm]
+  model        = "qwen3:8b"
+  ollama_think = false       # force-off — required on CPU-only hosts
+  # ollama_think = true      # force-on — GPU hosts only
+  # ollama_think omitted     # auto-detect from model name (default)
+  ```
+
+- The env var `LACS_OLLAMA_THINK=true|false` has the same effect
+  and overrides both the config file and auto-detection.
+- The shell's SetupWizard now surfaces this as a three-way radio
+  (Auto / Force on / Force off), visible only when the selected
+  model supports thinking.
+- The output-token budget is a named constant in the planner,
+  `OLLAMA_NUM_PREDICT = 4096`, sent via `options.num_predict`
+  (Rig's top-level `max_tokens` is silently ignored by Ollama — see
+  the doc-comment on that constant for the full story).
+
+**Practical matrix:**
+
+| Your setup | What to do |
+|---|---|
+| CPU-only VM, any model | `LACS_LLM_MODEL=llama3.2:3b` — recommended default |
+| CPU-only VM, stuck on qwen3:8b | `LACS_OLLAMA_THINK=false` to disable thinking — still slow, but finishes |
+| Host GPU reachable from VM at `10.0.2.2:11434` | `LACS_OLLAMA_URL=http://10.0.2.2:11434 LACS_LLM_MODEL=qwen3:8b` — keep thinking on |
+| GPU passthrough (VFIO) inside VM | `LACS_LLM_MODEL=qwen3:8b`, defaults work |
+
+**Pointing the VM at the host GPU.** On the default QEMU SLIRP
+network, the host is reachable from the guest at `10.0.2.2`. If you
+run Ollama on the host with `OLLAMA_HOST=0.0.0.0:11434`, you can
+point the VM at it:
 
 ```sh
-LACS_TEST_MODEL=qwen3:8b  ./tests/e2e/silverblue-vm.sh provision
-LACS_TEST_MODEL=qwen3:14b ./tests/e2e/silverblue-vm.sh provision   # needs GPU
+# On the host, one-time:
+sudo tee /etc/systemd/system/ollama.service.d/listen.conf <<'EOF'
+[Service]
+Environment=OLLAMA_HOST=0.0.0.0:11434
+EOF
+sudo systemctl daemon-reload && sudo systemctl restart ollama
+sudo firewall-cmd --add-port=11434/tcp  # if firewalld is on
+
+# In the guest, point LACS at the host:
+LACS_OLLAMA_URL=http://10.0.2.2:11434 \
+LACS_LLM_MODEL=qwen3:8b \
+  ./tests/e2e/silverblue-vm.sh run
 ```
+
+This is *far* faster than GPU passthrough (VFIO) to set up and
+covers the common case of running against your own dev-box GPU.
+
+**Overriding the provisioner default.** `tests/e2e/provision.sh`
+pulls `qwen3:8b` by default. On CPU-only hosts, override with
+`LACS_TEST_MODEL`:
+
+```sh
+LACS_TEST_MODEL=llama3.2:3b ./tests/e2e/silverblue-vm.sh provision
+LACS_TEST_MODEL=llama3.2:3b ./tests/e2e/silverblue-vm.sh run
+```
+
+**Raise the per-story timeout** if you're pushing CPU inference:
+
+```sh
+LACS_STORY_TIMEOUT=900 LACS_LLM_MODEL=llama3.2:3b \
+    ./tests/e2e/silverblue-vm.sh run
+```
+
+**Performance tuning.** By default Ollama uses only `NumCPU/2`
+threads. For a 4-vCPU VM that's 2 — you can bump it to 4 by dropping a
+systemd drop-in:
+
+```sh
+sudo mkdir -p /etc/systemd/system/ollama.service.d
+sudo tee /etc/systemd/system/ollama.service.d/override.conf <<EOF
+[Service]
+Environment=OLLAMA_NUM_THREADS=4
+Environment=OLLAMA_KEEP_ALIVE=30m
+EOF
+sudo systemctl daemon-reload && sudo systemctl restart ollama
+```
+
+The `OLLAMA_KEEP_ALIVE=30m` keeps the model loaded in RAM between
+stories — otherwise ollama unloads after 5 minutes of inactivity and
+you pay the 5-10 s load cost on every story.
 
 ## 9. Env vars don't magically cross SSH
 
@@ -338,10 +455,90 @@ Forwarded vars: `LACS_ALLOW_DESTRUCTIVE`, `LACS_LLM_PROVIDER`,
 10. **`make install` writes to read-only `/usr`.** Makefile paths are
     now overridable; provisioner auto-uses `/etc/` on ostree.
 11. **Env vars don't cross SSH.** `cmd_run` forwards them through sudo.
-12. **Qwen3's thinking mode + CPU = minutes per story.** Use a smaller
-    model, prepend `/nothink`, or enable GPU passthrough.
+12. **Qwen3's thinking mode + CPU = Ollama HTTP 500 within 2 min.** The
+    `/api/chat` endpoint caps at ~120 s and `qwen3:8b` can't get past
+    its thinking preamble in that budget. Either point the VM at the
+    host's GPU (`LACS_OLLAMA_URL=http://10.0.2.2:11434`), force-off
+    thinking (`LACS_OLLAMA_THINK=false`), or switch to `llama3.2:3b`
+    for CPU-only runs. See §8.
+13. **`gemma3:1b` / `gemma3:4b` get `400: does not support tools`
+    from Ollama.** Great for non-tool smoke tests but not for LACS
+    stories — pick a tool-capable alternative (`llama3.2:3b`,
+    `qwen2.5:3b`).
+14. **Ollama uses only `NumCPU / 2` threads by default.** On a 4-vCPU
+    VM that's 2 — bump to 4 via a systemd drop-in (see §8). Also set
+    `OLLAMA_KEEP_ALIVE=30m` so the model stays resident between
+    stories.
+15. **First run fills `/var/home` if you rsync the repo including
+    `tests/e2e/vm/`.** That directory contains the VM's own 20 GB
+    qcow2 disk image; rsyncing it into the guest loops recursively
+    and hits ENOSPC. `silverblue-vm.sh provision` excludes `tests/e2e/vm`,
+    but if you rsync manually, remember `--exclude='tests/e2e/vm'`.
+16. **`lacs-test-cli` gets `Permission denied` on `/run/lacs/daemon.sock`
+    when invoked as `lacsdev`.** The socket is `srw-rw---- lacs:lacs`;
+    the ordinary dev user isn't in that group. Two paths:
 
-## 11. Snapshots are your friend
+    ```sh
+    # Option A — add yourself to the group (persists across reboots):
+    sudo usermod -aG lacs lacsdev
+    # log out and back in, or in the current shell:
+    exec newgrp lacs
+
+    # Option B — run via sudo, matching how the story harness does it:
+    sudo -E lacs-test-cli --doctor
+    ```
+
+    The story harness (`tests/e2e/run-stories.sh`) already does
+    `sudo -E`, so this only bites you when you're driving
+    `lacs-test-cli` by hand.
+
+## 11. The doctor command — your first debugging step
+
+`lacs-test-cli --doctor` runs a sequence of health checks and
+prints one line per check. Use it **before** running any story —
+five minutes of ambiguous timeouts usually resolve to a single red
+line in the doctor.
+
+```sh
+LACS_LLM_MODEL=qwen3:8b \
+LACS_OLLAMA_URL=http://10.0.2.2:11434 \
+LACS_LISTEN_URI=unix:///run/lacs/daemon.sock \
+  sudo -E lacs-test-cli --doctor
+```
+
+A clean run:
+
+```
+lacs-test-cli doctor
+  [ ok ]  config         provider=ollama, model=qwen3:8b
+  [ ok ]  daemon         reachable at /run/lacs/daemon.sock
+  [ ok ]  ollama         reachable at http://10.0.2.2:11434
+  [ ok ]  model          'qwen3:8b' is pulled
+  [ ok ]  thinking       enabled (auto: model starts with 'qwen3')
+  [ ok ]  num_predict    4096 (options.num_predict)
+
+doctor: all checks green.
+```
+
+What each line actually checks, and what a red line means:
+
+| Line | What it probes | Red means |
+|---|---|---|
+| `config` | `BrainConfig::from_env()` resolves with `LacsConfig` applied | Missing required API key, unknown provider, bad `max_turns` |
+| `daemon` | Opens `$LACS_LISTEN_URI`, sends a `query_state` frame, reads the reply | Socket missing (daemon not started), Permission denied (see gotcha #16), or daemon crashed |
+| `ollama` | `GET {LACS_OLLAMA_URL}/api/tags` with a 5 s timeout | URL wrong, Ollama down, firewall blocks 11434, or host's `OLLAMA_HOST=0.0.0.0` not set |
+| `model` | Requested model appears in `/api/tags` | `ollama pull <model>` not yet run, or typo in the tag |
+| `thinking` | Decision that `planner.rs::resolve_ollama_think` will make for this model, plus *why* (env override vs. auto-detected prefix) | Never red — this is informational, but read it to confirm your `ollama_think` override took effect |
+| `num_predict` | The `OLLAMA_NUM_PREDICT` constant baked into this binary | Never red — shown so you can confirm which binary is running |
+
+Exit codes: `0` all green, `1` any red, `2` usage error.
+
+The doctor is also the fastest way to confirm that an env var or
+`config.toml` change actually took effect — if `thinking` shows
+`(auto: ...)` but you expected `(LACS_OLLAMA_THINK=false)`, your
+override didn't reach the process.
+
+## 12. Snapshots are your friend
 
 First-time provisioning takes 30–60 minutes (mostly waiting for the
 Ollama CDN and the Rust release build). Once the VM is provisioned and
@@ -364,7 +561,7 @@ Every subsequent run becomes:
 No more waiting on Ollama, Rust, or Anaconda. The baseline is a
 qcow2 internal snapshot — no extra disk space until you diverge.
 
-## 12. When to reach for this VM vs. just `cargo test`
+## 13. When to reach for this VM vs. just `cargo test`
 
 | Change you're making | Good enough gate |
 |---|---|
@@ -376,7 +573,7 @@ qcow2 internal snapshot — no extra disk space until you diverge.
 | Packaging / Makefile / sudoers / polkit | **VM required** |
 | Release candidates | **VM + manual demo recording on real hardware** |
 
-## 13. Cleaning up
+## 14. Cleaning up
 
 - `./tests/e2e/silverblue-vm.sh destroy` removes the VM disk but keeps
   the downloaded ISO under `tests/e2e/vm/`. That directory is
@@ -384,7 +581,7 @@ qcow2 internal snapshot — no extra disk space until you diverge.
 - The dedicated VM SSH key at `~/.ssh/lacs-vm` is harmless to leave
   around; you can `rm ~/.ssh/lacs-vm*` if you want.
 
-## 14. See also
+## 15. See also
 
 - [`docs/contributing/testing.md`](docs/contributing/testing.md) — the
   short reference version of this file.

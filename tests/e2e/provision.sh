@@ -120,7 +120,20 @@ UNIT
     systemctl daemon-reload
 fi
 
+# Performance tuning drop-in. Ollama defaults to NumCPU/2 threads which
+# is 2 on a 4-vCPU VM — too few. OLLAMA_KEEP_ALIVE=30m keeps the model
+# resident between stories instead of unloading after 5 minutes of
+# inactivity (that unload costs 5-10 s on every subsequent story).
+install -d -m 755 /etc/systemd/system/ollama.service.d
+cat > /etc/systemd/system/ollama.service.d/override.conf <<'DROP'
+[Service]
+Environment=OLLAMA_NUM_THREADS=4
+Environment=OLLAMA_KEEP_ALIVE=30m
+DROP
+systemctl daemon-reload
+
 systemctl enable --now ollama || fail "Start Ollama systemd unit"
+systemctl restart ollama     # ensure the drop-in is applied
 # Wait up to 15s for the server to accept connections.
 for i in $(seq 1 15); do
     if curl -sf http://127.0.0.1:11434/api/tags > /dev/null; then break; fi
@@ -129,19 +142,33 @@ done
 curl -sf http://127.0.0.1:11434/api/tags > /dev/null || fail "Ollama not responding on 11434"
 
 # ---------------------------------------------------------------------------
-# Phase 2: Pull a small LLM
+# Phase 2: Pull the LLM
 # ---------------------------------------------------------------------------
 
 step "Pull test LLM model"
-# qwen3:8b is the sweet spot for CPU-only tool calling inside the VM:
-# ~5 GB disk, reliable tool calling, ~20-45 s/story on 4 vCPUs.
-# We learned this the hard way — qwen3:14b loaded fine but Qwen3's
-# default thinking mode pushes CPU-only latency to minutes per story,
-# and qwen3:0.6b was too small to emit correct tool calls at all.
+# qwen3:8b is the default because it produces the most reliable tool
+# calls in LACS's planning loop. 5.2 GB disk, thinking-capable, tool-
+# capable. LACS auto-detects the `qwen3` prefix and enables thinking
+# mode via `options` (see THINKING_MODEL_PREFIXES in
+# crates/lacs-brain/src/planner.rs).
 #
-# Override with LACS_TEST_MODEL:
-#   LACS_TEST_MODEL=qwen3:14b    # needs GPU passthrough
-#   LACS_TEST_MODEL=qwen3:30b-a3b # MoE, needs 16 GB+ VM RAM
+# Performance expectations:
+#   - Host GPU via LACS_OLLAMA_URL=http://10.0.2.2:11434 — <60 s/story
+#   - GPU passthrough (VFIO) — similar
+#   - CPU-only on a 4 vCPU VM — impractical: thinking exceeds Ollama's
+#     ~120 s request timeout. Either disable thinking
+#     (`ollama_think = false` in config.toml or
+#     LACS_OLLAMA_THINK=false), or switch to a non-thinking model
+#     via LACS_TEST_MODEL (see below). See HACKING.md §8.
+#
+# Override with LACS_TEST_MODEL. Known-good alternatives:
+#   LACS_TEST_MODEL=llama3.2:3b      # CPU fallback: 2 GB, no thinking,
+#                                    # ~2–4 min/story on 4 vCPUs.
+#   LACS_TEST_MODEL=qwen2.5:3b       # lighter CPU fallback, no thinking
+#   LACS_TEST_MODEL=qwen3:30b-a3b    # MoE, needs 16 GB+ VM RAM + GPU
+#
+# Known-bad (returned 400 "does not support tools" or similar):
+#   gemma3:1b, gemma3:4b, qwen3:0.6b, qwen3:1.7b.
 LACS_TEST_MODEL="${LACS_TEST_MODEL:-qwen3:8b}"
 ollama pull "$LACS_TEST_MODEL" || fail "Pull $LACS_TEST_MODEL"
 

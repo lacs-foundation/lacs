@@ -8,7 +8,9 @@ Silverblue hardware.
 - Fedora Silverblue installation (VM or bare metal)
 - LACS built and installed (`make build && sudo make install`)
 - `lacs-daemon` running (`sudo systemctl start lacs-daemon`)
-- Ollama running with `qwen3:8b` pulled
+- Ollama running with `llama3.2:3b` pulled (default CPU-friendly model;
+  `qwen3:8b` is only recommended if you have GPU passthrough — see
+  [HACKING.md §8](../../HACKING.md))
 - Terminal recorder: [asciinema](https://asciinema.org/) for the
   terminal session, or OBS/SimpleScreenRecorder for the Tauri window
 - For the README GIF: [vhs](https://github.com/charmbracelet/vhs)

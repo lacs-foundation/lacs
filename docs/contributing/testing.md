@@ -38,7 +38,7 @@ pnpm exec tsc --noEmit
 
 The smoke test boots Ollama and the daemon directly in a GitHub Actions
 runner (no VM, no real atomic desktop), pulls a small tool-capable model
-(`gemma3:1b`), and runs the 7 read-only user stories.
+(`llama3.2:3b`), and runs the 7 read-only user stories.
 
 **Triggers:**
 
@@ -314,23 +314,33 @@ Two distinct downloads can be slow:
    on the host and copy it in via SSH if you're going to re-provision
    often.
 
-2. **The model pull** (~5 GB for the default `qwen3:8b`). Happens
-   after Ollama is installed, via `ollama pull`. Goes through Ollama's
-   registry (usually faster than the ollama.com CDN).
+2. **The model pull** (~2 GB for the default `llama3.2:3b`, or ~5 GB
+   for `qwen3:8b` if you override). Happens after Ollama is installed,
+   via `ollama pull`. Goes through Ollama's registry (usually faster
+   than the ollama.com CDN).
 
 Override the model size with `LACS_TEST_MODEL`:
 
 ```sh
-LACS_TEST_MODEL=qwen3:8b  ./tests/e2e/silverblue-vm.sh provision   # default
-LACS_TEST_MODEL=qwen3:14b ./tests/e2e/silverblue-vm.sh provision   # needs GPU passthrough
-LACS_TEST_MODEL=qwen3:30b-a3b ./tests/e2e/silverblue-vm.sh provision  # MoE, needs 16G VM
+LACS_TEST_MODEL=llama3.2:3b ./tests/e2e/silverblue-vm.sh provision  # default, CPU-only friendly
+LACS_TEST_MODEL=qwen2.5:3b  ./tests/e2e/silverblue-vm.sh provision  # alt tool-capable 3B
+LACS_TEST_MODEL=qwen3:8b    ./tests/e2e/silverblue-vm.sh provision  # GPU passthrough only
 ```
 
-We default to **`qwen3:8b`** after empirical testing on CPU-only VMs:
-it produces correct tool calls reliably at ~20-45 s/story. Smaller
-models (qwen3:0.6b / qwen3:1.7b) emit garbled tool calls; larger
-models (qwen3:14b) are minutes per story on CPU because Qwen3's
-"thinking mode" generates thousands of preamble tokens.
+We default to **`llama3.2:3b`** after empirical live testing on a
+CPU-only 4-vCPU / 10 GB VM: ~2 GB download, no thinking mode, tool
+calling works reliably, ~2-4 min/story.
+
+Qwen3 models (including `qwen3:8b`) default to "thinking mode" which
+emits thousands of hidden reasoning tokens before the real answer. On
+CPU this blows past Ollama's internal 120-second request timeout and
+every `/api/chat` call fails with HTTP 500 before a plan is emitted.
+`qwen3:8b` is only a viable default if you have GPU passthrough
+configured. Gemma 3 (1b / 4b) is fast but Ollama currently rejects
+tool calls with `400: does not support tools`.
+
+Per-story timeout defaults to 10 minutes (`LACS_STORY_TIMEOUT=600`) —
+small tool-capable models on 4 vCPUs need that much headroom.
 
 For the full history of what we tried and why, see
 [HACKING.md](../../HACKING.md) §8.

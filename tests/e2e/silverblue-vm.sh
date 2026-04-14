@@ -427,7 +427,14 @@ cmd_run() {
         fi
     done
 
-    cmd_ssh "cd /home/${VM_USER}/lacs && sudo${sudo_env} bash tests/e2e/run-stories.sh"
+    # Forward positional args (specific story numbers, e.g. `run 1 3 7`)
+    # through to run-stories.sh so contributors can target individual
+    # stories during debugging.
+    local story_args=""
+    if [ $# -gt 0 ]; then
+        story_args=" $*"
+    fi
+    cmd_ssh "cd /home/${VM_USER}/lacs && sudo${sudo_env} bash tests/e2e/run-stories.sh${story_args}"
 }
 
 cmd_snapshot() {

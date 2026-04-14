@@ -73,8 +73,11 @@ export LACS_LISTEN_URI="${LACS_LISTEN_URI:-unix:///run/lacs/daemon.sock}"
 
 ALLOW_DESTRUCTIVE="${LACS_ALLOW_DESTRUCTIVE:-0}"
 
-# Timeout per story (seconds). Small models on CPU can be slow.
-STORY_TIMEOUT="${LACS_STORY_TIMEOUT:-120}"
+# Timeout per story (seconds). With qwen3:8b on host GPU, stories
+# finish in <60 s; with llama3.2:3b on 4 vCPU CPU, 2–4 min; with
+# qwen3:8b on CPU, impractical. 600 s is generous for the GPU path
+# and tolerant of the CPU fallback. Override with LACS_STORY_TIMEOUT.
+STORY_TIMEOUT="${LACS_STORY_TIMEOUT:-600}"
 
 declare -A STORY_NAMES
 STORY_NAMES[1]="Check disk usage"
