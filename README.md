@@ -14,7 +14,7 @@ Every execution is logged to a local SQLite audit trail.
 ## Why not just use
 
 | Tool | The problem |
-| --- | --- |
+|---|---|
 | Open Interpreter | Runs arbitrary shell commands. No approval gate. No audit log. |
 | Claude Computer Use | Uncontrolled desktop automation, not system administration. |
 | Ansible | Requires YAML playbooks written in advance. Not conversational. |
@@ -53,7 +53,7 @@ The core trust chain is built, tested, and wired end-to-end.
 Security hardening and multi-distro support are the active milestones.
 
 | Component | Status |
-| --- | --- |
+|---|---|
 | `lacs-brain` — LLM planner, tool loop, safety fence | complete |
 | `lacs-daemon` — 60+ typed actions, auth, preview, transactions | complete |
 | `lacs-daemon` — IPC dispatcher, live streaming, automatic rollback | complete |
@@ -90,13 +90,13 @@ cd apps/lacs-shell && pnpm install && pnpm tauri dev
 ### LLM provider
 
 LACS works with **Ollama** (no API key, recommended for getting started)
-or **Anthropic**.
+or with **Anthropic**, **OpenAI**, or **Gemini**.
 
-**Ollama:**
+**Ollama (recommended for privacy and offline use):**
 
 ```sh
-ollama pull qwen3:8b
-# LACS auto-detects Ollama when ANTHROPIC_API_KEY is not set.
+ollama pull llama3.2
+# LACS auto-detects Ollama when no cloud API key is set.
 ```
 
 **Anthropic:**
@@ -110,7 +110,7 @@ export ANTHROPIC_API_KEY=sk-ant-...
 ```toml
 [llm]
 provider = "ollama"
-model    = "qwen3:8b"
+model    = "llama3.2"
 
 [daemon]
 socket   = "/run/lacs/daemon.sock"
@@ -120,9 +120,11 @@ database = "/var/lib/lacs/daemon.sqlite"
 Config file values act as defaults. Environment variables always win.
 
 | Variable | Default | Description |
-| --- | --- | --- |
-| `LACS_LLM_PROVIDER` | auto-detect | `anthropic` or `ollama` |
+|---|---|---|
+| `LACS_LLM_PROVIDER` | auto-detect | `anthropic`, `openai`, `gemini`, or `ollama` |
 | `ANTHROPIC_API_KEY` | — | Required when provider is `anthropic` |
+| `OPENAI_API_KEY` | — | Required when provider is `openai` |
+| `GEMINI_API_KEY` | — | Required when provider is `gemini` |
 | `LACS_LLM_MODEL` | provider default | Override the model name |
 | `LACS_OLLAMA_URL` | `http://localhost:11434` | Ollama base URL |
 | `LACS_BRAIN_MAX_TURNS` | `5` | Planning turn limit (minimum 1) |
@@ -135,10 +137,10 @@ git clone https://github.com/lacs-foundation/lacs
 cd lacs
 
 # Run all Rust tests
-cargo test --workspace
+cargo test --workspace --locked
 
 # Run frontend tests
-cd apps/lacs-shell && pnpm install && pnpm test
+cd apps/lacs-shell && pnpm install && pnpm test && cd ../..
 ```
 
 Run the full stack locally:
@@ -152,12 +154,12 @@ cd apps/lacs-shell && pnpm install && pnpm tauri dev
 ```
 
 See [docs/developer-guide.md](docs/developer-guide.md) for the full
-development setup including pre-commit hooks.
+development setup including pre-commit hooks and E2E story testing.
 
 ## Contributing
 
-Issues tagged `good first issue` are well-scoped with clear acceptance
-criteria. Issues tagged `security` take priority.
+Contributions are welcome. Issues tagged `good first issue` are
+well-scoped with clear acceptance criteria — a great place to start.
 
 **Areas where contributions have high impact:**
 
@@ -172,11 +174,12 @@ and PR checklist. Open an issue before starting any substantial change.
 
 - [Architecture overview](docs/architecture.md)
 - [Developer guide](docs/developer-guide.md)
+- [Testing guide](docs/contributing/testing.md)
+- [Contributing guide](docs/contributing/CONTRIBUTING.md)
 - [Roadmap](ROADMAP.md)
 - [ADR 0001: System boundaries](docs/adr/0001-system-boundaries.md)
 - [ADR 0002: Brain provider layer](docs/adr/0002-brain-provider-layer.md)
 - [ADR 0003: IPC wire protocol](docs/adr/0003-ipc-wire-protocol.md)
-- [Contributing](CONTRIBUTING.md)
 - [Security policy](SECURITY.md)
 
 ## License

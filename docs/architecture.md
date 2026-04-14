@@ -3,18 +3,91 @@
 LACS is a local Linux control plane built around a strict boundary
 between planning, presentation, and execution.
 
-## Core Components
+## Crate and App Layout
 
-- `lacs-brain` parses intent and produces a typed plan.
-- `lacs-shell` renders the plan, preview, approval state, execution
-  progress, and transaction timeline.
-- `lacs-daemon` validates requests, enforces policy, executes typed
-  actions, and persists transaction history.
+| Location | Package | Role |
+|---|---|---|
+| `crates/lacs-brain/` | `lacs-brain` | Unprivileged LLM planner |
+| `crates/lacs-types/` | `lacs-types` | Shared domain types |
+| `crates/lacs-core/` | `lacs-core` | Config file loading, constants |
+| `crates/lacs-daemon/` | `lacs-daemon` | Privileged executor |
+| `crates/lacs-proto/` | `lacs-proto` | Protobuf definitions (future use) |
+| `apps/lacs-shell/` | `lacs-shell` | Tauri + React GUI |
+| `tests/e2e/bin/` | `lacs-test-cli` | E2E test harness CLI |
+
+### lacs-brain
+
+Unprivileged. Reads the user's intent, queries the daemon for system
+state, then calls the LLM in a tool-use loop until a typed plan is
+produced. Provides:
+
+- `LlmPlanner` — the planning loop entry point
+- `BrainConfig` — provider and model selection
+- Provider adapters: Anthropic, OpenAI, Gemini, Ollama
+- Planning tools: `get_system_state`, `query_*`, `propose_plan`, `remember`, `forget`
+- Safety fence: validates every action name and risk level before a plan leaves the brain
+
+### lacs-types
+
+Shared domain types used by every crate. Contains:
+
+- `CallerRole` — `Observer` | `Dev` | `Admin` | `Boot`
+- `RiskLevel` — `Low` | `Medium` | `High`
+- `JobState` — `Queued` | `Running` | `Succeeded` | `Failed` | `Canceled` | `RolledBack` | `NeedsReboot`
+- Request and result envelopes for IPC messages
+
+### lacs-core
+
+Shared constants and `~/.config/lacs/config.toml` loading via
+`LacsConfig`. Config file values become env-var defaults so every
+component uses the same resolution order.
+
+### lacs-daemon
+
+Privileged. The only component that touches the system. Provides:
+
+- 60+ typed actions (rpm-ostree, systemd, firewall, users, containers,
+  flatpak, toolbox, SSH, kernel args, …)
+- Role-based authorization (`Observer` → `Dev` → `Admin`)
+- Policy enforcement: stale-approval detection, request hash validation
+- Preview generation: risk level, side effects, reboot flag, rollback
+  metadata, content hash
+- IPC dispatcher over a Unix domain socket
+- Live stdout streaming as `JobProgress` frames
+- Automatic rollback for supported high-risk actions that fail
+- SQLite transaction audit log
+
+### lacs-shell
+
+The user-facing surface. A Tauri app (Rust backend + React frontend)
+that provides:
+
+- Intent entry pane
+- Plan review with risk badges and previews
+- Approval gate (explicit checkbox for Medium; typed action name for High)
+- Live job timeline with streaming output
+- Setup wizard for first-run LLM configuration
+
+### lacs-test-cli
+
+A headless CLI (`tests/e2e/bin/`) used only by the E2E test harness.
+It reads a natural-language intent from stdin, connects to a running
+daemon, calls the LLM planner, and writes the resulting plan as JSON
+on stdout. Also supports a `--doctor` mode that checks daemon
+reachability, Ollama availability, and model presence.
+
+This is a test tool, not a production interface. Users interact with
+LACS through `lacs-shell`.
 
 ## Trust Boundary
 
 The daemon is trusted. The brain and shell are not trusted with raw
 privileged execution.
+
+```
+lacs-brain  ──plan──►  lacs-shell  ──approval──►  lacs-daemon
+ (planner)               (approval)                 (executor)
+```
 
 The daemon owns:
 
@@ -24,6 +97,10 @@ The daemon owns:
 - jobs (execution, live output streaming)
 - transaction records (SQLite audit log)
 - rollback (automatic on failure for supported actions)
+
+Neither the brain nor the shell can execute a privileged action
+directly. The daemon verifies the approval hash before running
+anything.
 
 ## Request Flow
 
