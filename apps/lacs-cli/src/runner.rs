@@ -593,21 +593,42 @@ pub async fn run_intent(intent: String, opts: &RunOpts, log: &Logger) -> Result<
 // run_repl
 // ---------------------------------------------------------------------------
 
-/// Interactive REPL — reads intents using rustyline-async (arrow-key history,
-/// Ctrl+R reverse search, Ctrl+C to cancel, Ctrl+D to exit).
+/// Interactive REPL — reads intents with rustyline (arrow-key history,
+/// Ctrl+R reverse search, Ctrl+C to cancel input, Ctrl+D to exit).
 ///
-/// History is persisted to `~/.local/share/lacs/history` between sessions.
+/// History persists across sessions in `~/.local/share/lacs/history`.
+///
+/// `tokio::task::block_in_place` parks the current worker thread during each
+/// blocking `readline()` call so other tasks on the multi-thread runtime can
+/// run freely.  rustyline does not need to be `Send` with this approach.
 pub async fn run_repl(opts: &RunOpts, log: &Logger) -> Result<(), CliError> {
-    use rustyline_async::{Readline, ReadlineEvent};
+    use rustyline::{error::ReadlineError, DefaultEditor};
 
-    let (mut rl, _writer) = Readline::new("lacs> ".to_owned())
+    let history_path = std::env::var_os("HOME")
+        .map(|h| PathBuf::from(h).join(".local/share/lacs/history"));
+
+    let mut rl = DefaultEditor::new()
         .map_err(|e| CliError::ExecutionFailed(format!("readline init: {e}")))?;
 
+    if let Some(ref p) = history_path {
+        // Ensure the parent directory exists before the first load/save.
+        if let Some(parent) = p.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        // Absence of a history file is not an error.
+        let _ = rl.load_history(p);
+    }
+
     loop {
-        match rl.readline().await {
-            Ok(ReadlineEvent::Line(line)) => {
+        // Block the worker thread only during the blocking readline call.
+        // Other tokio threads continue executing tasks unaffected.
+        let readline_result = tokio::task::block_in_place(|| rl.readline("lacs> "));
+
+        match readline_result {
+            Ok(line) => {
                 let intent = line.trim().to_string();
-                let _ = rl.add_history_entry(line.clone());
+                // Ignore the result: duplicates are silently skipped by rustyline.
+                let _ = rl.add_history_entry(line.as_str());
                 if intent.is_empty() {
                     continue;
                 }
@@ -618,12 +639,16 @@ pub async fn run_repl(opts: &RunOpts, log: &Logger) -> Result<(), CliError> {
                     log.print_stderr(&format!("error: {e}"));
                 }
             }
-            Ok(ReadlineEvent::Eof | ReadlineEvent::Interrupted) => break,
+            Err(ReadlineError::Interrupted) | Err(ReadlineError::Eof) => break,
             Err(e) => {
                 log.print_stderr(&format!("readline error: {e}"));
                 break;
             }
         }
+    }
+
+    if let Some(ref p) = history_path {
+        let _ = rl.save_history(p);
     }
 
     Ok(())
