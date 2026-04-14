@@ -105,11 +105,17 @@ fn strip_ansi(s: &str) -> String {
 
 /// Parse a JSON value as an array of strings.
 ///
-/// Returns `Err` if the value is not a JSON array or if any element is not a
-/// JSON string. Callers that feed this into the planner must propagate the
-/// error so a protocol violation surfaces rather than producing a silently
-/// truncated state view.
+/// `null` / missing fields are treated as empty lists — the daemon returns
+/// `null` for array fields that do not apply to the current host type
+/// (e.g. `layered_packages` on a non-ostree system).
+///
+/// Returns `Err` if the value is a non-null, non-array type or if any array
+/// element is not a JSON string, so that actual protocol violations still
+/// surface rather than being silently truncated.
 fn string_array(field: &str, v: &Value) -> Result<Vec<String>, PlanningError> {
+    if v.is_null() {
+        return Ok(Vec::new());
+    }
     let arr = v.as_array().ok_or_else(|| {
         PlanningError::StateUnavailable(format!("field '{field}' is not an array"))
     })?;
@@ -474,6 +480,46 @@ mod tests {
         assert_eq!(state.services(), &["sshd.service", "nginx.service"]);
         assert_eq!(state.layered_packages(), &["vim"]);
         assert_eq!(state.users(), &["alice", "bob"]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 1b: curated_state accepts null for optional array fields
+    //   (daemon returns null for fields not applicable on non-ostree hosts)
+    // -----------------------------------------------------------------------
+    #[test]
+    fn curated_state_null_array_fields_treated_as_empty() {
+        let socket_path = temp_socket_path();
+        let handle = serve_sync(&socket_path, |mut stream| {
+            let raw = read_framed(&mut stream).unwrap();
+            let req: Value = serde_json::from_slice(&raw).unwrap();
+            let resp = serde_json::json!({
+                "type": "state_response",
+                "request_id": req["request_id"],
+                "state": {
+                    "host_name": "devhost",
+                    "deployment": null,
+                    "services": ["sshd.service"],
+                    "flatpaks": null,
+                    "toolboxes": null,
+                    "layered_packages": null,
+                    "containers": null,
+                    "users": ["alice"]
+                }
+            });
+            write_framed(&mut stream, &serde_json::to_vec(&resp).unwrap()).unwrap();
+        });
+
+        let client = DaemonClient::new(socket_path.clone());
+        let state = client.curated_state().unwrap();
+        handle.join().unwrap();
+        let _ = std::fs::remove_file(&socket_path);
+
+        assert_eq!(state.host_name(), "devhost");
+        assert_eq!(state.deployment(), ""); // null → empty string
+        assert!(state.flatpaks().is_empty(), "null flatpaks → empty");
+        assert!(state.toolboxes().is_empty(), "null toolboxes → empty");
+        assert!(state.layered_packages().is_empty(), "null layered_packages → empty");
+        assert!(state.containers().is_empty(), "null containers → empty");
     }
 
     // -----------------------------------------------------------------------
