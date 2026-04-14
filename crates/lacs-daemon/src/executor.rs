@@ -99,13 +99,14 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
             let app_id = validated_safe_arg(require_str(params, "app_id")?, "app_id")?;
             Ok(flatpak::remove_flatpak(&app_id))
         }
-        "SearchFlatpakApps" => Ok(flatpak::search_flatpak_apps(require_str(params, "term")?)),
+        "SearchFlatpakApps" => {
+            let term = validated_safe_arg(require_str(params, "term")?, "term")?;
+            Ok(flatpak::search_flatpak_apps(&term))
+        }
         "AddFlatpakRemote" => {
             let remote = validated_safe_arg(require_str(params, "remote")?, "remote")?;
-            Ok(flatpak::add_flatpak_remote(
-                &remote,
-                require_str(params, "url")?,
-            ))
+            let url = validated_safe_arg(require_str(params, "url")?, "url")?;
+            Ok(flatpak::add_flatpak_remote(&remote, &url))
         }
         "RemoveFlatpakRemote" => {
             let remote = validated_safe_arg(require_str(params, "remote")?, "remote")?;
@@ -233,9 +234,13 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
                 Some(img) => Some(validated_safe_arg(img, "image")?),
                 None => None,
             };
+            let release = match params.get("release").and_then(|v| v.as_str()) {
+                Some(r) => Some(validated_safe_arg(r, "release")?),
+                None => None,
+            };
             Ok(toolbox::create_toolbox(
                 &name,
-                params.get("release").and_then(|v| v.as_str()),
+                release.as_deref(),
                 image.as_deref(),
             ))
         }
@@ -278,7 +283,11 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
         "SetDnsServers" => {
             let interface = validated_safe_arg(require_str(params, "interface")?, "interface")?;
             let servers = str_array_or_empty(params, "servers")?;
-            let refs: Vec<&str> = servers.iter().map(String::as_str).collect();
+            let validated: Vec<String> = servers
+                .iter()
+                .map(|s| validated_safe_arg(s, "servers"))
+                .collect::<Result<_, _>>()?;
+            let refs: Vec<&str> = validated.iter().map(String::as_str).collect();
             Ok(network::set_dns_servers(&interface, &refs))
         }
         "ConfigureFirewall" => {
@@ -296,11 +305,15 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
         "ListGroups" => Ok(users::list_groups()),
         "CreateUser" => {
             let username = validated_username(require_str(params, "username")?, "username")?;
-            Ok(users::create_user(
-                &username,
-                params.get("shell").and_then(|v| v.as_str()),
-                params.get("home").and_then(|v| v.as_str()),
-            ))
+            let shell = match params.get("shell").and_then(|v| v.as_str()) {
+                Some(s) => Some(validated_safe_arg(s, "shell")?),
+                None => None,
+            };
+            let home = match params.get("home").and_then(|v| v.as_str()) {
+                Some(h) => Some(validated_safe_arg(h, "home")?),
+                None => None,
+            };
+            Ok(users::create_user(&username, shell.as_deref(), home.as_deref()))
         }
         "DeleteUser" => {
             let username = validated_username(require_str(params, "username")?, "username")?;
@@ -412,10 +425,10 @@ pub async fn execute_spec(spec: &ActionSpec) -> Result<ExecutionOutput, Executor
 }
 
 fn require_str<'a>(params: &'a Value, key: &'static str) -> Result<&'a str, ExecutorError> {
-    params
-        .get(key)
-        .and_then(|v| v.as_str())
-        .ok_or(ExecutorError::MissingParam(key))
+    match params.get(key) {
+        None => Err(ExecutorError::MissingParam(key)),
+        Some(v) => v.as_str().ok_or(ExecutorError::InvalidParam(key)),
+    }
 }
 
 /// Validate a repo_id: must be non-empty and contain only ASCII letters,
@@ -480,18 +493,20 @@ fn validated_public_key(s: &str) -> Result<String, ExecutorError> {
 }
 
 fn require_bool(params: &Value, key: &'static str) -> Result<bool, ExecutorError> {
-    params
-        .get(key)
-        .and_then(|v| v.as_bool())
-        .ok_or(ExecutorError::MissingParam(key))
+    match params.get(key) {
+        None => Err(ExecutorError::MissingParam(key)),
+        Some(v) => v.as_bool().ok_or(ExecutorError::InvalidParam(key)),
+    }
 }
 
 fn require_u32(params: &Value, key: &'static str) -> Result<u32, ExecutorError> {
-    let n = params
-        .get(key)
-        .and_then(|v| v.as_u64())
-        .ok_or(ExecutorError::MissingParam(key))?;
-    u32::try_from(n).map_err(|_| ExecutorError::InvalidParam(key))
+    match params.get(key) {
+        None => Err(ExecutorError::MissingParam(key)),
+        Some(v) => {
+            let n = v.as_u64().ok_or(ExecutorError::InvalidParam(key))?;
+            u32::try_from(n).map_err(|_| ExecutorError::InvalidParam(key))
+        }
+    }
 }
 
 /// Returns a vec of owned strings from a JSON array, or an empty vec if the
