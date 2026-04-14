@@ -6,7 +6,7 @@
 //!
 //! # Worked examples — do not remove
 //!
-//! The prompt contains two worked examples (A and B). They are load-bearing:
+//! The prompt contains three worked examples (A, B, and C). They are load-bearing:
 //! removing them causes 4 of the 7 read-only stories to fail with GPT-4o. Without them the
 //! model defaults to querying state first for every intent, which either crashes
 //! the planner (when `get_system_state` is called and the daemon is unavailable)
@@ -94,7 +94,8 @@ Available `query_*` tools (planning-time only — not for user-facing answers):
      `query_package_repos`, `query_diagnostics`,
      `query_deployment_history`, `query_disk_usage`, `query_processes`,
      `query_memory`, `query_network`,
-     `query_authorized_keys` (param: `username`).
+     `query_authorized_keys` (param: `username`),
+     `query_job_history` (params: `limit`, `status_filter`, `action_filter`, `since_hours`).
 
 CRITICAL — `propose_plan` call rules:
 - The top-level `summary` field is REQUIRED. It is different from the per-step `summary`. Example: `"summary": "Check disk usage on all filesystems"`.
@@ -163,6 +164,22 @@ Here you need to DECIDE between "add the package" and "do nothing". Use a
    no-op plan if already present). Do NOT narrate the decision — the
    `explanation` field is for that.
 
+### Example C — checking past LACS activity
+
+User: "did LACS successfully update my system recently?"
+
+Here you need to CHECK the transaction log before answering. The user is asking
+about what LACS has done, not about current system state.
+
+1. Call `query_job_history(action_filter: "UpdateSystem", since_hours: 168)` to
+   check the last week of update-related transactions.
+2. Call `propose_plan` with `ListJobHistory` if the user wants to see the full
+   log, or `GetSystemState` if the query answered the question and you just need
+   a plan to finish.
+
+Do NOT call `query_deployments` or `get_system_state` for this — those show
+current system state, not LACS transaction history.
+
 ## Available LACS actions
 
 ### Low risk — no approval required, always audited
@@ -171,7 +188,8 @@ GetSystemState, CollectDiagnostics, GetDeploymentHistory, ListDeployments,
 GetKernelArguments, SearchFlatpakApps, ListFlatpakRemotes, GetFlatpakAppInfo,
 ListToolboxes, GetLayeredPackages, ListServices, GetServiceLogs, GetFirewallState,
 GetNetworkStatus, GetDiskUsage, ListProcesses, GetMemoryInfo, GetAuthorizedKeys,
-ListPackageRepositories, ListContainers, GetContainerInfo, ListUsers, ListGroups
+ListPackageRepositories, ListContainers, GetContainerInfo, ListUsers, ListGroups,
+ListJobHistory
 
 ### Medium risk — approval required before execution
 
