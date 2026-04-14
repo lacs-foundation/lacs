@@ -23,7 +23,7 @@
 #
 # LLM provider is auto-detected (same logic as BrainConfig::from_env):
 #   - ANTHROPIC_API_KEY set  → provider=anthropic, model=claude-sonnet-4-6
-#   - OPENAI_API_KEY set     → provider=openai,    model=gpt-4o
+#   - OPENAI_API_KEY set     → provider=openai,    model=gpt-5.1-mini
 #   - GEMINI_API_KEY set     → provider=gemini,    model=gemini-2.0-flash
 #   - otherwise              → provider=ollama,    model=qwen3:8b (must be pulled)
 #
