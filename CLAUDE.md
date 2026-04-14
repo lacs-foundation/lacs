@@ -72,15 +72,16 @@ Changes to it must be validated against the full E2E story suite before merging.
 
 ### The two worked examples are not optional
 
-`prompt.rs` contains Examples B and C. **Do not remove them.**
-(Example A — "check disk usage" — was removed; it is a strict subset of the
-prose rule and Example B. It added no measurable coverage.)
+`prompt.rs` contains Examples A and B. **Do not remove them.**
+(The original Example A — "check disk usage" — was removed; it was a strict
+subset of the prose rule and the current Example A. It added no measurable
+coverage. The remaining examples were renumbered B→A, C→B.)
 
 Empirical result (GPT-4o, 7 read-only stories, 2026-04-14):
 
 | Condition           | Read-only stories passing |
 |---------------------|--------------------------|
-| With examples (B+C) | 7 / 7                    |
+| With examples (A+B) | 7 / 7                    |
 | Without examples    | 3 / 7                    |
 
 Stories 8–10 require a live daemon (rpm-ostree, toolbox, SSH key writes) and are

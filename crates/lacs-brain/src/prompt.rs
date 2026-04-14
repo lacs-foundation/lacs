@@ -6,7 +6,7 @@
 //!
 //! # Worked examples — do not remove
 //!
-//! The prompt contains two worked examples (B and C). They are load-bearing:
+//! The prompt contains two worked examples (A and B). They are load-bearing:
 //! removing them causes 7/10 E2E stories to fail with GPT-4o. Without them the
 //! model defaults to querying state first for every intent, which either crashes
 //! the planner (when `get_system_state` is called and the daemon is unavailable)
@@ -103,7 +103,7 @@ CRITICAL — `propose_plan` call rules:
 
 ## Worked examples
 
-### Example B — "is the system low on memory? show me what's using it"
+### Example A — "is the system low on memory? show me what's using it"
 
 This looks like a question that needs an answer, but it is still a direct
 read-only request. Go straight to `propose_plan` with `GetMemoryInfo` and
@@ -138,7 +138,7 @@ results to the user.
 }
 ```
 
-### Example C — "install vim" when vim might already be layered
+### Example B — "install vim" when vim might already be layered
 
 Here you need to DECIDE between "add the package" and "do nothing". Use a
 `query_*` tool, then propose:

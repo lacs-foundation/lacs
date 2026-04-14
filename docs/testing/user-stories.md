@@ -294,12 +294,12 @@ on PRs labeled `e2e`.
 ### Prompt engineering observations
 
 The system prompt in `crates/lacs-brain/src/prompt.rs` contains two worked
-examples (B and C). These are **load-bearing** — removing them causes 4 of 7
+examples (A and B). These are **load-bearing** — removing them causes 4 of 7
 read-only stories to fail with GPT-4o.
 
-Example A ("check disk usage") was removed — it is a strict subset of the
-prose rule and Example B, and adds no measurable coverage. B+C alone are
-equivalent to A+B+C for every testable story.
+The original Example A ("check disk usage") was removed — it was a strict
+subset of the prose rule and the current Example A, and added no measurable
+coverage. The remaining examples were renumbered B→A, C→B.
 
 Stories 8–10 require a live daemon and are skipped in the no-daemon CI run.
 
@@ -314,7 +314,7 @@ degraded fallback plan (e.g. `CollectDiagnostics` instead of `GetMemoryInfo`).
 immediately. Use `query_*` only when you need to DECIDE between plans (e.g.
 check if vim is already layered before proposing `AddLayeredPackage`).
 
-| Story | Without examples | With B+C |
+| Story | Without examples | With A+B |
 |-------|-----------------|---------|
 | 1 — disk usage | ✅ (lucky fallback) | ✅ |
 | 2 — memory pressure | ❌ wrong plan | ✅ |
@@ -335,7 +335,7 @@ to an unrelated action (`CollectDiagnostics`, `GetDiskUsage`, etc.).
 
 Stories 8 and 10 crash due to daemon absence regardless of examples — the
 model correctly calls `query_packages` / `query_authorized_keys` (guided by
-Example C), but the no-daemon environment causes those calls to error, and the
+Example B), but the no-daemon environment causes those calls to error, and the
 model then escalates to `get_system_state` which hard-crashes the planner.
 These pass on a real VM with the daemon running.
 
