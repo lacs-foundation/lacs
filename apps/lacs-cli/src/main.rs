@@ -4,5 +4,5 @@ mod client;
 mod error;
 
 fn main() {
-    std::process::exit(0);
+    todo!("Phase C: wire up CLI dispatch")
 }

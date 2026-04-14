@@ -24,6 +24,7 @@
 
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use lacs_brain::planner::PlanningError;
@@ -102,10 +103,26 @@ fn strip_ansi(s: &str) -> String {
     strip_ansi_escapes::strip_str(s)
 }
 
-fn string_array(v: &Value) -> Vec<String> {
-    v.as_array()
-        .map(|arr| arr.iter().filter_map(|x| x.as_str().map(String::from)).collect())
-        .unwrap_or_default()
+/// Parse a JSON value as an array of strings.
+///
+/// Returns `Err` if the value is not a JSON array or if any element is not a
+/// JSON string. Callers that feed this into the planner must propagate the
+/// error so a protocol violation surfaces rather than producing a silently
+/// truncated state view.
+fn string_array(field: &str, v: &Value) -> Result<Vec<String>, PlanningError> {
+    let arr = v.as_array().ok_or_else(|| {
+        PlanningError::StateUnavailable(format!("field '{field}' is not an array"))
+    })?;
+    arr.iter()
+        .enumerate()
+        .map(|(i, x)| {
+            x.as_str().map(String::from).ok_or_else(|| {
+                PlanningError::StateUnavailable(format!(
+                    "field '{field}[{i}]' is not a string"
+                ))
+            })
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -114,12 +131,12 @@ fn string_array(v: &Value) -> Vec<String> {
 
 /// Client for the lacs-daemon Unix socket.
 pub struct DaemonClient {
-    socket_path: String,
+    socket_path: PathBuf,
 }
 
 impl DaemonClient {
     /// Construct with the resolved socket path (caller handles config/env lookup).
-    pub fn new(socket_path: impl Into<String>) -> Self {
+    pub fn new(socket_path: impl Into<PathBuf>) -> Self {
         Self { socket_path: socket_path.into() }
     }
 
@@ -130,14 +147,18 @@ impl DaemonClient {
     fn curated_state_inner(&self) -> Result<CuratedState, PlanningError> {
         let mut stream = UnixStream::connect(&self.socket_path)
             .map_err(|e| PlanningError::StateUnavailable(format!("connect: {e}")))?;
-        stream.set_read_timeout(Some(SOCKET_TIMEOUT)).ok();
-        stream.set_write_timeout(Some(SOCKET_TIMEOUT)).ok();
+        stream
+            .set_read_timeout(Some(SOCKET_TIMEOUT))
+            .map_err(|e| PlanningError::StateUnavailable(format!("set timeout: {e}")))?;
+        stream
+            .set_write_timeout(Some(SOCKET_TIMEOUT))
+            .map_err(|e| PlanningError::StateUnavailable(format!("set timeout: {e}")))?;
 
         let req = serde_json::to_vec(&serde_json::json!({
             "type": "query_state",
             "request_id": "cli-state"
         }))
-        .expect("static JSON");
+        .map_err(|e| PlanningError::StateUnavailable(format!("serialize: {e}")))?;
 
         write_framed(&mut stream, &req)
             .map_err(|e| PlanningError::StateUnavailable(format!("send: {e}")))?;
@@ -156,16 +177,17 @@ impl DaemonClient {
                 let host = s["host_name"]
                     .as_str()
                     .ok_or_else(|| PlanningError::StateUnavailable("missing host_name".into()))?;
+                // deployment is optional: empty on non-ostree systems (see CuratedState::new)
                 let deployment = s["deployment"].as_str().unwrap_or("");
                 CuratedState::new(
                     host,
                     deployment,
-                    string_array(&s["services"]),
-                    string_array(&s["flatpaks"]),
-                    string_array(&s["toolboxes"]),
-                    string_array(&s["layered_packages"]),
-                    string_array(&s["containers"]),
-                    string_array(&s["users"]),
+                    string_array("services", &s["services"])?,
+                    string_array("flatpaks", &s["flatpaks"])?,
+                    string_array("toolboxes", &s["toolboxes"])?,
+                    string_array("layered_packages", &s["layered_packages"])?,
+                    string_array("containers", &s["containers"])?,
+                    string_array("users", &s["users"])?,
                 )
                 .map_err(PlanningError::StateUnavailable)
             }
@@ -186,8 +208,12 @@ impl DaemonClient {
     ) -> Result<String, PlanningError> {
         let mut stream = UnixStream::connect(&self.socket_path)
             .map_err(|e| PlanningError::StateUnavailable(format!("connect: {e}")))?;
-        stream.set_read_timeout(Some(SOCKET_TIMEOUT)).ok();
-        stream.set_write_timeout(Some(SOCKET_TIMEOUT)).ok();
+        stream
+            .set_read_timeout(Some(SOCKET_TIMEOUT))
+            .map_err(|e| PlanningError::StateUnavailable(format!("set timeout: {e}")))?;
+        stream
+            .set_write_timeout(Some(SOCKET_TIMEOUT))
+            .map_err(|e| PlanningError::StateUnavailable(format!("set timeout: {e}")))?;
 
         let req = serde_json::to_vec(&serde_json::json!({
             "type": "query_action",
@@ -208,7 +234,11 @@ impl DaemonClient {
 
         match resp["type"].as_str() {
             Some("query_action_response") => {
-                let output = resp["output"].as_str().unwrap_or("");
+                let output = resp["output"].as_str().ok_or_else(|| {
+                    PlanningError::StateUnavailable(
+                        "query_action_response missing 'output' string field".into(),
+                    )
+                })?;
                 Ok(strip_ansi(output))
             }
             Some("error_response") => Err(PlanningError::StateUnavailable(format!(
@@ -222,14 +252,14 @@ impl DaemonClient {
     }
 
     // ------------------------------------------------------------------
-    // Async operations (called by runner.rs)
+    // Async operations
     // ------------------------------------------------------------------
 
     /// Preview a plan step.
     ///
     /// Returns the [`PreviewEnvelope`] (which contains `request_hash`) and the
-    /// `transaction_id`. Pass `request_hash` verbatim to [`execute`] as
-    /// `approval_hash`.
+    /// `transaction_id`. Pass `request_hash` verbatim to [`DaemonClient::execute`]
+    /// as `approval_hash`.
     pub async fn preview(
         &self,
         action_name: &str,
@@ -240,7 +270,7 @@ impl DaemonClient {
             .map_err(|e| {
                 CliError::ConfigOrDaemon(format!(
                     "cannot connect to {}: {e}",
-                    self.socket_path
+                    self.socket_path.display()
                 ))
             })?;
 
@@ -296,14 +326,14 @@ impl DaemonClient {
         action_name: &str,
         params: &Value,
         approval_hash: &str,
-        mut on_line: impl FnMut(String),
+        mut on_line: impl FnMut(&str),
     ) -> Result<ResultEnvelope, CliError> {
         let mut stream = tokio::net::UnixStream::connect(&self.socket_path)
             .await
             .map_err(|e| {
                 CliError::ConfigOrDaemon(format!(
                     "cannot connect to {}: {e}",
-                    self.socket_path
+                    self.socket_path.display()
                 ))
             })?;
 
@@ -331,8 +361,12 @@ impl DaemonClient {
             match resp["type"].as_str() {
                 Some("job_started") => {}
                 Some("job_progress") => {
-                    let line = resp["line"].as_str().unwrap_or("");
-                    on_line(strip_ansi(line));
+                    let line = resp["line"].as_str().ok_or_else(|| {
+                        CliError::ExecutionFailed(
+                            "job_progress message missing 'line' string field".into(),
+                        )
+                    })?;
+                    on_line(&strip_ansi(line));
                 }
                 Some("job_completed") => {
                     let envelope: ResultEnvelope =
@@ -430,7 +464,7 @@ mod tests {
             write_framed(&mut stream, &serde_json::to_vec(&resp).unwrap()).unwrap();
         });
 
-        let client = DaemonClient::new(socket_path.to_str().unwrap());
+        let client = DaemonClient::new(socket_path.clone());
         let state = client.curated_state().unwrap();
         handle.join().unwrap();
         let _ = std::fs::remove_file(&socket_path);
@@ -464,7 +498,7 @@ mod tests {
             write_framed(&mut stream, &serde_json::to_vec(&resp).unwrap()).unwrap();
         });
 
-        let client = DaemonClient::new(socket_path.to_str().unwrap());
+        let client = DaemonClient::new(socket_path.clone());
         let output = client
             .query_action("GetDiskUsage", &serde_json::json!({}))
             .unwrap();
@@ -510,7 +544,7 @@ mod tests {
                 .unwrap();
         });
 
-        let client = DaemonClient::new(socket_path.to_str().unwrap());
+        let client = DaemonClient::new(socket_path.clone());
         let (envelope, tx_id) = client
             .preview("GetDiskUsage", &serde_json::json!({}))
             .await
@@ -579,14 +613,14 @@ mod tests {
             }
         });
 
-        let client = DaemonClient::new(socket_path.to_str().unwrap());
+        let client = DaemonClient::new(socket_path.clone());
         let mut lines: Vec<String> = Vec::new();
         let result = client
             .execute(
                 "GetDiskUsage",
                 &serde_json::json!({}),
                 "abcdef1234",
-                |line| lines.push(line),
+                |line| lines.push(line.to_owned()),
             )
             .await
             .unwrap();
@@ -631,5 +665,382 @@ mod tests {
             matches!(err, CliError::ConfigOrDaemon(_)),
             "expected ConfigOrDaemon, got {err:?}"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 6: curated_state error_response maps to StateUnavailable
+    // -----------------------------------------------------------------------
+    #[test]
+    fn curated_state_error_response_maps_to_state_unavailable() {
+        let socket_path = temp_socket_path();
+        let handle = serve_sync(&socket_path, |mut stream| {
+            let raw = read_framed(&mut stream).unwrap();
+            let req: Value = serde_json::from_slice(&raw).unwrap();
+            let resp = serde_json::json!({
+                "type": "error_response",
+                "request_id": req["request_id"],
+                "message": "permission denied"
+            });
+            write_framed(&mut stream, &serde_json::to_vec(&resp).unwrap()).unwrap();
+        });
+
+        let client = DaemonClient::new(socket_path.clone());
+        let err = client.curated_state().unwrap_err();
+        handle.join().unwrap();
+        let _ = std::fs::remove_file(&socket_path);
+
+        match err {
+            PlanningError::StateUnavailable(msg) => {
+                assert!(msg.contains("permission denied"), "got: {msg}");
+            }
+            other => panic!("expected StateUnavailable, got {other:?}"),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 7: curated_state unexpected response type maps to StateUnavailable
+    // -----------------------------------------------------------------------
+    #[test]
+    fn curated_state_unexpected_response_type_maps_to_state_unavailable() {
+        let socket_path = temp_socket_path();
+        let handle = serve_sync(&socket_path, |mut stream| {
+            let raw = read_framed(&mut stream).unwrap();
+            let req: Value = serde_json::from_slice(&raw).unwrap();
+            let resp = serde_json::json!({
+                "type": "totally_unknown",
+                "request_id": req["request_id"]
+            });
+            write_framed(&mut stream, &serde_json::to_vec(&resp).unwrap()).unwrap();
+        });
+
+        let client = DaemonClient::new(socket_path.clone());
+        let err = client.curated_state().unwrap_err();
+        handle.join().unwrap();
+        let _ = std::fs::remove_file(&socket_path);
+
+        match err {
+            PlanningError::StateUnavailable(msg) => {
+                assert!(msg.contains("unexpected response type"), "got: {msg}");
+            }
+            other => panic!("expected StateUnavailable, got {other:?}"),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 8: query_action error_response maps to StateUnavailable
+    // -----------------------------------------------------------------------
+    #[test]
+    fn query_action_error_response_maps_to_state_unavailable() {
+        let socket_path = temp_socket_path();
+        let handle = serve_sync(&socket_path, |mut stream| {
+            let raw = read_framed(&mut stream).unwrap();
+            let req: Value = serde_json::from_slice(&raw).unwrap();
+            let resp = serde_json::json!({
+                "type": "error_response",
+                "request_id": req["request_id"],
+                "message": "action failed: no such command"
+            });
+            write_framed(&mut stream, &serde_json::to_vec(&resp).unwrap()).unwrap();
+        });
+
+        let client = DaemonClient::new(socket_path.clone());
+        let err = client
+            .query_action("GetDiskUsage", &serde_json::json!({}))
+            .unwrap_err();
+        handle.join().unwrap();
+        let _ = std::fs::remove_file(&socket_path);
+
+        match err {
+            PlanningError::StateUnavailable(msg) => {
+                assert!(msg.contains("action failed"), "got: {msg}");
+            }
+            other => panic!("expected StateUnavailable, got {other:?}"),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 9: query_action unexpected response type maps to StateUnavailable
+    // -----------------------------------------------------------------------
+    #[test]
+    fn query_action_unexpected_response_type_maps_to_state_unavailable() {
+        let socket_path = temp_socket_path();
+        let handle = serve_sync(&socket_path, |mut stream| {
+            let raw = read_framed(&mut stream).unwrap();
+            let req: Value = serde_json::from_slice(&raw).unwrap();
+            let resp = serde_json::json!({
+                "type": "bogus_type",
+                "request_id": req["request_id"]
+            });
+            write_framed(&mut stream, &serde_json::to_vec(&resp).unwrap()).unwrap();
+        });
+
+        let client = DaemonClient::new(socket_path.clone());
+        let err = client
+            .query_action("GetDiskUsage", &serde_json::json!({}))
+            .unwrap_err();
+        handle.join().unwrap();
+        let _ = std::fs::remove_file(&socket_path);
+
+        match err {
+            PlanningError::StateUnavailable(msg) => {
+                assert!(msg.contains("unexpected response type"), "got: {msg}");
+            }
+            other => panic!("expected StateUnavailable, got {other:?}"),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 10: execute error_response mid-stream maps to ExecutionFailed
+    // -----------------------------------------------------------------------
+    #[tokio::test]
+    async fn execute_error_response_mid_stream_maps_to_execution_failed() {
+        let socket_path = temp_socket_path();
+        let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
+
+        let mock = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let raw = read_framed_async(&mut stream).await.unwrap();
+            let req: Value = serde_json::from_slice(&raw).unwrap();
+
+            for msg in [
+                serde_json::json!({
+                    "type": "job_started",
+                    "request_id": req["request_id"],
+                    "job_id": "job-99",
+                    "transaction_id": "tx-xyz"
+                }),
+                serde_json::json!({
+                    "type": "job_progress",
+                    "job_id": "job-99",
+                    "line": "Starting\u{2026}"
+                }),
+                serde_json::json!({
+                    "type": "error_response",
+                    "category": "execution_error",
+                    "message": "transaction failed"
+                }),
+            ] {
+                write_framed_async(&mut stream, &serde_json::to_vec(&msg).unwrap())
+                    .await
+                    .unwrap();
+            }
+        });
+
+        let client = DaemonClient::new(socket_path.clone());
+        let mut lines: Vec<String> = Vec::new();
+        let err = client
+            .execute(
+                "InstallPackage",
+                &serde_json::json!({"name": "vim"}),
+                "hash-abc",
+                |line| lines.push(line.to_owned()),
+            )
+            .await
+            .unwrap_err();
+
+        mock.await.unwrap();
+        let _ = tokio::fs::remove_file(&socket_path).await;
+
+        assert_eq!(lines, vec!["Starting\u{2026}"]);
+        match err {
+            CliError::ExecutionFailed(msg) => {
+                assert!(msg.contains("transaction failed"), "got: {msg}");
+            }
+            other => panic!("expected ExecutionFailed, got {other:?}"),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 11: execute unexpected response type maps to ExecutionFailed
+    // -----------------------------------------------------------------------
+    #[tokio::test]
+    async fn execute_unexpected_response_type_maps_to_execution_failed() {
+        let socket_path = temp_socket_path();
+        let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
+
+        let mock = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let raw = read_framed_async(&mut stream).await.unwrap();
+            let req: Value = serde_json::from_slice(&raw).unwrap();
+
+            for msg in [
+                serde_json::json!({
+                    "type": "job_started",
+                    "request_id": req["request_id"],
+                    "job_id": "job-99",
+                    "transaction_id": "tx-xyz"
+                }),
+                serde_json::json!({
+                    "type": "job_queued",
+                    "job_id": "job-99"
+                }),
+            ] {
+                write_framed_async(&mut stream, &serde_json::to_vec(&msg).unwrap())
+                    .await
+                    .unwrap();
+            }
+        });
+
+        let client = DaemonClient::new(socket_path.clone());
+        let err = client
+            .execute(
+                "InstallPackage",
+                &serde_json::json!({"name": "vim"}),
+                "hash-abc",
+                |_line| {},
+            )
+            .await
+            .unwrap_err();
+
+        mock.await.unwrap();
+        let _ = tokio::fs::remove_file(&socket_path).await;
+
+        match err {
+            CliError::ExecutionFailed(msg) => {
+                assert!(msg.contains("unexpected response type"), "got: {msg}");
+            }
+            other => panic!("expected ExecutionFailed, got {other:?}"),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 12: read_framed rejects a frame exceeding MAX_FRAME_BYTES (sync)
+    // -----------------------------------------------------------------------
+    #[test]
+    fn read_framed_rejects_frame_above_4mib() {
+        let socket_path = temp_socket_path();
+        let handle = serve_sync(&socket_path, |mut stream| {
+            // Consume the client's request
+            let _ = read_framed(&mut stream).unwrap();
+            // Send an oversized length prefix — no body needed; the check fires first
+            let oversized = (MAX_FRAME_BYTES as u32) + 1;
+            stream.write_all(&oversized.to_le_bytes()).unwrap();
+        });
+
+        let client = DaemonClient::new(socket_path.clone());
+        let err = client.curated_state().unwrap_err();
+        handle.join().unwrap();
+        let _ = std::fs::remove_file(&socket_path);
+
+        match err {
+            PlanningError::StateUnavailable(msg) => {
+                assert!(msg.contains("frame too large"), "got: {msg}");
+            }
+            other => panic!("expected StateUnavailable, got {other:?}"),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 13: read_framed_async rejects a frame exceeding MAX_FRAME_BYTES
+    // -----------------------------------------------------------------------
+    #[tokio::test]
+    async fn read_framed_async_rejects_frame_above_4mib() {
+        let socket_path = temp_socket_path();
+        let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
+
+        let mock = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            use tokio::io::AsyncWriteExt;
+            // Consume the client's request
+            read_framed_async(&mut stream).await.unwrap();
+            // Send an oversized length prefix
+            let oversized = (MAX_FRAME_BYTES as u32) + 1;
+            stream.write_all(&oversized.to_le_bytes()).await.unwrap();
+        });
+
+        let client = DaemonClient::new(socket_path.clone());
+        let err = client
+            .preview("GetDiskUsage", &serde_json::json!({}))
+            .await
+            .unwrap_err();
+
+        mock.await.unwrap();
+        let _ = tokio::fs::remove_file(&socket_path).await;
+
+        match err {
+            CliError::ConfigOrDaemon(msg) => {
+                assert!(msg.contains("frame too large"), "got: {msg}");
+            }
+            other => panic!("expected ConfigOrDaemon, got {other:?}"),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 14: preview error_response maps to PlanningFailed
+    // -----------------------------------------------------------------------
+    #[tokio::test]
+    async fn preview_error_response_maps_to_planning_failed() {
+        let socket_path = temp_socket_path();
+        let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
+
+        let mock = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let raw = read_framed_async(&mut stream).await.unwrap();
+            let req: Value = serde_json::from_slice(&raw).unwrap();
+            let resp = serde_json::json!({
+                "type": "error_response",
+                "request_id": req["request_id"],
+                "category": "action_not_found",
+                "message": "GetFoo is not registered"
+            });
+            write_framed_async(&mut stream, &serde_json::to_vec(&resp).unwrap())
+                .await
+                .unwrap();
+        });
+
+        let client = DaemonClient::new(socket_path.clone());
+        let err = client
+            .preview("GetFoo", &serde_json::json!({}))
+            .await
+            .unwrap_err();
+
+        mock.await.unwrap();
+        let _ = tokio::fs::remove_file(&socket_path).await;
+
+        match err {
+            CliError::PlanningFailed(msg) => {
+                assert!(msg.contains("action_not_found"), "got: {msg}");
+                assert!(msg.contains("GetFoo is not registered"), "got: {msg}");
+            }
+            other => panic!("expected PlanningFailed, got {other:?}"),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 15: preview unexpected response type maps to ConfigOrDaemon
+    // -----------------------------------------------------------------------
+    #[tokio::test]
+    async fn preview_unexpected_response_type_maps_to_config_or_daemon() {
+        let socket_path = temp_socket_path();
+        let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
+
+        let mock = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let raw = read_framed_async(&mut stream).await.unwrap();
+            let req: Value = serde_json::from_slice(&raw).unwrap();
+            let resp = serde_json::json!({
+                "type": "something_new",
+                "request_id": req["request_id"]
+            });
+            write_framed_async(&mut stream, &serde_json::to_vec(&resp).unwrap())
+                .await
+                .unwrap();
+        });
+
+        let client = DaemonClient::new(socket_path.clone());
+        let err = client
+            .preview("GetDiskUsage", &serde_json::json!({}))
+            .await
+            .unwrap_err();
+
+        mock.await.unwrap();
+        let _ = tokio::fs::remove_file(&socket_path).await;
+
+        match err {
+            CliError::ConfigOrDaemon(msg) => {
+                assert!(msg.contains("unexpected response type"), "got: {msg}");
+            }
+            other => panic!("expected ConfigOrDaemon, got {other:?}"),
+        }
     }
 }

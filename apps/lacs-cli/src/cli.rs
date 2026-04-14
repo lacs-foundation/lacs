@@ -27,7 +27,8 @@ pub struct Cli {
     /// Auto-approve steps up to the effective risk ceiling.
     ///
     /// Alone, approves LOW only. With `--max-risk medium`, approves up to
-    /// MEDIUM. HIGH always requires a human in the loop regardless of flags.
+    /// MEDIUM. HIGH steps always require explicit human confirmation —
+    /// `--yes` cannot auto-approve them regardless of `--max-risk`.
     #[arg(long, global = true)]
     pub yes: bool,
 
@@ -296,5 +297,37 @@ mod tests {
     fn intent_string_returns_none_for_non_intent_commands() {
         let cli = Cli::try_parse_from(["lacs", "doctor"]).unwrap();
         assert!(cli.command.unwrap().intent_string().is_none());
+    }
+
+    #[test]
+    fn completions_subcommand_parsed() {
+        let cli = Cli::try_parse_from(["lacs", "completions", "bash"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Completions { shell: clap_complete::Shell::Bash })
+        ));
+    }
+
+    #[test]
+    fn completions_unknown_shell_fails() {
+        assert!(Cli::try_parse_from(["lacs", "completions", "zsh-invalid"]).is_err());
+    }
+
+    #[test]
+    fn history_with_partial_flags() {
+        let cli = Cli::try_parse_from([
+            "lacs", "history", "--status", "failed", "--limit", "10",
+        ])
+        .unwrap();
+        match cli.command {
+            Some(Command::History(args)) => {
+                assert_eq!(args.status.as_deref(), Some("failed"));
+                assert_eq!(args.limit, 10);
+                assert!(args.action.is_none());
+                assert!(args.since.is_none());
+                assert!(!args.json);
+            }
+            other => panic!("expected Command::History, got {other:?}"),
+        }
     }
 }
