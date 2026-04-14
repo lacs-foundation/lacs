@@ -147,6 +147,16 @@ STORY_NAMES[7]="SSH key inventory"
 STORY_NAMES[8]="Layer vim via rpm-ostree (destructive)"
 STORY_NAMES[9]="Create a toolbox (destructive)"
 STORY_NAMES[10]="Add SSH authorized key (destructive)"
+STORY_NAMES[11]="Deployment status + kernel arguments"
+STORY_NAMES[12]="LACS activity log — today"
+STORY_NAMES[13]="Service logs for firewalld"
+STORY_NAMES[14]="Triple compound — disk + memory + services"
+STORY_NAMES[15]="Rollback history"
+STORY_NAMES[16]="Network status + firewall rules"
+STORY_NAMES[17]="Container list + specific info"
+STORY_NAMES[18]="Restart bluetooth service (destructive)"
+STORY_NAMES[19]="Update system (destructive)"
+STORY_NAMES[20]="Add user to wheel group (destructive)"
 
 ALLOW_DESTRUCTIVE="${LACS_ALLOW_DESTRUCTIVE:-0}"
 STORY_TIMEOUT="${LACS_STORY_TIMEOUT:-120}"
@@ -159,9 +169,9 @@ declare -A MESSAGES
 if [[ $# -gt 0 ]]; then
     STORIES=("$@")
 elif [[ "$ALLOW_DESTRUCTIVE" == "1" ]]; then
-    STORIES=(1 2 3 4 5 6 7 8 9 10)
+    STORIES=(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20)
 else
-    STORIES=(1 2 3 4 5 6 7)
+    STORIES=(1 2 3 4 5 6 7 11 12 13 14 15 16 17)
 fi
 
 # ---------------------------------------------------------------------------
@@ -277,7 +287,8 @@ echo ""
 if (( fail_count > 0 )); then
     echo "NOTE: On a non-Fedora-Atomic host, stories 8 and 10 are expected to fail"
     echo "because query_packages and query_authorized_keys call rpm-ostree and SSH"
-    echo "tools that are absent. Stories 1-7 should always pass on any Linux host."
+    echo "tools that are absent. Stories 1-7 and 11-17 should always pass on any"
+    echo "Linux host (plan-structure checks only, no execution)."
     echo "Run on a provisioned Silverblue VM for full coverage."
     echo ""
     exit 1

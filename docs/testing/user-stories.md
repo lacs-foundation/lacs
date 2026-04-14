@@ -1,6 +1,6 @@
 # LACS E2E User Stories
 
-Ten scenarios for validating LACS on a real Fedora Atomic Desktop (Silverblue,
+Twenty scenarios for validating LACS on a real Fedora Atomic Desktop (Silverblue,
 Kinoite, Sway Atomic, Budgie Atomic, or COSMIC Atomic). Run inside a QEMU/KVM
 VM via `tests/e2e/silverblue-vm.sh`, or on real hardware.
 
@@ -13,9 +13,9 @@ Each story has:
 - **Pass criteria** — concrete conditions for success
 - **Cleanup** — how to revert any system changes
 
-The **automated** stories (1–7) are also covered by the container-based CI
-smoke test (see `.github/workflows/e2e.yml`). The **semi-automated** stories
-(8–10) make real rpm-ostree / filesystem changes and only run when
+The **automated** stories (1–7, 11–17) are also covered by the container-based
+CI smoke test (see `.github/workflows/e2e.yml`). The **semi-automated** stories
+(8–10, 18–20) make real system changes and only run when
 `LACS_ALLOW_DESTRUCTIVE=1` is set — take a VM snapshot first via
 `silverblue-vm.sh snapshot pre-destructive`.
 
@@ -249,6 +249,225 @@ smoke test (see `.github/workflows/e2e.yml`). The **semi-automated** stories
 
 ---
 
+## Story 11: Deployment status + kernel arguments
+
+**Persona:** Developer curious about the booted OSTree commit and boot configuration.
+
+**Intent:** `"show me the current deployment status and what kernel arguments are set"`
+
+**Expected LLM behavior:**
+- Goes directly to `propose_plan` — two independent read-only requests, no
+  decision needed
+- Proposes a 2-step plan: `ListDeployments` + `GetKernelArguments` (either order)
+- Both steps Low risk, no approval required
+
+**Automated:** yes (read-only)
+
+**Pass criteria:**
+- Plan has exactly 2 steps, both risk `low`
+- Steps contain `ListDeployments` and `GetKernelArguments`
+
+**Cleanup:** none
+
+---
+
+## Story 12: LACS activity log — today
+
+**Persona:** Sysadmin reviewing what automation ran during the day.
+
+**Intent:** `"show me the LACS activity log for today"`
+
+**Expected LLM behavior:**
+- Calls `query_job_history(since_hours: 24)` to check today's transactions
+- Proposes a 1-step plan: `ListJobHistory`
+- Does NOT use `get_system_state`, `query_deployments`, or any state-inspection tool
+
+**Automated:** yes (read-only)
+
+**Pass criteria:**
+- Plan has exactly 1 step, `ListJobHistory`, risk `low`
+
+**Cleanup:** none
+
+---
+
+## Story 13: Service logs for a named service
+
+**Persona:** Admin debugging a network issue by reading firewall service logs.
+
+**Intent:** `"show me the logs for the firewalld service"`
+
+**Expected LLM behavior:**
+- Goes directly to `propose_plan` — direct read request with an explicit service name
+- Proposes `GetServiceLogs` with `params.unit = "firewalld"` (or `"firewalld.service"`)
+- Does NOT call `query_services` or any other query tool first
+
+**Automated:** yes (read-only)
+
+**Pass criteria:**
+- Plan has 1 step, `GetServiceLogs`
+- `params.unit` is `"firewalld"` or `"firewalld.service"`
+- Risk `low`
+
+**Cleanup:** none
+
+---
+
+## Story 14: Triple compound — disk, memory, and services
+
+**Persona:** On-call responder doing initial system health triage.
+
+**Intent:** `"I want to check disk usage, memory pressure, and see which services are active"`
+
+**Expected LLM behavior:**
+- Goes directly to `propose_plan` — three independent read-only requests, no
+  decision needed for any of them
+- Proposes a 3-step plan: `GetDiskUsage` + `GetMemoryInfo` + `ListServices`
+- All three steps Low risk, no approval required
+- Common failure: calling `query_memory`, `query_processes`, or `get_system_state` first
+
+**Automated:** yes (read-only)
+
+**Pass criteria:**
+- Plan has exactly 3 steps, all risk `low`
+- Steps contain `GetDiskUsage`, `GetMemoryInfo`, and `ListServices`
+
+**Cleanup:** none
+
+---
+
+## Story 15: Rollback history
+
+**Persona:** Sysadmin checking whether any recent LACS rollbacks occurred.
+
+**Intent:** `"show me all rollback operations LACS has performed"`
+
+**Expected LLM behavior:**
+- Calls `query_job_history(action_filter: "RollbackDeployment")` to consult
+  the LACS transaction log
+- Proposes `ListJobHistory` — even if the result set is empty, the user asked
+  to see the log
+- Does NOT use `query_deployments` or `get_system_state`
+
+**Automated:** yes (read-only)
+
+**Pass criteria:**
+- Plan has 1 step, `ListJobHistory`, risk `low`
+
+**Cleanup:** none
+
+---
+
+## Story 16: Network status + firewall
+
+**Persona:** Admin checking connectivity and security posture together.
+
+**Intent:** `"show me the network status and the current firewall rules"`
+
+**Expected LLM behavior:**
+- Goes directly to `propose_plan` — two independent read-only requests
+- Proposes `GetNetworkStatus` + `GetFirewallState` (either order)
+- All Low risk
+
+**Automated:** yes (read-only)
+
+**Pass criteria:**
+- Plan has exactly 2 steps, both risk `low`
+- Steps contain `GetNetworkStatus` and `GetFirewallState`
+
+**Cleanup:** none
+
+---
+
+## Story 17: Container list + specific container info
+
+**Persona:** Developer wanting an overview of containers plus a deep-dive on one.
+
+**Intent:** `"list all running containers and give me detailed info on the container named 'postgres'"`
+
+**Expected LLM behavior:**
+- Goes directly to `propose_plan` — compound read request; postgres name is
+  explicit, no query needed
+- Proposes a 2-step plan: `ListContainers` + `GetContainerInfo`
+- `GetContainerInfo` must have `params.name = "postgres"`
+- Does NOT call `query_containers` first
+
+**Automated:** yes (read-only)
+
+**Pass criteria:**
+- Plan has exactly 2 steps, both risk `low`
+- `ListContainers` and `GetContainerInfo(name="postgres")` both present
+
+**Cleanup:** none
+
+---
+
+## Story 18 (destructive): Restart a named service
+
+**Persona:** Admin bouncing bluetooth after a peripheral stopped pairing.
+
+**Intent:** `"restart the bluetooth service"`
+
+**Expected LLM behavior:**
+- Goes directly to `propose_plan`
+- Proposes `RestartService` with `params.unit = "bluetooth"` (or `"bluetooth.service"`)
+- Risk `medium`, approval required
+
+**Automated:** only with `LACS_ALLOW_DESTRUCTIVE=1`
+
+**Pass criteria:**
+- Plan has 1 step, `RestartService`, `params.unit` is `"bluetooth"` or
+  `"bluetooth.service"`, risk `medium`
+
+**Cleanup:** none (service was simply restarted)
+
+---
+
+## Story 19 (destructive): Full system update
+
+**Persona:** User running weekly maintenance on their Silverblue workstation.
+
+**Intent:** `"update my Fedora Silverblue system"`
+
+**Expected LLM behavior:**
+- Goes directly to `propose_plan`
+- Proposes a single `UpdateSystem` step
+- Risk `high`, approval required, reboot implied
+
+**Automated:** only with `LACS_ALLOW_DESTRUCTIVE=1`
+
+**Pass criteria:**
+- Plan has 1 step, `UpdateSystem`, risk `high`
+
+**Cleanup:** rollback with `RollbackDeployment` if needed, then reboot
+
+---
+
+## Story 20 (destructive): Add user to privileged group
+
+**Persona:** Admin granting sudo access to a new team member.
+
+**Intent:** `"add the user devops to the wheel group so they can use sudo"`
+
+**Expected LLM behavior:**
+- Goes directly to `propose_plan`
+- Proposes `AddUserToGroup` with `params.username = "devops"` and
+  `params.group = "wheel"`
+- Risk `high` (group membership changes affect privilege escalation paths)
+- Approval required
+
+**Automated:** only with `LACS_ALLOW_DESTRUCTIVE=1`
+
+**Pass criteria:**
+- Plan has 1 step, `AddUserToGroup`, `params.username == "devops"`,
+  `params.group == "wheel"`, risk `high`
+
+**Cleanup:**
+- Run `RemoveUserFromGroup` with `{username: "devops", group: "wheel"}`, or
+- Revert VM snapshot
+
+---
+
 ## Not covered by these stories (document as manual QA)
 
 The following require real hardware or user interaction and should be covered
@@ -264,7 +483,7 @@ by the manual QA checklist (see `demo-script.md`):
 
 ## Running the stories
 
-### Locally (real Silverblue VM, all 10 stories)
+### Locally (real Silverblue VM, all 20 stories)
 
 ```sh
 # One-time: download the Fedora Silverblue ISO and install it in QEMU/KVM
@@ -328,7 +547,16 @@ check if vim is already layered before proposing `AddLayeredPackage`).
 | 8 — install vim | ❌ crash (daemon absent) | ❌ crash (daemon absent) |
 | 9 — create toolbox | ✅ (skipped/no-daemon) | ✅ (skipped/no-daemon) |
 | 10 — add SSH key | ❌ crash (daemon absent) | ❌ crash (daemon absent) |
-| 11 — transaction history | ❌ wrong tool | ✅ (requires Example C) |
+| 11 — deployments + kernel args | ❌ extra query step | ✅ |
+| 12 — LACS activity log | ❌ wrong tool (deployments) | ✅ (requires Example C) |
+| 13 — service logs (firewalld) | ❌ wrong plan | ✅ |
+| 14 — triple compound | ❌ extra query steps | ✅ |
+| 15 — rollback history | ❌ wrong tool (deployments) | ✅ (requires Example C) |
+| 16 — network + firewall | ❌ wrong plan | ✅ |
+| 17 — container list + detail | ❌ extra query step | ✅ |
+| 18 — restart service | ❌ query first | ✅ |
+| 19 — update system | ❌ query deployments first | ✅ |
+| 20 — add user to group | ❌ query users first | ✅ |
 
 **Crash** = `get_system_state` propagates `StateUnavailable` immediately;
 planning returns with no plan produced.
