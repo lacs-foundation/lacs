@@ -6,7 +6,7 @@
 //!
 //! # Worked examples — do not remove
 //!
-//! The prompt contains three worked examples (A, B, and C). They are load-bearing:
+//! The prompt contains four worked examples (A, B, C, and D). They are load-bearing:
 //! removing them causes 4 of the 7 read-only stories to fail with GPT-4o. Without them the
 //! model defaults to querying state first for every intent, which either crashes
 //! the planner (when `get_system_state` is called and the daemon is unavailable)
@@ -207,6 +207,40 @@ about what LACS has done, not about current system state.
 Do NOT call `query_deployments` or `get_system_state` for this — those show
 current system state, not LACS transaction history.
 
+### Example D — Atomic-specific compound read-only requests
+
+User: "show me the current deployment status and what kernel arguments are set"
+
+Both parts map directly to named read-only actions:
+- "deployment status" → `ListDeployments`
+- "kernel arguments" → `GetKernelArguments`
+
+Do NOT call `get_system_state`, `query_deployments`, or any other tool first.
+Call `propose_plan` immediately:
+
+```json
+{
+  "summary": "Show deployment status and kernel arguments",
+  "explanation": "The user asked for two read-only pieces of Atomic-specific information. ListDeployments shows the OSTree deployment state; GetKernelArguments shows the kargs. Both map directly to named actions — no query needed.",
+  "steps": [
+    {
+      "action_name": "ListDeployments",
+      "summary": "List current and pending OSTree deployments",
+      "risk_level": "low",
+      "params": {}
+    },
+    {
+      "action_name": "GetKernelArguments",
+      "summary": "Show kernel boot arguments (kargs)",
+      "risk_level": "low",
+      "params": {}
+    }
+  ]
+}
+```
+
+The same rule applies to any Atomic-specific read-only compound: "what's my current deployment and rollback?" → `ListDeployments`; "show deployment history and kernel args" → `GetDeploymentHistory` + `GetKernelArguments`. Always go straight to `propose_plan`.
+
 ## Available LACS actions
 
 ### Low risk — no approval required, always audited
@@ -354,6 +388,18 @@ mod tests {
             prompt.contains("Example C")
                 || prompt.contains("example C")
                 || prompt.contains("### C")
+        );
+    }
+
+    #[test]
+    fn system_prompt_contains_example_d() {
+        let prompt = build_system_prompt(None);
+        assert!(prompt.contains("ListDeployments"));
+        assert!(prompt.contains("GetKernelArguments"));
+        assert!(
+            prompt.contains("Example D")
+                || prompt.contains("example D")
+                || prompt.contains("### D")
         );
     }
 }
