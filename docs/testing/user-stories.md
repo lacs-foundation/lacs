@@ -28,7 +28,7 @@ smoke test (see `.github/workflows/e2e.yml`). The **semi-automated** stories
 **Intent:** `"show me disk usage for all mounted filesystems"`
 
 **Expected LLM behavior:**
-- Calls `query_disk_usage` during planning
+- Goes directly to `propose_plan` — no query tools needed for a direct read request
 - Proposes a single-step plan: `GetDiskUsage` (Low risk, no approval required)
 
 **Automated:** yes (read-only)
@@ -49,7 +49,8 @@ smoke test (see `.github/workflows/e2e.yml`). The **semi-automated** stories
 **Intent:** `"is the system low on memory? show me what's using it"`
 
 **Expected LLM behavior:**
-- Calls `query_memory` and `query_processes` (in either order)
+- Goes directly to `propose_plan` — phrased as a question but still a direct
+  read request; no query tools needed
 - Proposes a 2-step plan: `GetMemoryInfo` + `ListProcesses`
 - Both steps Low risk, no approval required
 
@@ -72,9 +73,10 @@ smoke test (see `.github/workflows/e2e.yml`). The **semi-automated** stories
 **Intent:** `"is sshd running? show me its recent logs"`
 
 **Expected LLM behavior:**
-- Calls `query_services` to confirm sshd is running
-- Calls `query_logs` with param `{unit: "sshd.service"}`
-- Proposes a plan with `GetServiceLogs` (param: unit)
+- Goes directly to `propose_plan` with `ListServices` + `GetServiceLogs`
+- Does NOT need to call `query_services` or `query_logs` first — the intent
+  explicitly asks for both the service status and its logs
+- `GetServiceLogs` step carries `params.unit = "sshd.service"`
 
 **Automated:** yes
 
@@ -95,7 +97,7 @@ smoke test (see `.github/workflows/e2e.yml`). The **semi-automated** stories
 **Intent:** `"what ports are currently open on the firewall?"`
 
 **Expected LLM behavior:**
-- Calls `query_firewall` during planning
+- Goes directly to `propose_plan` — direct read request, no decision needed
 - Proposes a plan with `GetFirewallState` (Low risk)
 
 **Automated:** yes
@@ -117,7 +119,7 @@ smoke test (see `.github/workflows/e2e.yml`). The **semi-automated** stories
 **Intent:** `"what packages have I layered on top of the base system?"`
 
 **Expected LLM behavior:**
-- Calls `query_packages` during planning
+- Goes directly to `propose_plan` — direct read request, no decision needed
 - Proposes `GetLayeredPackages` (Low risk)
 
 **Automated:** yes
@@ -138,7 +140,8 @@ smoke test (see `.github/workflows/e2e.yml`). The **semi-automated** stories
 **Intent:** `"list all running containers and show me which services are up"`
 
 **Expected LLM behavior:**
-- Calls `query_containers` and `query_services`
+- Goes directly to `propose_plan` — intent explicitly asks for both containers
+  and services; no decision to be made
 - Proposes a 2-step plan: `ListContainers` + `ListServices`
 
 **Automated:** yes
@@ -159,8 +162,8 @@ smoke test (see `.github/workflows/e2e.yml`). The **semi-automated** stories
 **Intent:** `"show me the SSH keys authorized for user lacsdev"`
 
 **Expected LLM behavior:**
-- Calls `query_authorized_keys` with `{username: "lacsdev"}`
-- Proposes `GetAuthorizedKeys` with the username parameter
+- Goes directly to `propose_plan` — direct read request with explicit username
+- Proposes `GetAuthorizedKeys` with `params.username = "lacsdev"`
 
 **Automated:** yes
 
@@ -226,6 +229,8 @@ smoke test (see `.github/workflows/e2e.yml`). The **semi-automated** stories
 **Intent:** `"authorize this SSH key for user lacsdev: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeTestKeyForE2ETesting testkey@example"`
 
 **Expected LLM behavior:**
+- Goes directly to `propose_plan` — explicit key and username in the intent,
+  no decision needed
 - Proposes `AddAuthorizedKey` with `{username: "lacsdev", public_key: "ssh-ed25519 ..."}`
 - Plan marked `approvalRequired: true`, risk `medium`
 - The public_key param must NOT be truncated or modified
@@ -285,6 +290,45 @@ installation prerequisites, Windows instructions, and troubleshooting.
 
 See `.github/workflows/e2e.yml`. Triggered manually via `workflow_dispatch` or
 on PRs labeled `e2e`.
+
+### Prompt engineering observations
+
+The system prompt in `crates/lacs-brain/src/prompt.rs` contains three worked
+examples (A, B, C). These are **load-bearing** — removing them causes 7 of 10
+stories to fail with GPT-4o.
+
+**Why:** Without examples, GPT-4o defaults to always querying state first
+(`get_system_state` or a `query_*` tool) before proposing any plan. For
+direct read-only requests this is incorrect — it either crashes the planner
+(if `get_system_state` fails because the daemon is unavailable) or returns a
+degraded fallback plan (e.g. `CollectDiagnostics` instead of `GetMemoryInfo`).
+
+**The rule the examples encode:** if the user's intent maps directly to a
+`Get*` or `List*` action, skip query tools entirely and call `propose_plan`
+immediately. Use `query_*` only when you need to DECIDE between plans (e.g.
+check if vim is already layered before proposing `AddLayeredPackage`).
+
+| Story | Without examples | With examples |
+|-------|-----------------|---------------|
+| 1 — disk usage | ✅ (lucky fallback) | ✅ |
+| 2 — memory pressure | ❌ wrong plan | ✅ |
+| 3 — service health | ❌ wrong plan | ✅ |
+| 4 — firewall | ❌ crash | ✅ |
+| 5 — layered packages | ❌ crash | ✅ |
+| 6 — containers + services | ❌ wrong plan | ✅ |
+| 7 — SSH key inventory | ✅ | ✅ |
+| 8 — install vim | ❌ crash | ✅ |
+| 9 — create toolbox | ✅ | ✅ |
+| 10 — add SSH key | ❌ crash | ✅ |
+
+**Crash** = `get_system_state` propagates `StateUnavailable` immediately;
+planning returns with no plan produced.
+
+**Wrong plan** = `query_*` errors return as tool results; model falls back
+to an unrelated action (`CollectDiagnostics`, `GetDiskUsage`, etc.).
+
+See `CLAUDE.md` § "Prompt Engineering" for the full rule and the constraint
+that prompt changes must be validated against this story suite.
 
 ### Interpreting results
 

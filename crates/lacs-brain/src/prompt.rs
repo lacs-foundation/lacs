@@ -3,6 +3,23 @@
 //! The prompt tells the LLM its role, available action families, risk
 //! classification rules, and hard constraints. It is assembled once and
 //! injected into every planning request.
+//!
+//! # Worked examples — do not remove
+//!
+//! The prompt contains three worked examples (A, B, C). They are load-bearing:
+//! removing them causes 7/10 E2E stories to fail with GPT-4o. Without them the
+//! model defaults to querying state first for every intent, which either crashes
+//! the planner (when `get_system_state` is called and the daemon is unavailable)
+//! or produces incorrect fallback plans.
+//!
+//! The examples encode the core planning rule:
+//!
+//! > **Direct read-only request → call `propose_plan` immediately.**
+//! > Do NOT call `get_system_state` or `query_*` tools first.
+//! > Use query tools ONLY when you genuinely need information to DECIDE
+//! > between two or more possible plans.
+//!
+//! Validate any prompt change against the full E2E story suite before merging.
 
 pub fn build_system_prompt() -> String {
     r#"You are lacs-brain, the unprivileged planning layer for LACS — the Linux Agent Control Standard.

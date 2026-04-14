@@ -65,6 +65,48 @@ the shell, and the privileged daemon.
 - Do not add fallbacks, params, or flags "just in case" — every line of code
   must be reachable and load-bearing.
 
+## Prompt Engineering — System Prompt Rules
+
+The system prompt in `crates/lacs-brain/src/prompt.rs` is load-bearing.
+Changes to it must be validated against the full E2E story suite before merging.
+
+### The three worked examples are not optional
+
+`prompt.rs` contains Examples A, B, and C. **Do not remove them.**
+
+Empirical result (GPT-4o, all 10 stories, 2026-04-14):
+
+| Condition        | Stories passing |
+|------------------|-----------------|
+| With examples    | 10 / 10         |
+| Without examples |  3 / 10         |
+
+Without the examples, GPT-4o defaults to always querying state first
+(`get_system_state` or `query_*` tools) before proposing any plan. This is
+wrong for direct read-only requests and causes two failure modes:
+
+1. **Hard crash** — `get_system_state` failure propagates immediately via `?`
+   in `planner.rs`; planning returns `StateUnavailable` with no plan.
+2. **Wrong plan** — `query_*` tool errors are returned as tool results; the
+   model receives an error, falls into a recovery path, and proposes an
+   unrelated action (`CollectDiagnostics` for a memory query, `GetDiskUsage`
+   for a firewall query, etc.).
+
+### The rule the examples encode
+
+> **Direct read-only request → skip all query tools → call `propose_plan`
+> immediately with the matching `Get*` / `List*` action.**
+
+Use `query_*` tools ONLY when the intent is genuinely ambiguous and you need
+information to DECIDE between two or more possible plans (e.g. "install vim"
+→ query layered packages to check if it is already there before proposing
+`AddLayeredPackage`).
+
+### Adding a new story or changing the prompt
+
+Run the E2E harness against a live VM (or at minimum against the no-daemon
+test CLI path) before and after. A story that passed before must not regress.
+
 ## OpenAI Responses API — Dual-ID Protocol
 
 The OpenAI Responses API uses two distinct identifiers per tool call:
