@@ -184,19 +184,28 @@ fn read_gid_map() -> std::collections::HashMap<u32, String> {
         }
     };
     let mut map = std::collections::HashMap::new();
-    for line in content.lines() {
+    for (line_no, line) in content.lines().enumerate() {
         let mut parts = line.splitn(4, ':');
         let name = match parts.next() {
             Some(n) => n,
-            None => continue,
+            None => {
+                eprintln!("[lacs-daemon] WARNING: malformed /etc/group line {line_no}: missing name field");
+                continue;
+            }
         };
         let _ = parts.next(); // password field
         let gid_str = match parts.next() {
             Some(g) => g,
-            None => continue,
+            None => {
+                eprintln!("[lacs-daemon] WARNING: malformed /etc/group line {line_no} (group={name:?}): missing GID field");
+                continue;
+            }
         };
-        if let Ok(gid) = gid_str.parse::<u32>() {
-            map.insert(gid, name.to_string());
+        match gid_str.parse::<u32>() {
+            Ok(gid) => { map.insert(gid, name.to_string()); }
+            Err(_) => {
+                eprintln!("[lacs-daemon] WARNING: malformed /etc/group line {line_no} (group={name:?}): GID {gid_str:?} is not a number");
+            }
         }
     }
     map
@@ -222,6 +231,13 @@ fn groups_for_pid(pid: u32, gid_map: &std::collections::HashMap<u32, String>) ->
                 .collect();
         }
     }
+    // If the Groups: line is absent (unusual kernel config or namespacing),
+    // the caller will be resolved to Observer via its primary GID only.
+    // Log so operators can diagnose unexpected authorization failures.
+    eprintln!(
+        "[lacs-daemon] WARNING: no Groups: line in /proc/{pid}/status; \
+         supplementary groups unavailable — caller may be demoted to Observer"
+    );
     vec![]
 }
 
