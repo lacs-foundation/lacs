@@ -70,7 +70,7 @@ async fn dispatch(
 
         // --- lacs history [flags] ---
         Some(Command::History(args)) => {
-            runner::run_history(args.clone(), socket, cli.json, log).await
+            runner::run_history(args.clone(), socket, log).await
         }
 
         // --- lacs <intent words ...> ---

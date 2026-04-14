@@ -144,8 +144,10 @@ fn rfc3339_to_unix(s: &str) -> Option<i64> {
 // highest_risk
 // ---------------------------------------------------------------------------
 
-/// Return the highest risk level present in `plan`, or `None` when the plan
-/// has no steps.
+/// Return the highest risk level present in `plan`.
+///
+/// Returns `None` only if the plan has no steps; in practice `Plan::new`
+/// enforces at least one step, so callers may safely `.expect` the result.
 pub fn highest_risk(plan: &lacs_brain::planner::Plan) -> Option<&PlanRiskLevel> {
     plan.steps()
         .iter()
@@ -210,16 +212,25 @@ impl Logger {
 
     /// Print `line` to stdout and, if a log file is configured, also append it
     /// to that file.
+    ///
+    /// On the first file-write failure a warning is emitted to stderr and the
+    /// file tee is permanently disabled so that subsequent writes do not spin
+    /// on a dead handle.  The stdout print always succeeds (or panics, which is
+    /// the correct response to a broken stdout in a CLI tool).
     pub fn println(&self, line: &str) {
         println!("{line}");
         let mut guard = self.file.lock().expect("Logger mutex poisoned");
         if let Some(f) = guard.as_mut() {
-            let _ = writeln!(f, "{line}");
+            if let Err(e) = writeln!(f, "{line}") {
+                eprintln!("lacs: log write failed ({e}); --log-to tee disabled");
+                *guard = None;
+            }
         }
     }
 
-    /// Print `line` to stderr only (not teed — errors belong on stderr).
-    pub fn eprintln_err(&self, line: &str) {
+    /// Print `line` to stderr only.  Not teed to the log file — errors belong
+    /// on stderr and must not be mixed into a structured log meant for parsing.
+    pub fn print_stderr(&self, line: &str) {
         eprintln!("{line}");
     }
 }
@@ -292,19 +303,27 @@ pub async fn run_doctor(
 pub async fn run_history(
     args: HistoryArgs,
     socket: PathBuf,
-    global_json: bool,
     log: &Logger,
 ) -> Result<(), CliError> {
     let since_hours = match args.since.as_deref() {
         None => None,
-        Some(s) => match since_to_hours(s) {
-            Some(h) => Some(h),
-            None => {
+        Some(s) => {
+            // Distinguish the two failure modes so the user knows how to fix each.
+            if rfc3339_to_unix(s).is_none() {
                 return Err(CliError::ConfigOrDaemon(format!(
-                    "--since: cannot parse or is a future datetime: {s:?}"
+                    "--since: {s:?} is not a valid UTC RFC 3339 timestamp \
+                     (accepted formats: 2026-01-15T10:30:00Z or 2026-01-15T10:30:00+00:00)"
                 )));
             }
-        },
+            match since_to_hours(s) {
+                Some(h) => Some(h),
+                None => {
+                    return Err(CliError::ConfigOrDaemon(format!(
+                        "--since: {s:?} is in the future"
+                    )));
+                }
+            }
+        }
     };
 
     let params =
@@ -316,11 +335,6 @@ pub async fn run_history(
         .map_err(|e| CliError::ConfigOrDaemon(format!("join: {e}")))?
         .map_err(|e| CliError::ConfigOrDaemon(e.to_string()))?;
 
-    // The daemon formats history output; emit as-is.  The --json flag on either
-    // the global Cli or HistoryArgs does not change what is printed here because
-    // the formatting is the daemon's responsibility.
-    let _ = global_json; // accepted to silence unused-variable lint
-    let _ = args.json;
     log.println(&output);
     Ok(())
 }
@@ -341,6 +355,13 @@ pub struct RunOpts {
     pub step_by_step: bool,
 }
 
+impl RunOpts {
+    /// Build the `ApprovalPolicy` for this set of flags.
+    pub fn approval_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::new(self.yes, self.max_risk, self.non_interactive, self.dry_run)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // run_intent
 // ---------------------------------------------------------------------------
@@ -355,9 +376,12 @@ pub async fn run_intent(intent: String, opts: &RunOpts, log: &Logger) -> Result<
         .map_err(CliError::ConfigOrDaemon)?
         .with_prefs_path(prefs_path());
 
-    // `plan_intent` is async and calls `StateClient::curated_state()` (a blocking
-    // sync call) inside the future.  The multi-threaded runtime allows this without
-    // stalling the executor, so we await directly.
+    // `plan_intent` may call `StateClient::curated_state()` (a blocking sync
+    // Unix socket call) on the current async thread when the LLM invokes
+    // `get_system_state`.  This is tolerable on the multi-threaded runtime:
+    // the call is bounded by `SOCKET_TIMEOUT` (10 s) and ties up one worker
+    // thread for at most that duration.  A single-threaded runtime would
+    // require `spawn_blocking` + `block_on` to avoid deadlock.
     let plan = planner
         .plan_intent(&intent)
         .await
@@ -397,18 +421,21 @@ pub async fn run_intent(intent: String, opts: &RunOpts, log: &Logger) -> Result<
     }
 
     if opts.dry_run {
+        if opts.step_by_step {
+            log.print_stderr("warning: --step-by-step has no effect with --dry-run");
+        }
         return Ok(());
     }
 
     // ---- plan-level approval (non-step-by-step) ----------------------------
 
-    let policy = ApprovalPolicy::new(opts.yes, opts.max_risk, opts.non_interactive, opts.dry_run);
+    let policy = opts.approval_policy();
 
     if !opts.step_by_step {
         match policy.decide_plan(&plan) {
             ApprovalDecision::AutoApproved => {}
             ApprovalDecision::RequiresPrompt => {
-                if !prompt_confirm("Execute this plan?") {
+                if !prompt_confirm("Execute this plan?").await {
                     return Err(CliError::Rejected);
                 }
             }
@@ -434,10 +461,12 @@ pub async fn run_intent(intent: String, opts: &RunOpts, log: &Logger) -> Result<
                 ApprovalDecision::AutoApproved => {}
                 ApprovalDecision::RequiresPrompt => {
                     if !prompt_confirm(&format!(
-                        "Execute {} ({})? [y/N]",
+                        "Execute {} ({})?",
                         step.action_name(),
                         step.summary()
-                    )) {
+                    ))
+                    .await
+                    {
                         return Err(CliError::Rejected);
                     }
                 }
@@ -499,11 +528,11 @@ pub async fn run_repl(opts: &RunOpts, log: &Logger) -> Result<(), CliError> {
                     break;
                 }
                 if let Err(e) = run_intent(intent, opts, log).await {
-                    log.eprintln_err(&format!("error: {e}"));
+                    log.print_stderr(&format!("error: {e}"));
                 }
             }
             Err(e) => {
-                log.eprintln_err(&format!("stdin read error: {e}"));
+                log.print_stderr(&format!("stdin read error: {e}"));
                 break;
             }
         }
@@ -527,12 +556,31 @@ fn prefs_path() -> PathBuf {
 
 /// Ask the user a yes/no question on stderr; return `true` iff they answer "y"
 /// or "yes" (case-insensitive).
-fn prompt_confirm(msg: &str) -> bool {
+///
+/// Uses `tokio::io::stdin` to keep the async executor free while waiting for
+/// input.  On EOF or an I/O error a warning is printed to stderr and the
+/// function returns `false` (safe default: do not execute).
+async fn prompt_confirm(msg: &str) -> bool {
+    use tokio::io::AsyncBufReadExt as _;
+
     eprint!("{msg} [y/N] ");
     let _ = io::stderr().flush();
+
+    let stdin = tokio::io::stdin();
+    let mut reader = tokio::io::BufReader::new(stdin);
     let mut buf = String::new();
-    io::stdin().read_line(&mut buf).unwrap_or(0);
-    matches!(buf.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+
+    match reader.read_line(&mut buf).await {
+        Ok(0) => {
+            eprintln!("\nlacs: stdin closed (EOF) — treating as 'no'");
+            false
+        }
+        Err(e) => {
+            eprintln!("\nlacs: stdin read error ({e}) — treating as 'no'");
+            false
+        }
+        Ok(_) => matches!(buf.trim().to_ascii_lowercase().as_str(), "y" | "yes"),
+    }
 }
 
 fn print_preview(env: &PreviewEnvelope, json_out: bool, log: &Logger) {
@@ -576,6 +624,11 @@ mod tests {
     use super::*;
     use lacs_brain::action_name::ActionName;
     use lacs_brain::planner::{Plan, PlanStep};
+
+    /// Serialize env-var mutations so concurrent tests do not race on
+    /// `LACS_SOCKET`.  All tests that call `set_var` / `remove_var` must
+    /// hold this lock for the full duration of the env read.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     // -----------------------------------------------------------------------
     // rfc3339_to_unix — pure function, tests against known epoch values
@@ -644,6 +697,12 @@ mod tests {
         assert!(rfc3339_to_unix("2000-01-01T25:00:00Z").is_none());
     }
 
+    #[test]
+    fn rfc3339_unix_day_zero_returns_none() {
+        // Day 0 is out of range; the lower bound of the `!(1..=31)` check.
+        assert!(rfc3339_to_unix("2000-01-00T00:00:00Z").is_none());
+    }
+
     // -----------------------------------------------------------------------
     // since_to_hours
     // -----------------------------------------------------------------------
@@ -664,6 +723,22 @@ mod tests {
     #[test]
     fn since_to_hours_garbage_returns_none() {
         assert!(since_to_hours("not-a-date").is_none());
+    }
+
+    #[test]
+    fn since_to_hours_epoch_returns_many_hours() {
+        // Unix epoch (1970-01-01) is always ≥ 486000 hours ago (as of 2026).
+        let h = since_to_hours("1970-01-01T00:00:00Z").expect("should parse");
+        assert!(h > 486_000, "expected >486000, got {h}");
+    }
+
+    #[test]
+    fn since_to_hours_integer_division_not_modulo() {
+        // Two timestamps exactly 1 hour apart must differ by 1 in since_to_hours.
+        // A `% 3600` regression would produce wildly different results for these.
+        let h0 = since_to_hours("1970-01-01T00:00:00Z").unwrap();
+        let h1 = since_to_hours("1970-01-01T01:00:00Z").unwrap();
+        assert_eq!(h0, h1 + 1, "timestamps 1 h apart must differ by exactly 1");
     }
 
     // -----------------------------------------------------------------------
@@ -750,13 +825,55 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // run_history --since error mapping
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn run_history_invalid_since_returns_config_error() {
+        // An unparseable --since must return CliError::ConfigOrDaemon without
+        // ever touching the daemon socket (the socket path here is unused).
+        let args = HistoryArgs {
+            status: None,
+            action: None,
+            since: Some("not-a-date".into()),
+            limit: 20,
+        };
+        let log = Logger::new(None).unwrap();
+        let result = run_history(args, PathBuf::from("/nonexistent.sock"), &log).await;
+        match result {
+            Err(CliError::ConfigOrDaemon(msg)) => {
+                assert!(msg.contains("--since"), "error message must reference --since");
+            }
+            other => panic!("expected ConfigOrDaemon, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn run_history_future_since_returns_config_error() {
+        let args = HistoryArgs {
+            status: None,
+            action: None,
+            since: Some("9999-12-31T23:59:59Z".into()),
+            limit: 20,
+        };
+        let log = Logger::new(None).unwrap();
+        let result = run_history(args, PathBuf::from("/nonexistent.sock"), &log).await;
+        match result {
+            Err(CliError::ConfigOrDaemon(msg)) => {
+                assert!(msg.contains("future"), "error must say 'future'");
+            }
+            other => panic!("expected ConfigOrDaemon, got {other:?}"),
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // resolve_socket uses LACS_SOCKET env var
     // -----------------------------------------------------------------------
 
     #[test]
     fn resolve_socket_uses_env_var() {
-        // Safety: env mutation is process-wide; keep scope minimal.
-        // SAFETY: single-threaded test runner is assumed for env mutation.
+        let _g = ENV_LOCK.lock().unwrap();
+        // SAFETY: we hold ENV_LOCK so no other test mutates LACS_SOCKET concurrently.
         unsafe { std::env::set_var("LACS_SOCKET", "/tmp/test.sock") };
         let p = resolve_socket();
         unsafe { std::env::remove_var("LACS_SOCKET") };
@@ -765,6 +882,7 @@ mod tests {
 
     #[test]
     fn resolve_socket_default_without_env_var() {
+        let _g = ENV_LOCK.lock().unwrap();
         unsafe { std::env::remove_var("LACS_SOCKET") };
         let p = resolve_socket();
         assert_eq!(p, PathBuf::from("/run/lacs/lacs.sock"));

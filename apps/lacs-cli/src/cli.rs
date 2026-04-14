@@ -126,10 +126,6 @@ pub struct HistoryArgs {
     /// Maximum number of entries to return.
     #[arg(long, default_value = "20", value_name = "N")]
     pub limit: u32,
-
-    /// Emit NDJSON output.
-    #[arg(long)]
-    pub json: bool,
 }
 
 /// Clap value-enum for `--max-risk`.
@@ -248,7 +244,6 @@ mod tests {
         match cli.command {
             Some(Command::History(args)) => {
                 assert_eq!(args.limit, 20);
-                assert!(!args.json);
                 assert!(args.status.is_none());
                 assert!(args.action.is_none());
                 assert!(args.since.is_none());
@@ -270,7 +265,6 @@ mod tests {
             "InstallPackages",
             "--since",
             "2026-01-01T00:00:00Z",
-            "--json",
         ])
         .unwrap();
         match cli.command {
@@ -279,7 +273,6 @@ mod tests {
                 assert_eq!(args.status.as_deref(), Some("succeeded"));
                 assert_eq!(args.action.as_deref(), Some("InstallPackages"));
                 assert_eq!(args.since.as_deref(), Some("2026-01-01T00:00:00Z"));
-                assert!(args.json);
             }
             other => panic!("expected Command::History, got {other:?}"),
         }
@@ -325,7 +318,6 @@ mod tests {
                 assert_eq!(args.limit, 10);
                 assert!(args.action.is_none());
                 assert!(args.since.is_none());
-                assert!(!args.json);
             }
             other => panic!("expected Command::History, got {other:?}"),
         }
