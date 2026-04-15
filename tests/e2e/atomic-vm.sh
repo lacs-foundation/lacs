@@ -504,6 +504,7 @@ case "$cmd" in
     install)        cmd_install "$@" ;;
     enable-ssh)     cmd_enable_ssh "$@" ;;
     keygen)         cmd_keygen "$@" ;;
+    bootstrap)      cmd_bootstrap "$@" ;;
     install-key)    cmd_install_key "$@" ;;
     start)          cmd_start "$@" ;;
     ssh)            cmd_ssh "$@" ;;

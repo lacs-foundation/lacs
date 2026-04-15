@@ -116,3 +116,15 @@ Tracked in the v0.4.0 milestone.
 ## Phase 9: Launch
 
 - record demo video on real Silverblue hardware (#32)
+- MCP server (`lacs mcp-server`) — expose action families as MCP tools for
+  Claude Desktop, Cursor, and any MCP-capable agent
+- publish `lacs-brain` and `lacs-types` to crates.io
+- Telegram interface (`lacs-bot`) — approve plans from your phone via
+  inline buttons; the viral mechanic
+
+## Phase 10: Ecosystem
+
+- apt action family (Debian / Ubuntu / Mint)
+- pacman action family (Arch / Manjaro)
+- `lacs audit export --json` — shareable execution history
+- web dashboard for teams and fleet management

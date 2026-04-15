@@ -1,0 +1,8 @@
+# Global default: Vladimir Rotariu reviews everything.
+* @vladimirrotariu
+
+# Core trust boundary — explicit ownership on each layer.
+crates/lacs-brain/   @vladimirrotariu
+crates/lacs-daemon/  @vladimirrotariu
+crates/lacs-types/   @vladimirrotariu
+.github/             @vladimirrotariu

@@ -83,6 +83,16 @@ pub enum Command {
         shell: clap_complete::Shell,
     },
 
+    /// Start an MCP server over stdio.
+    ///
+    /// Exposes a `lacs_plan` tool so Claude Desktop, Cursor, and any other
+    /// MCP-capable agent can invoke the LACS planner directly.
+    ///
+    /// Add to `claude_desktop_config.json`:
+    ///   { "mcpServers": { "lacs": { "command": "lacs", "args": ["mcp-server"] } } }
+    #[command(name = "mcp-server")]
+    McpServer,
+
     /// Execute a natural-language intent.
     ///
     /// Words not matching any named subcommand are captured here.

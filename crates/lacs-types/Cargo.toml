@@ -1,7 +1,13 @@
 [package]
 name = "lacs-types"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Shared action type definitions for LACS — reusable in third-party tooling"
+keywords = ["llm", "ai-agent", "linux", "actions", "types"]
+categories = ["command-line-utilities", "os::linux-apis"]
 
 [dependencies]
 lacs-proto = { path = "../lacs-proto" }

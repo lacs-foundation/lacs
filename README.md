@@ -4,22 +4,35 @@
 risk levels. Approve explicitly. Watch it execute with live output
 and automatic rollback.**
 
+LACS never runs a shell command. Every action is a typed operation with
+a formal risk level. The AI cannot touch your system directly.
+
 Every action is shown to you before it runs.
-The AI cannot do anything you did not review and approve.
 Every execution is logged to a local SQLite audit trail.
 
 <!-- TODO: replace with actual demo GIF once recorded on real hardware -->
 <!-- ![LACS demo](docs/assets/demo.gif) -->
 
+## Try it without installing anything
+
+```sh
+# Plan any intent — no daemon, no approval, no execution.
+export ANTHROPIC_API_KEY=sk-ant-...   # or OPENAI_API_KEY / GEMINI_API_KEY
+lacs --dry-run "show disk usage"
+```
+
+Works on any Linux. Prints the typed plan and exits.
+
 ## Why not just use
 
-| Tool | The problem |
-|---|---|
-| Open Interpreter | Runs arbitrary shell commands. No approval gate. No audit log. |
-| Claude Computer Use | Uncontrolled desktop automation, not system administration. |
-| Ansible | Requires YAML playbooks written in advance. Not conversational. |
-| shell-gpt / Copilot | Suggests raw shell commands for you to paste. You are still running raw shell. |
-| Manual commands | No audit trail. No rollback. One typo can be destructive. |
+| Tool | Stars | The problem |
+|---|---|---|
+| Open Interpreter | 63k | Runs arbitrary Python/Shell. No formal risk model. No audit trail. |
+| Goose by Block | 29k | General-purpose. Ad-hoc confirmation, not typed risk levels. No sysadmin-first design. |
+| Claude Computer Use | — | Uncontrolled desktop automation, not system administration. |
+| Ansible | — | Requires YAML playbooks written in advance. Not conversational. |
+| shell-gpt / Copilot | — | Suggests raw shell commands for you to paste. You are still running raw shell. |
+| Manual commands | — | No audit trail. No rollback. One typo can be destructive. |
 
 LACS is different: the agent proposes **typed actions** with risk levels
 and previews. You review them with full context. A privileged daemon
@@ -156,6 +169,39 @@ cd apps/lacs-shell && pnpm install && pnpm tauri dev
 See [docs/developer-guide.md](docs/developer-guide.md) for the full
 development setup including pre-commit hooks and E2E story testing.
 
+## MCP server
+
+LACS exposes an [MCP](https://modelcontextprotocol.io/) server so Claude
+Desktop, Cursor, and any other MCP-capable agent can invoke the planner
+directly.
+
+Add to `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "lacs": {
+      "command": "lacs",
+      "args": ["mcp-server"]
+    }
+  }
+}
+```
+
+The server exposes a single `lacs_plan` tool. The calling agent passes a
+natural-language intent; LACS returns a typed plan with risk levels. The
+approval flow is preserved at the MCP layer.
+
+## Roadmap
+
+See [ROADMAP.md](ROADMAP.md) for the full milestone breakdown.
+
+Upcoming highlights:
+
+- **Multi-distro** — apt (Debian/Ubuntu), dnf (Fedora Workstation), pacman (Arch)
+- **Telegram interface** — approve LACS plans from your phone via inline buttons
+- **`lacs audit export`** — export execution history as JSON for analysis
+
 ## Contributing
 
 Contributions are welcome. Issues tagged `good first issue` are
@@ -185,3 +231,7 @@ and PR checklist. Open an issue before starting any substantial change.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+---
+
+Built by [Vladimir Rotariu](https://github.com/vladimirrotariu).

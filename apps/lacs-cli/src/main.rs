@@ -2,6 +2,7 @@ mod approval;
 mod cli;
 mod client;
 mod error;
+mod mcp_server;
 mod render;
 mod runner;
 
@@ -72,6 +73,11 @@ async fn dispatch(
         // --- lacs history [flags] ---
         Some(Command::History(args)) => {
             runner::run_history(args.clone(), socket, log).await
+        }
+
+        // --- lacs mcp-server ---
+        Some(Command::McpServer) => {
+            mcp_server::run_mcp_server().await
         }
 
         // --- lacs <intent words ...> ---
