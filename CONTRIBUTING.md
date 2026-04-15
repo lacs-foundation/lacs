@@ -19,7 +19,7 @@ The short version:
 
 ```sh
 # Clone and set up
-git clone https://github.com/sysknife-foundation/sysknife
+git clone https://github.com/lacs-foundation/sysknife
 cd sysknife
 pip install pre-commit && pre-commit install
 cd apps/sysknife-shell && pnpm install && cd ../..
@@ -35,4 +35,4 @@ For security-sensitive issues (auth bypass, privilege escalation,
 data exposure), follow [SECURITY.md](SECURITY.md) instead of opening
 a public issue.
 
-Questions? Open a [GitHub Discussion](https://github.com/sysknife-foundation/sysknife/discussions).
+Questions? Open a [GitHub Discussion](https://github.com/lacs-foundation/sysknife/discussions).

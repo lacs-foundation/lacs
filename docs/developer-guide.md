@@ -29,7 +29,7 @@ integration tests without it.
 ## Clone and Set Up
 
 ```sh
-git clone https://github.com/sysknife-foundation/sysknife
+git clone https://github.com/lacs-foundation/sysknife
 cd sysknife
 
 # Install git hooks (run once)

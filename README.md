@@ -87,7 +87,7 @@ Security hardening and multi-distro support are the active milestones.
 [tauri-prereqs]: https://tauri.app/start/prerequisites/
 
 ```sh
-git clone https://github.com/sysknife-foundation/sysknife
+git clone https://github.com/lacs-foundation/sysknife
 cd sysknife
 make build
 sudo make install
@@ -146,7 +146,7 @@ Config file values act as defaults. Environment variables always win.
 
 ```sh
 # Clone
-git clone https://github.com/sysknife-foundation/sysknife
+git clone https://github.com/lacs-foundation/sysknife
 cd sysknife
 
 # Run all Rust tests
@@ -215,6 +215,15 @@ well-scoped with clear acceptance criteria — a great place to start.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for workflow, branch conventions,
 and PR checklist. Open an issue before starting any substantial change.
+
+## Protocol
+
+SysKnife is the reference implementation of the **LACS (Linux Agent Control Standard)** protocol.
+The protocol specification — typed actions, risk classification, approval gates, audit requirements — is published separately and is CC0 licensed (public domain):
+
+→ **[lacs-foundation/specification](https://github.com/lacs-foundation/specification)**
+
+Other implementations of LACS for other distributions or languages are explicitly encouraged.
 
 ## Documentation
 

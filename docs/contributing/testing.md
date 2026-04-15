@@ -428,7 +428,7 @@ root cause.
 
 ### Getting help
 
-- Check [existing issues](https://github.com/sysknife-foundation/sysknife/issues)
+- Check [existing issues](https://github.com/lacs-foundation/sysknife/issues)
 - Open a new issue with:
   - The failing story log (`tests/e2e/logs/story-N.log`)
   - The daemon journal: `sudo journalctl -u sysknife-daemon -n 200`

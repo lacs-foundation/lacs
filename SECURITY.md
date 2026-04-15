@@ -232,5 +232,5 @@ security certification work.
 
 | Gap | Issue | Notes |
 |---|---|---|
-| Tool output injection | [#98](https://github.com/sysknife-foundation/sysknife/issues/98) | `query_*` results re-enter the LLM context unsanitized. A crafted service description or package name could attempt prompt injection. Impact is bounded by Layer 2–5. |
+| Tool output injection | [#98](https://github.com/lacs-foundation/sysknife/issues/98) | `query_*` results re-enter the LLM context unsanitized. A crafted service description or package name could attempt prompt injection. Impact is bounded by Layer 2–5. |
 | Action param validation | — | Action params are typed per-handler but not validated at a shared schema boundary. A compromised LLM could propose valid action + malicious params (e.g. `AddAuthorizedKey` with an attacker-controlled key). |

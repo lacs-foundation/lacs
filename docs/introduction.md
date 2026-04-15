@@ -4,6 +4,8 @@
 
 SysKnife never runs a shell command. Every action is a typed operation with a formal risk level. The AI cannot touch your system directly.
 
+SysKnife is the reference implementation of the [LACS (Linux Agent Control Standard)](https://github.com/lacs-foundation/specification) protocol — an open, CC0-licensed specification for AI agents that operate at the Linux system level. Any implementation that conforms to LACS provides the same safety guarantees: typed actions, formal risk enforcement, mandatory approval gates, immutable audit trail.
+
 ```sh
 # Try it — no daemon, no execution, no risk.
 export ANTHROPIC_API_KEY=sk-ant-...
@@ -63,7 +65,7 @@ SysKnife exposes an MCP server so Claude Desktop and Cursor can call the planner
 ## Quick start
 
 ```sh
-git clone https://github.com/sysknife-foundation/sysknife
+git clone https://github.com/lacs-foundation/sysknife
 cd sysknife
 make build
 sudo make install
@@ -79,4 +81,4 @@ See the [Developer Guide](developer-guide.md) for the full setup.
 
 230+ tests. 54 executable E2E user stories. Fedora Silverblue / Atomic Desktop fully supported.
 
-Multi-distro (apt, dnf, pacman), Telegram approval interface, and `sysknife audit export` are on the [roadmap](https://github.com/sysknife-foundation/sysknife/blob/main/ROADMAP.md).
+Multi-distro (apt, dnf, pacman), Telegram approval interface, and `sysknife audit export` are on the [roadmap](https://github.com/lacs-foundation/sysknife/blob/main/ROADMAP.md).

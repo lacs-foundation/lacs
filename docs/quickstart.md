@@ -10,7 +10,7 @@
 ## Install
 
 ```sh
-git clone https://github.com/sysknife-foundation/sysknife
+git clone https://github.com/lacs-foundation/sysknife
 cd sysknife
 make build
 sudo make install

@@ -11,7 +11,7 @@ support. This document explains how to go from idea to merged PR.
 2. Read the [developer guide](../developer-guide.md) for prerequisites
    and build instructions.
 3. Read the [testing guide](testing.md) for which tests to run and when.
-4. Check [open issues](https://github.com/sysknife-foundation/sysknife/issues)
+4. Check [open issues](https://github.com/lacs-foundation/sysknife/issues)
    to avoid duplicating work in progress.
 5. For any substantial change, open an issue first and describe what
    you want to build. This prevents wasted effort and keeps the
@@ -37,7 +37,7 @@ High-impact areas where contributions are most needed:
 ## Setting Up Your Development Environment
 
 ```sh
-git clone https://github.com/sysknife-foundation/sysknife
+git clone https://github.com/lacs-foundation/sysknife
 cd sysknife
 
 # Install git hooks (once)
@@ -250,6 +250,6 @@ When adding a new action to `KNOWN_ACTIONS`, you must also:
 
 ## Questions
 
-Open a [GitHub Discussion](https://github.com/sysknife-foundation/sysknife/discussions)
+Open a [GitHub Discussion](https://github.com/lacs-foundation/sysknife/discussions)
 or tag your issue with `question`. We are friendly and genuinely want
 to help new contributors succeed.
