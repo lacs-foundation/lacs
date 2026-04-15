@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Story 32: SSH + identity security audit compound (3 read-only)
-# Intent: "run a security audit — show me all authorized SSH keys, local users, and groups"
+# Intent: "security audit: show me root's authorized SSH keys, all local users, and all groups"
 # Pass criteria:
 #   - Plan contains GetAuthorizedKeys, ListUsers, and ListGroups
 #   - All steps risk low
@@ -10,10 +10,12 @@
 #     the entire story suite — this is specifically calibrated to test that.
 #   - Three actions from the identity+SSH domain that a naive model collapses
 #     into a single GetSystemState.
+#   - GetAuthorizedKeys requires a username param; "root" is named explicitly so
+#     the model can call it without inventing a query step.
 #   - All three are independently low-risk reads; none justify a query step.
 set -euo pipefail
 
-INTENT="run a security audit — show me all authorized SSH keys, local users, and groups"
+INTENT="security audit: show me root's authorized SSH keys, all local users, and all groups"
 
 echo "=== Story 32: Security audit — GetAuthorizedKeys + ListUsers + ListGroups ==="
 echo "Intent: $INTENT"
