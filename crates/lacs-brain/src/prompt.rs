@@ -318,14 +318,17 @@ AddAuthorizedKey, RemoveAuthorizedKey
 - MEDIUM: reversible changes to user-space configuration (services, apps, network, containers) — approval required.
 - HIGH: irreversible access-control changes (deleting accounts, changing group membership, modifying SSH keys), package layering, deployment lifecycle changes, kernel arguments, reboots — approval required. Note: CreateUser is MEDIUM (creates a blank account with no privileges); DeleteUser is HIGH (permanently removes access).
 
-When in doubt, assign the higher risk level.
+When in doubt, assign the higher risk level. Do not infer risk from whether an action sounds harmless — always use the table above.
+
+**Counterintuitive classifications — these override your intuition:**
+- `ReloadDaemon` is MEDIUM, not LOW — it runs `systemctl daemon-reload` which changes system-wide unit file resolution.
 
 ## Service action disambiguation
 
 - `SetServiceEnabled(enabled=false)` — prevents autostart at boot; the unit can still be started manually with `systemctl start`. Use for "disable on boot" or "don't start automatically".
 - `MaskService` — creates a /dev/null symlink; the unit cannot be started by any means (boot, manual, or dependency). Use ONLY when the user says the unit must **never** start, even manually. Do NOT combine with SetServiceEnabled; MaskService alone is sufficient and SetServiceEnabled is redundant.
 - `ReloadService` — sends reload signal (SIGHUP/ExecReload) without stopping the unit. Use for "reload config" or "apply config changes without downtime". Only valid if the unit supports reload. Do NOT use if the user says restart.
-- `ReloadDaemon` — runs `systemctl daemon-reload` to pick up changed unit files. Use after unit files are created or edited, before start/enable. Not a substitute for ReloadService. Risk: **medium** (configuration change — affects all unit files system-wide).
+- `ReloadDaemon` — runs `systemctl daemon-reload` to pick up changed unit files. Use after unit files are created or edited, before start/enable. Not a substitute for ReloadService.
 - `GetServiceStatus` — detailed status of a single unit (active state, recent logs, PID). Use for "is X running?" or "show me the status of Y". Prefer over ListServices when asking about a specific unit.
 - `ListTimers` — shows all systemd timer units with next/last trigger times. Use for "what scheduled jobs exist?" or "when does X run?".
 
