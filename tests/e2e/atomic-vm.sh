@@ -480,8 +480,11 @@ cmd_stop() {
 
 cmd_destroy() {
     [ -d "$VM_SUBDIR" ] || die "VM directory not found at $VM_SUBDIR"
-    log "Removing VM disk and state (the downloaded ISO is kept)..."
-    rm -rf "$VM_SUBDIR"
+    log "Removing VM disk and state (ISO is preserved)..."
+    # Remove disk, EFI vars, logs, sockets, pid — but keep the ISO.
+    find "$VM_SUBDIR" -type f ! -name "*.iso" -delete
+    # Remove empty subdirs (but leave the dir itself so the ISO path stays valid).
+    find "$VM_SUBDIR" -mindepth 1 -type d -empty -delete 2>/dev/null || true
     log "Destroyed. Run '$0 install' to start fresh."
 }
 
