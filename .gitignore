@@ -14,3 +14,9 @@ tests/e2e/vm/
 
 # E2E test logs (generated at runtime)
 tests/e2e/logs/*.log
+
+# mdBook build output
+book/
+
+# Local private docs (strategy, planning, personal notes — not for public repo)
+docs/local/

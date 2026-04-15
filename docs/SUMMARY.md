@@ -1,0 +1,23 @@
+# Summary
+
+[Introduction](introduction.md)
+
+---
+
+# User Guide
+
+- [Quick Start](quickstart.md)
+- [CLI Reference](cli.md)
+
+# Architecture
+
+- [Overview](architecture.md)
+- [Developer Guide](developer-guide.md)
+- [Testing Guide](contributing/testing.md)
+- [Contributing](contributing/CONTRIBUTING.md)
+
+# Design Records
+
+- [ADR 0001: System Boundaries](adr/0001-system-boundaries.md)
+- [ADR 0002: Brain Provider Layer](adr/0002-brain-provider-layer.md)
+- [ADR 0003: IPC Wire Protocol](adr/0003-ipc-wire-protocol.md)

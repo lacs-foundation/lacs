@@ -1,0 +1,18 @@
+[book]
+title = "LACS — Linux Agent Control Standard"
+description = "AI system agent for Linux — formal risk model, mandatory approval, immutable audit trail"
+authors = ["Vladimir Rotariu"]
+language = "en"
+src = "docs"
+
+[output.html]
+site-url = "/lacs/"
+git-repository-url = "https://github.com/lacs-foundation/lacs"
+edit-url-template = "https://github.com/lacs-foundation/lacs/edit/main/docs/src/{path}"
+default-theme = "navy"
+preferred-dark-theme = "navy"
+no-section-label = false
+
+[output.html.fold]
+enable = true
+level = 1
