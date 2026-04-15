@@ -16,7 +16,7 @@ INTENT="I want to check disk usage, memory pressure, and see which services are 
 echo "=== Story 14: Triple compound — disk + memory + services ==="
 echo "Intent: $INTENT"
 
-PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-14-stderr.log)
+PLAN=$(sysknife --dry-run --json "$INTENT" 2>/tmp/sysknife-story-14-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 

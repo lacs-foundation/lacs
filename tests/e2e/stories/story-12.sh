@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Story 12: LACS activity log — today (history path)
-# Intent: "show me the LACS activity log for today"
+# Story 12: SysKnife activity log — today (history path)
+# Intent: "show me the SysKnife activity log for today"
 # Pass criteria:
 #   - Plan has exactly 1 step: ListJobHistory
 #   - risk_level low
@@ -11,12 +11,12 @@
 # state-inspection action.
 set -euo pipefail
 
-INTENT="show me the LACS activity log for today"
+INTENT="show me the SysKnife activity log for today"
 
-echo "=== Story 12: LACS activity log — today ==="
+echo "=== Story 12: SysKnife activity log — today ==="
 echo "Intent: $INTENT"
 
-PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-12-stderr.log)
+PLAN=$(sysknife --dry-run --json "$INTENT" 2>/tmp/sysknife-story-12-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 

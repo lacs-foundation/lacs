@@ -11,8 +11,8 @@
 # verifying the model does not conflate "stop" with "restart".
 set -euo pipefail
 
-if [[ "${LACS_ALLOW_DESTRUCTIVE:-0}" != "1" ]]; then
-  echo "SKIPPED (set LACS_ALLOW_DESTRUCTIVE=1 to run)"
+if [[ "${SYSKNIFE_ALLOW_DESTRUCTIVE:-0}" != "1" ]]; then
+  echo "SKIPPED (set SYSKNIFE_ALLOW_DESTRUCTIVE=1 to run)"
   exit 0
 fi
 
@@ -21,7 +21,7 @@ INTENT="stop the cups printing service"
 echo "=== Story 24: StopService — cups ==="
 echo "Intent: $INTENT"
 
-PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-24-stderr.log)
+PLAN=$(sysknife --dry-run --json "$INTENT" 2>/tmp/sysknife-story-24-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Story 38: 3-domain diagnostic compound under failure framing
-# Intent: "nginx is unresponsive — show me running processes, nginx service logs, and what LACS did recently"
+# Intent: "nginx is unresponsive — show me running processes, nginx service logs, and what SysKnife did recently"
 # Pass criteria:
 #   - Plan contains ListProcesses, GetServiceLogs, and ListJobHistory
 #   - GetServiceLogs params.unit matches "nginx" or "nginx.service"
@@ -12,16 +12,16 @@
 #     must see "show me X, Y, Z" and go straight to propose_plan with all three.
 #   - Three actions from three different domains: processes, services, job history.
 #   - GetServiceLogs requires a unit param extracted from "nginx service logs".
-#   - Model must not conflate "what LACS did recently" with GetSystemState —
-#     that maps to ListJobHistory (LACS transaction history, not system state).
+#   - Model must not conflate "what SysKnife did recently" with GetSystemState —
+#     that maps to ListJobHistory (SysKnife transaction history, not system state).
 set -euo pipefail
 
-INTENT="nginx is unresponsive — show me running processes, nginx service logs, and what LACS did recently"
+INTENT="nginx is unresponsive — show me running processes, nginx service logs, and what SysKnife did recently"
 
 echo "=== Story 38: ListProcesses + GetServiceLogs(nginx) + ListJobHistory ==="
 echo "Intent: $INTENT"
 
-PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-38-stderr.log)
+PLAN=$(sysknife --dry-run --json "$INTENT" 2>/tmp/sysknife-story-38-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 
@@ -49,7 +49,7 @@ if [[ "$UNIT" != "nginx" && "$UNIT" != "nginx.service" ]]; then
 fi
 
 if ! echo "$ACTIONS" | grep -q "ListJobHistory"; then
-  echo "FAIL: ListJobHistory not found — 'what LACS did recently' maps to job history, not system state"
+  echo "FAIL: ListJobHistory not found — 'what SysKnife did recently' maps to job history, not system state"
   echo "Actions: $ACTIONS"
   exit 1
 fi

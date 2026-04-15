@@ -10,7 +10,7 @@ INTENT="what ports are currently open on the firewall?"
 echo "=== Story 4: Firewall inspection ==="
 echo "Intent: $INTENT"
 
-PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-4-stderr.log)
+PLAN=$(sysknife --dry-run --json "$INTENT" 2>/tmp/sysknife-story-4-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 

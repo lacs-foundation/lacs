@@ -14,8 +14,8 @@
 #     memberships or access control — that requires a separate step).
 set -euo pipefail
 
-if [[ "${LACS_ALLOW_DESTRUCTIVE:-0}" != "1" ]]; then
-  echo "SKIPPED (set LACS_ALLOW_DESTRUCTIVE=1 to run)"
+if [[ "${SYSKNIFE_ALLOW_DESTRUCTIVE:-0}" != "1" ]]; then
+  echo "SKIPPED (set SYSKNIFE_ALLOW_DESTRUCTIVE=1 to run)"
   exit 0
 fi
 
@@ -24,7 +24,7 @@ INTENT="create a new user account called devteam for the development team"
 echo "=== Story 36: CreateUser(devteam) — not AddUserToGroup ==="
 echo "Intent: $INTENT"
 
-PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-36-stderr.log)
+PLAN=$(sysknife --dry-run --json "$INTENT" 2>/tmp/sysknife-story-36-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 

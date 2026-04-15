@@ -14,8 +14,8 @@
 #     layered packages — also wrong here.
 set -euo pipefail
 
-if [[ "${LACS_ALLOW_DESTRUCTIVE:-0}" != "1" ]]; then
-  echo "SKIPPED (set LACS_ALLOW_DESTRUCTIVE=1 to run)"
+if [[ "${SYSKNIFE_ALLOW_DESTRUCTIVE:-0}" != "1" ]]; then
+  echo "SKIPPED (set SYSKNIFE_ALLOW_DESTRUCTIVE=1 to run)"
   exit 0
 fi
 
@@ -24,7 +24,7 @@ INTENT="remove gedit from the base image, I don't need it"
 echo "=== Story 53: RemoveBasePackage(gedit) — base image override ==="
 echo "Intent: $INTENT"
 
-PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-53-stderr.log)
+PLAN=$(sysknife --dry-run --json "$INTENT" 2>/tmp/sysknife-story-53-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 

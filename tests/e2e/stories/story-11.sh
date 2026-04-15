@@ -25,7 +25,7 @@ INTENT="My system has been acting weird since yesterday's rpm-ostree update — 
 echo "=== Story 11: Post-update diagnostic (4-action compound) ==="
 echo "Intent: $INTENT"
 
-PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-11-stderr.log)
+PLAN=$(sysknife --dry-run --json "$INTENT" 2>/tmp/sysknife-story-11-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 

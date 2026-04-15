@@ -1,21 +1,21 @@
 # Architecture
 
-LACS is a local Linux control plane built around a strict boundary
+SysKnife is a local Linux control plane built around a strict boundary
 between planning, presentation, and execution.
 
 ## Crate and App Layout
 
 | Location | Package | Role |
 |---|---|---|
-| `crates/lacs-brain/` | `lacs-brain` | Unprivileged LLM planner |
-| `crates/lacs-types/` | `lacs-types` | Shared domain types |
-| `crates/lacs-core/` | `lacs-core` | Config file loading, constants |
-| `crates/lacs-daemon/` | `lacs-daemon` | Privileged executor |
-| `crates/lacs-proto/` | `lacs-proto` | Protobuf definitions (future use) |
-| `apps/lacs-shell/` | `lacs-shell` | Tauri + React GUI |
-| `apps/lacs-cli/` | `lacs` | Production CLI — also used headlessly by E2E stories (`--dry-run --json`) |
+| `crates/sysknife-brain/` | `sysknife-brain` | Unprivileged LLM planner |
+| `crates/sysknife-types/` | `sysknife-types` | Shared domain types |
+| `crates/sysknife-core/` | `sysknife-core` | Config file loading, constants |
+| `crates/sysknife-daemon/` | `sysknife-daemon` | Privileged executor |
+| `crates/sysknife-proto/` | `sysknife-proto` | Protobuf definitions (future use) |
+| `apps/sysknife-shell/` | `sysknife-shell` | Tauri + React GUI |
+| `apps/sysknife-cli/` | `sysknife` | Production CLI — also used headlessly by E2E stories (`--dry-run --json`) |
 
-### lacs-brain
+### sysknife-brain
 
 Unprivileged. Reads the user's intent, queries the daemon for system
 state, then calls the LLM in a tool-use loop until a typed plan is
@@ -27,7 +27,7 @@ produced. Provides:
 - Planning tools: `get_system_state`, `query_*`, `propose_plan`, `remember`, `forget`
 - Safety fence: validates every action name and risk level before a plan leaves the brain
 
-### lacs-types
+### sysknife-types
 
 Shared domain types used by every crate. Contains:
 
@@ -36,13 +36,13 @@ Shared domain types used by every crate. Contains:
 - `JobState` — `Queued` | `Running` | `Succeeded` | `Failed` | `Canceled` | `RolledBack` | `NeedsReboot`
 - Request and result envelopes for IPC messages
 
-### lacs-core
+### sysknife-core
 
-Shared constants and `~/.config/lacs/config.toml` loading via
+Shared constants and `~/.config/sysknife/config.toml` loading via
 `LacsConfig`. Config file values become env-var defaults so every
 component uses the same resolution order.
 
-### lacs-daemon
+### sysknife-daemon
 
 Privileged. The only component that touches the system. Provides:
 
@@ -57,7 +57,7 @@ Privileged. The only component that touches the system. Provides:
 - Automatic rollback for supported high-risk actions that fail
 - SQLite transaction audit log
 
-### lacs-shell
+### sysknife-shell
 
 The user-facing surface. A Tauri app (Rust backend + React frontend)
 that provides:
@@ -68,9 +68,9 @@ that provides:
 - Live job timeline with streaming output
 - Setup wizard for first-run LLM configuration
 
-### lacs-cli
+### sysknife-cli
 
-The production CLI (`apps/lacs-cli/`). Accepts a natural-language intent,
+The production CLI (`apps/sysknife-cli/`). Accepts a natural-language intent,
 calls the LLM planner, and prints or executes the resulting plan.
 `--dry-run --json` mode emits the plan as JSON on stdout without executing —
 this is the mode used by every E2E story script.
@@ -81,7 +81,7 @@ The daemon is trusted. The brain and shell are not trusted with raw
 privileged execution.
 
 ```
-lacs-brain  ──plan──►  lacs-shell  ──approval──►  lacs-daemon
+sysknife-brain  ──plan──►  sysknife-shell  ──approval──►  sysknife-daemon
  (planner)               (approval)                 (executor)
 ```
 
@@ -119,7 +119,7 @@ anything.
 ## IPC Protocol
 
 The shell and daemon communicate over a Unix domain socket
-(`/tmp/lacs-daemon.sock` by default, overridable via `LACS_LISTEN_URI`).
+(`/tmp/sysknife-daemon.sock` by default, overridable via `SYSKNIFE_LISTEN_URI`).
 
 The framing is a 4-byte little-endian `u32` length prefix followed by
 a UTF-8 JSON body. Each message carries a `"type"` discriminant so
@@ -132,7 +132,7 @@ dropped immediately rather than queued.
 The protocol is human-readable. You can inspect live traffic with:
 
 ```sh
-socat - UNIX-CONNECT:/tmp/lacs-daemon.sock
+socat - UNIX-CONNECT:/tmp/sysknife-daemon.sock
 ```
 
 See [ADR 0003](adr/0003-ipc-wire-protocol.md) for the rationale

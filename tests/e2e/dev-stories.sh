@@ -2,8 +2,8 @@
 # dev-stories.sh — run E2E user stories on your dev machine (no VM required).
 #
 # What this does:
-#   1. Builds lacs-daemon and lacs (release mode).
-#   2. Starts lacs-daemon in the background on /tmp/lacs-daemon.sock if it is
+#   1. Builds sysknife-daemon and sysknife (release mode).
+#   2. Starts sysknife-daemon in the background on /tmp/sysknife-daemon.sock if it is
 #      not already running there.
 #   3. Runs the requested stories (default: 1-7, the read-only ones).
 #   4. Stops the daemon if this script started it.
@@ -19,7 +19,7 @@
 # 10 will fail on a dev machine for this reason. Story 9 (create toolbox) may
 # pass plan-structure checks. To run them anyway:
 #
-#   LACS_ALLOW_DESTRUCTIVE=1 tests/e2e/dev-stories.sh 8 9 10
+#   SYSKNIFE_ALLOW_DESTRUCTIVE=1 tests/e2e/dev-stories.sh 8 9 10
 #
 # LLM provider is auto-detected (same logic as BrainConfig::from_env):
 #   - ANTHROPIC_API_KEY set  → provider=anthropic, model=claude-sonnet-4-6
@@ -27,13 +27,13 @@
 #   - GEMINI_API_KEY set     → provider=gemini,    model=gemini-2.0-flash
 #   - otherwise              → provider=ollama,    model=qwen3:8b (must be pulled)
 #
-# Override with LACS_LLM_PROVIDER and LACS_LLM_MODEL.
+# Override with SYSKNIFE_LLM_PROVIDER and SYSKNIFE_LLM_MODEL.
 #
 # Usage:
 #   tests/e2e/dev-stories.sh            # read-only stories (default)
 #   tests/e2e/dev-stories.sh 3 6 7      # specific stories
-#   LACS_ALLOW_DESTRUCTIVE=1 tests/e2e/dev-stories.sh   # all 54
-#   LACS_LLM_PROVIDER=openai OPENAI_API_KEY=sk-... tests/e2e/dev-stories.sh
+#   SYSKNIFE_ALLOW_DESTRUCTIVE=1 tests/e2e/dev-stories.sh   # all 54
+#   SYSKNIFE_LLM_PROVIDER=openai OPENAI_API_KEY=sk-... tests/e2e/dev-stories.sh
 #
 set -euo pipefail
 
@@ -41,7 +41,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 LOG_DIR="$SCRIPT_DIR/logs"
 STORY_DIR="$SCRIPT_DIR/stories"
-SOCKET_PATH="/tmp/lacs-daemon.sock"
+SOCKET_PATH="/tmp/sysknife-daemon.sock"
 DAEMON_PID=""
 
 mkdir -p "$LOG_DIR"
@@ -53,7 +53,7 @@ mkdir -p "$LOG_DIR"
 cleanup() {
     if [[ -n "$DAEMON_PID" ]]; then
         echo ""
-        echo "Stopping lacs-daemon (pid $DAEMON_PID)..."
+        echo "Stopping sysknife-daemon (pid $DAEMON_PID)..."
         kill "$DAEMON_PID" 2>/dev/null || true
         wait "$DAEMON_PID" 2>/dev/null || true
         rm -f "$SOCKET_PATH" 2>/dev/null || true
@@ -65,24 +65,24 @@ trap cleanup EXIT
 # Build
 # ---------------------------------------------------------------------------
 
-echo "Building lacs-daemon and lacs..."
-cargo build -p lacs-daemon -p lacs-cli --release --quiet \
+echo "Building sysknife-daemon and sysknife..."
+cargo build -p sysknife-daemon -p sysknife-cli --release --quiet \
     --manifest-path "$REPO_ROOT/Cargo.toml"
 echo "Build done."
 echo ""
 
-DAEMON_BIN="$REPO_ROOT/target/release/lacs-daemon"
+DAEMON_BIN="$REPO_ROOT/target/release/sysknife-daemon"
 
 # ---------------------------------------------------------------------------
 # Start daemon if not already running
 # ---------------------------------------------------------------------------
 
 if [[ -e "$SOCKET_PATH" ]]; then
-    echo "lacs-daemon socket already present at $SOCKET_PATH — skipping start."
+    echo "sysknife-daemon socket already present at $SOCKET_PATH — skipping start."
 else
-    echo "Starting lacs-daemon on $SOCKET_PATH..."
-    LACS_LISTEN_URI="unix://$SOCKET_PATH" \
-    LACS_DATABASE_PATH="/tmp/lacs-daemon-dev.sqlite" \
+    echo "Starting sysknife-daemon on $SOCKET_PATH..."
+    SYSKNIFE_LISTEN_URI="unix://$SOCKET_PATH" \
+    SYSKNIFE_DATABASE_PATH="/tmp/sysknife-daemon-dev.sqlite" \
         "$DAEMON_BIN" >"$LOG_DIR/daemon.log" 2>&1 &
     DAEMON_PID=$!
 
@@ -94,18 +94,18 @@ else
     done
 
     if [[ ! -e "$SOCKET_PATH" ]]; then
-        echo "ERROR: lacs-daemon did not start within 5 s."
+        echo "ERROR: sysknife-daemon did not start within 5 s."
         echo "Daemon log ($LOG_DIR/daemon.log):"
         cat "$LOG_DIR/daemon.log" || true
         exit 1
     fi
     if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
-        echo "ERROR: lacs-daemon process exited before socket appeared."
+        echo "ERROR: sysknife-daemon process exited before socket appeared."
         echo "Daemon log ($LOG_DIR/daemon.log):"
         cat "$LOG_DIR/daemon.log" || true
         exit 1
     fi
-    echo "lacs-daemon started (pid $DAEMON_PID)."
+    echo "sysknife-daemon started (pid $DAEMON_PID)."
 fi
 echo ""
 
@@ -114,21 +114,21 @@ echo ""
 # ---------------------------------------------------------------------------
 
 # Respect explicit override first; then auto-detect from API keys.
-if [[ -z "${LACS_LLM_PROVIDER:-}" ]]; then
+if [[ -z "${SYSKNIFE_LLM_PROVIDER:-}" ]]; then
     if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
-        export LACS_LLM_PROVIDER="anthropic"
+        export SYSKNIFE_LLM_PROVIDER="anthropic"
     elif [[ -n "${OPENAI_API_KEY:-}" ]]; then
-        export LACS_LLM_PROVIDER="openai"
+        export SYSKNIFE_LLM_PROVIDER="openai"
     elif [[ -n "${GEMINI_API_KEY:-}" ]]; then
-        export LACS_LLM_PROVIDER="gemini"
+        export SYSKNIFE_LLM_PROVIDER="gemini"
     else
-        export LACS_LLM_PROVIDER="ollama"
+        export SYSKNIFE_LLM_PROVIDER="ollama"
     fi
 fi
-export LACS_LISTEN_URI="unix://$SOCKET_PATH"
+export SYSKNIFE_LISTEN_URI="unix://$SOCKET_PATH"
 export PATH="$REPO_ROOT/target/release:$PATH"
 
-echo "LLM provider: $LACS_LLM_PROVIDER, model: ${LACS_LLM_MODEL:-<provider default>}"
+echo "LLM provider: $SYSKNIFE_LLM_PROVIDER, model: ${SYSKNIFE_LLM_MODEL:-<provider default>}"
 echo "Daemon socket: $SOCKET_PATH"
 echo ""
 
@@ -148,7 +148,7 @@ STORY_NAMES[8]="Layer vim via rpm-ostree (destructive)"
 STORY_NAMES[9]="Create a toolbox (destructive)"
 STORY_NAMES[10]="Add SSH authorized key (destructive)"
 STORY_NAMES[11]="Post-update diagnostic (4-action compound)"
-STORY_NAMES[12]="LACS activity log — today"
+STORY_NAMES[12]="SysKnife activity log — today"
 STORY_NAMES[13]="Service logs for firewalld"
 STORY_NAMES[14]="Triple compound — disk + memory + services"
 STORY_NAMES[15]="Rollback history"
@@ -192,13 +192,13 @@ STORY_NAMES[52]="UpdateFlatpak — Firefox (destructive)"
 STORY_NAMES[53]="RemoveBasePackage — gedit from base image (destructive)"
 STORY_NAMES[54]="UpdateFlatpak — update all, no specific app (destructive)"
 
-ALLOW_DESTRUCTIVE="${LACS_ALLOW_DESTRUCTIVE:-0}"
-STORY_TIMEOUT="${LACS_STORY_TIMEOUT:-120}"
+ALLOW_DESTRUCTIVE="${SYSKNIFE_ALLOW_DESTRUCTIVE:-0}"
+STORY_TIMEOUT="${SYSKNIFE_STORY_TIMEOUT:-120}"
 # Delay between stories (seconds). Avoids TPM rate-limit errors when running
 # all 20 stories back-to-back against a cloud LLM. Each gpt-4o story uses
 # ~3 K tokens; at 30 K TPM the safe cadence is one story per ~6 s.
-# Default 10 s is conservative; set LACS_STORY_DELAY=0 to disable.
-STORY_DELAY="${LACS_STORY_DELAY:-10}"
+# Default 10 s is conservative; set SYSKNIFE_STORY_DELAY=0 to disable.
+STORY_DELAY="${SYSKNIFE_STORY_DELAY:-10}"
 
 declare -a STORIES
 declare -A RESULTS
@@ -269,7 +269,7 @@ run_story() {
 # Execute
 # ---------------------------------------------------------------------------
 
-echo "LACS Dev Story Run"
+echo "SysKnife Dev Story Run"
 echo "=================="
 echo "Date:        $(date --iso-8601=seconds 2>/dev/null || date)"
 echo "Stories:     ${STORIES[*]}"

@@ -1,4 +1,4 @@
-# LACS Shell — Flatpak Packaging
+# SysKnife Shell — Flatpak Packaging
 
 ## Prerequisites
 
@@ -36,9 +36,9 @@ flatpak run org.lacsfoundation.LacsShell
 
 ## Notes
 
-- The Flatpak shell connects to the daemon at `/run/lacs/daemon.sock` on
-  the **host** (not sandboxed) via `--filesystem=/run/lacs:ro`.
+- The Flatpak shell connects to the daemon at `/run/sysknife/daemon.sock` on
+  the **host** (not sandboxed) via `--filesystem=/run/sysknife:ro`.
 - The daemon must still be installed and running on the host via the
-  systemd unit (`sudo systemctl enable --now lacs-daemon`).
+  systemd unit (`sudo systemctl enable --now sysknife-daemon`).
 - `cargo-sources.json` must be regenerated with `flatpak-cargo-generator.py`
   whenever `Cargo.lock` changes. Add this to your release checklist.

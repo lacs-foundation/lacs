@@ -11,7 +11,7 @@ INTENT="show me the SSH keys authorized for user lacsdev"
 echo "=== Story 7: SSH key inventory ==="
 echo "Intent: $INTENT"
 
-PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-7-stderr.log)
+PLAN=$(sysknife --dry-run --json "$INTENT" 2>/tmp/sysknife-story-7-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 

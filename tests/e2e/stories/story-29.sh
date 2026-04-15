@@ -21,7 +21,7 @@ INTENT="show me running processes, current network status, and memory usage"
 echo "=== Story 29: Triple compound — processes + network + memory ==="
 echo "Intent: $INTENT"
 
-PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-29-stderr.log)
+PLAN=$(sysknife --dry-run --json "$INTENT" 2>/tmp/sysknife-story-29-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 

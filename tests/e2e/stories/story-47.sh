@@ -15,7 +15,7 @@ INTENT="show me all my installed flatpak apps"
 echo "=== Story 47: ListInstalledFlatpaks — local install state ==="
 echo "Intent: $INTENT"
 
-PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-47-stderr.log)
+PLAN=$(sysknife --dry-run --json "$INTENT" 2>/tmp/sysknife-story-47-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 

@@ -15,7 +15,7 @@ INTENT="show me all users and groups defined on this system"
 echo "=== Story 26: ListUsers + ListGroups compound ==="
 echo "Intent: $INTENT"
 
-PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-26-stderr.log)
+PLAN=$(sysknife --dry-run --json "$INTENT" 2>/tmp/sysknife-story-26-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 

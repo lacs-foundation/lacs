@@ -10,7 +10,7 @@ INTENT="is sshd running? show me its recent logs"
 echo "=== Story 3: Service health check ==="
 echo "Intent: $INTENT"
 
-PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-3-stderr.log)
+PLAN=$(sysknife --dry-run --json "$INTENT" 2>/tmp/sysknife-story-3-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 

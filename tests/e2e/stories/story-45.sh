@@ -15,8 +15,8 @@
 #   - Risk must be high: rebooting the system is a deployment lifecycle event.
 set -euo pipefail
 
-if [[ "${LACS_ALLOW_DESTRUCTIVE:-0}" != "1" ]]; then
-  echo "SKIPPED (set LACS_ALLOW_DESTRUCTIVE=1 to run)"
+if [[ "${SYSKNIFE_ALLOW_DESTRUCTIVE:-0}" != "1" ]]; then
+  echo "SKIPPED (set SYSKNIFE_ALLOW_DESTRUCTIVE=1 to run)"
   exit 0
 fi
 
@@ -25,7 +25,7 @@ INTENT="the new kernel was just installed, I need to reboot to activate it"
 echo "=== Story 45: RebootSystem — not UpdateSystem ==="
 echo "Intent: $INTENT"
 
-PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-45-stderr.log)
+PLAN=$(sysknife --dry-run --json "$INTENT" 2>/tmp/sysknife-story-45-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 

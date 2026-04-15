@@ -18,7 +18,7 @@ INTENT="list all running containers and give me detailed info on the container n
 echo "=== Story 17: Container list + postgres info ==="
 echo "Intent: $INTENT"
 
-PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-17-stderr.log)
+PLAN=$(sysknife --dry-run --json "$INTENT" 2>/tmp/sysknife-story-17-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 

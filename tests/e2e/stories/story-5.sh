@@ -10,7 +10,7 @@ INTENT="what packages have I layered on top of the base system?"
 echo "=== Story 5: List layered packages ==="
 echo "Intent: $INTENT"
 
-PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-5-stderr.log)
+PLAN=$(sysknife --dry-run --json "$INTENT" 2>/tmp/sysknife-story-5-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 

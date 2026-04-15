@@ -11,7 +11,7 @@ INTENT="is the system low on memory? show me what's using it"
 echo "=== Story 2: Memory pressure diagnosis ==="
 echo "Intent: $INTENT"
 
-PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-2-stderr.log)
+PLAN=$(sysknife --dry-run --json "$INTENT" 2>/tmp/sysknife-story-2-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 

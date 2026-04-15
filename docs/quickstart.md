@@ -10,11 +10,11 @@
 ## Install
 
 ```sh
-git clone https://github.com/lacs-foundation/lacs
-cd lacs
+git clone https://github.com/sysknife-foundation/sysknife
+cd sysknife
 make build
 sudo make install
-sudo systemctl enable --now lacs-daemon
+sudo systemctl enable --now sysknife-daemon
 ```
 
 ## Configure your LLM
@@ -22,7 +22,7 @@ sudo systemctl enable --now lacs-daemon
 **Ollama (recommended — local, no API key):**
 ```sh
 ollama pull llama3.2
-# LACS auto-detects Ollama when no cloud API key is set.
+# SysKnife auto-detects Ollama when no cloud API key is set.
 ```
 
 **Anthropic:**
@@ -35,7 +35,7 @@ export ANTHROPIC_API_KEY=sk-ant-...
 export OPENAI_API_KEY=sk-...
 ```
 
-**Optional config file** (`~/.config/lacs/config.toml`):
+**Optional config file** (`~/.config/sysknife/config.toml`):
 ```toml
 [llm]
 provider = "ollama"
@@ -46,10 +46,10 @@ model    = "llama3.2"
 
 ```sh
 # Try the planner without executing anything:
-lacs --dry-run "show disk usage"
+sysknife --dry-run "show disk usage"
 
 # Full run (requires daemon):
-lacs "what packages do I have installed as layers?"
+sysknife "what packages do I have installed as layers?"
 ```
 
 ## Try without installing
@@ -57,7 +57,7 @@ lacs "what packages do I have installed as layers?"
 ```sh
 # Plan any intent — no daemon, no approval, no execution.
 export ANTHROPIC_API_KEY=sk-ant-...
-lacs --dry-run "show disk usage"
+sysknife --dry-run "show disk usage"
 ```
 
 Works on any Linux. Prints the typed plan and exits.

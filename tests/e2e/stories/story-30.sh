@@ -7,7 +7,7 @@
 #   - risk high (SSH key removal is an access-control change, always high)
 #
 # Security coverage: RemoveAuthorizedKey is the most security-sensitive SSH
-# action in LACS — it modifies access control for a named user. This story
+# action in SysKnife — it modifies access control for a named user. This story
 # verifies the model assigns appropriate risk, correctly routes to
 # RemoveAuthorizedKey (not AddAuthorizedKey), and extracts the username.
 #
@@ -15,8 +15,8 @@
 # to propose_plan without needing a preliminary GetAuthorizedKeys query.
 set -euo pipefail
 
-if [[ "${LACS_ALLOW_DESTRUCTIVE:-0}" != "1" ]]; then
-  echo "SKIPPED (set LACS_ALLOW_DESTRUCTIVE=1 to run)"
+if [[ "${SYSKNIFE_ALLOW_DESTRUCTIVE:-0}" != "1" ]]; then
+  echo "SKIPPED (set SYSKNIFE_ALLOW_DESTRUCTIVE=1 to run)"
   exit 0
 fi
 
@@ -25,7 +25,7 @@ INTENT="remove the ssh-ed25519 key ending in alice@laptop from user alice's auth
 echo "=== Story 30: RemoveAuthorizedKey(user=alice) ==="
 echo "Intent: $INTENT"
 
-PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-30-stderr.log)
+PLAN=$(sysknife --dry-run --json "$INTENT" 2>/tmp/sysknife-story-30-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 

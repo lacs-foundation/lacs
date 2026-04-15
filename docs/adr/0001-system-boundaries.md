@@ -6,16 +6,16 @@ Accepted.
 
 ## Context
 
-LACS exists to let an agent perform real Linux administration without
+SysKnife exists to let an agent perform real Linux administration without
 granting it arbitrary shell access or root.
 
 ## Decision
 
-LACS uses three separate roles:
+SysKnife uses three separate roles:
 
-- `lacs-brain` plans
-- `lacs-shell` presents and collects approval
-- `lacs-daemon` executes
+- `sysknife-brain` plans
+- `sysknife-shell` presents and collects approval
+- `sysknife-daemon` executes
 
 The daemon is the only privileged executor. The brain is never
 allowed to mutate the system directly.

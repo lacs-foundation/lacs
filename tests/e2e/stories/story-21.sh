@@ -15,7 +15,7 @@ INTENT="what operating system and hardware am I running on?"
 echo "=== Story 21: GetSystemState direct request ==="
 echo "Intent: $INTENT"
 
-PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-21-stderr.log)
+PLAN=$(sysknife --dry-run --json "$INTENT" 2>/tmp/sysknife-story-21-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 

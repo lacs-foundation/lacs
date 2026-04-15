@@ -1,13 +1,13 @@
-# LACS — Linux Agent Control Standard
+# SysKnife — Linux Agent Control Standard
 
 **Describe what you want in plain language. Review a typed plan with risk levels. Approve explicitly. Watch it execute.**
 
-LACS never runs a shell command. Every action is a typed operation with a formal risk level. The AI cannot touch your system directly.
+SysKnife never runs a shell command. Every action is a typed operation with a formal risk level. The AI cannot touch your system directly.
 
 ```sh
 # Try it — no daemon, no execution, no risk.
 export ANTHROPIC_API_KEY=sk-ant-...
-lacs --dry-run "show disk usage"
+sysknife --dry-run "show disk usage"
 ```
 
 ---
@@ -16,7 +16,7 @@ lacs --dry-run "show disk usage"
 
 Every AI agent that can touch your system has the same flaw: you find out what it did after. Open Interpreter runs arbitrary Python and shell. Goose by Block pops confirmation dialogs. Neither has a formal model of what "safe" means.
 
-**LACS is different.**
+**SysKnife is different.**
 
 The AI proposes a **typed plan**. Every step is a named action — not a shell command — with a formal risk level:
 
@@ -31,7 +31,7 @@ You see the plan before anything happens. If you decline, nothing runs. The AI c
 ## How it works
 
 ```
-lacs-brain  →  lacs-shell  →  lacs-daemon
+sysknife-brain  →  sysknife-shell  →  sysknife-daemon
  (planner)      (approval)     (executor)
 ```
 
@@ -48,12 +48,12 @@ The brain proposes but **cannot touch the system**. The daemon is the only privi
 
 ## Use from Claude Desktop (MCP)
 
-LACS exposes an MCP server so Claude Desktop and Cursor can call the planner directly:
+SysKnife exposes an MCP server so Claude Desktop and Cursor can call the planner directly:
 
 ```json
 {
   "mcpServers": {
-    "lacs": { "command": "lacs", "args": ["mcp-server"] }
+    "sysknife": { "command": "sysknife", "args": ["mcp-server"] }
   }
 }
 ```
@@ -63,12 +63,12 @@ LACS exposes an MCP server so Claude Desktop and Cursor can call the planner dir
 ## Quick start
 
 ```sh
-git clone https://github.com/lacs-foundation/lacs
-cd lacs
+git clone https://github.com/sysknife-foundation/sysknife
+cd sysknife
 make build
 sudo make install
-sudo systemctl enable --now lacs-daemon
-lacs "show disk usage"
+sudo systemctl enable --now sysknife-daemon
+sysknife "show disk usage"
 ```
 
 See the [Developer Guide](developer-guide.md) for the full setup.
@@ -79,4 +79,4 @@ See the [Developer Guide](developer-guide.md) for the full setup.
 
 230+ tests. 54 executable E2E user stories. Fedora Silverblue / Atomic Desktop fully supported.
 
-Multi-distro (apt, dnf, pacman), Telegram approval interface, and `lacs audit export` are on the [roadmap](https://github.com/lacs-foundation/lacs/blob/main/ROADMAP.md).
+Multi-distro (apt, dnf, pacman), Telegram approval interface, and `sysknife audit export` are on the [roadmap](https://github.com/sysknife-foundation/sysknife/blob/main/ROADMAP.md).

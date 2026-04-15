@@ -1,6 +1,6 @@
-# LACS E2E User Stories
+# SysKnife E2E User Stories
 
-Twenty scenarios for validating LACS on a real Fedora Atomic Desktop (Silverblue,
+Twenty scenarios for validating SysKnife on a real Fedora Atomic Desktop (Silverblue,
 Kinoite, Sway Atomic, Budgie Atomic, or COSMIC Atomic). Run inside a QEMU/KVM
 VM via `tests/e2e/atomic-vm.sh`, or on real hardware.
 
@@ -16,7 +16,7 @@ Each story has:
 The **automated** stories (1–7, 11–17) are also covered by the container-based
 CI smoke test (see `.github/workflows/e2e.yml`). The **semi-automated** stories
 (8–10, 18–20) make real system changes and only run when
-`LACS_ALLOW_DESTRUCTIVE=1` is set — take a VM snapshot first via
+`SYSKNIFE_ALLOW_DESTRUCTIVE=1` is set — take a VM snapshot first via
 `atomic-vm.sh snapshot pre-destructive`.
 
 ---
@@ -187,7 +187,7 @@ CI smoke test (see `.github/workflows/e2e.yml`). The **semi-automated** stories
 - Proposes `InstallPackages` (or `AddLayeredPackage`) with `packages: ["vim"]`
 - Plan marked `approvalRequired: true`, risk `high`
 
-**Automated:** only with `LACS_ALLOW_DESTRUCTIVE=1` and a VM snapshot set
+**Automated:** only with `SYSKNIFE_ALLOW_DESTRUCTIVE=1` and a VM snapshot set
 
 **Pass criteria:**
 - Plan requires approval (high risk)
@@ -210,7 +210,7 @@ CI smoke test (see `.github/workflows/e2e.yml`). The **semi-automated** stories
 - Proposes `CreateToolbox` with `name: "dev-test"`
 - Plan marked `approvalRequired: true`, risk `medium`
 
-**Automated:** only with `LACS_ALLOW_DESTRUCTIVE=1`
+**Automated:** only with `SYSKNIFE_ALLOW_DESTRUCTIVE=1`
 
 **Pass criteria:**
 - Plan has `CreateToolbox` step with `params.name == "dev-test"`
@@ -235,7 +235,7 @@ CI smoke test (see `.github/workflows/e2e.yml`). The **semi-automated** stories
 - Plan marked `approvalRequired: true`, risk `medium`
 - The public_key param must NOT be truncated or modified
 
-**Automated:** only with `LACS_ALLOW_DESTRUCTIVE=1`
+**Automated:** only with `SYSKNIFE_ALLOW_DESTRUCTIVE=1`
 
 **Pass criteria:**
 - Plan has exactly the `AddAuthorizedKey` step
@@ -271,11 +271,11 @@ CI smoke test (see `.github/workflows/e2e.yml`). The **semi-automated** stories
 
 ---
 
-## Story 12: LACS activity log — today
+## Story 12: SysKnife activity log — today
 
 **Persona:** Sysadmin reviewing what automation ran during the day.
 
-**Intent:** `"show me the LACS activity log for today"`
+**Intent:** `"show me the SysKnife activity log for today"`
 
 **Expected LLM behavior:**
 - Calls `query_job_history(since_hours: 24)` to check today's transactions
@@ -338,13 +338,13 @@ CI smoke test (see `.github/workflows/e2e.yml`). The **semi-automated** stories
 
 ## Story 15: Rollback history
 
-**Persona:** Sysadmin checking whether any recent LACS rollbacks occurred.
+**Persona:** Sysadmin checking whether any recent SysKnife rollbacks occurred.
 
-**Intent:** `"show me all rollback operations LACS has performed"`
+**Intent:** `"show me all rollback operations SysKnife has performed"`
 
 **Expected LLM behavior:**
 - Calls `query_job_history(action_filter: "RollbackDeployment")` to consult
-  the LACS transaction log
+  the SysKnife transaction log
 - Proposes `ListJobHistory` — even if the result set is empty, the user asked
   to see the log
 - Does NOT use `query_deployments` or `get_system_state`
@@ -413,7 +413,7 @@ CI smoke test (see `.github/workflows/e2e.yml`). The **semi-automated** stories
 - Proposes `RestartService` with `params.unit = "bluetooth"` (or `"bluetooth.service"`)
 - Risk `medium`, approval required
 
-**Automated:** only with `LACS_ALLOW_DESTRUCTIVE=1`
+**Automated:** only with `SYSKNIFE_ALLOW_DESTRUCTIVE=1`
 
 **Pass criteria:**
 - Plan has 1 step, `RestartService`, `params.unit` is `"bluetooth"` or
@@ -434,7 +434,7 @@ CI smoke test (see `.github/workflows/e2e.yml`). The **semi-automated** stories
 - Proposes a single `UpdateSystem` step
 - Risk `high`, approval required, reboot implied
 
-**Automated:** only with `LACS_ALLOW_DESTRUCTIVE=1`
+**Automated:** only with `SYSKNIFE_ALLOW_DESTRUCTIVE=1`
 
 **Pass criteria:**
 - Plan has 1 step, `UpdateSystem`, risk `high`
@@ -456,7 +456,7 @@ CI smoke test (see `.github/workflows/e2e.yml`). The **semi-automated** stories
 - Risk `high` (group membership changes affect privilege escalation paths)
 - Approval required
 
-**Automated:** only with `LACS_ALLOW_DESTRUCTIVE=1`
+**Automated:** only with `SYSKNIFE_ALLOW_DESTRUCTIVE=1`
 
 **Pass criteria:**
 - Plan has 1 step, `AddUserToGroup`, `params.username == "devops"`,
@@ -490,7 +490,7 @@ by the manual QA checklist (see `demo-script.md`):
 ./tests/e2e/atomic-vm.sh download
 ./tests/e2e/atomic-vm.sh install
 
-# Every run: boot, provision (rsyncs repo + builds LACS), run stories
+# Every run: boot, provision (rsyncs repo + builds SysKnife), run stories
 ./tests/e2e/atomic-vm.sh start
 ./tests/e2e/atomic-vm.sh provision
 ./tests/e2e/atomic-vm.sh run
@@ -498,7 +498,7 @@ by the manual QA checklist (see `demo-script.md`):
 # Destructive stories — snapshot first, then revert
 ./tests/e2e/atomic-vm.sh stop && ./tests/e2e/atomic-vm.sh snapshot clean
 ./tests/e2e/atomic-vm.sh start
-LACS_ALLOW_DESTRUCTIVE=1 ./tests/e2e/atomic-vm.sh run
+SYSKNIFE_ALLOW_DESTRUCTIVE=1 ./tests/e2e/atomic-vm.sh run
 ./tests/e2e/atomic-vm.sh stop && ./tests/e2e/atomic-vm.sh restore clean
 ```
 
@@ -512,15 +512,15 @@ on PRs labeled `e2e`.
 
 ### Prompt engineering observations
 
-The system prompt in `crates/lacs-brain/src/prompt.rs` contains three worked
+The system prompt in `crates/sysknife-brain/src/prompt.rs` contains three worked
 examples (A, B, and C). These are **load-bearing** — removing them causes 4 of 7
 read-only stories to fail with GPT-4o.
 
 The original Example A ("check disk usage") was removed — it was a strict
 subset of the prose rule and the current Example A, and added no measurable
 coverage. The remaining examples were renumbered B→A, C→B. Example C
-("did LACS successfully update recently?") was later added to teach
-`query_job_history` for questions about past LACS actions.
+("did SysKnife successfully update recently?") was later added to teach
+`query_job_history` for questions about past SysKnife actions.
 
 Stories 8–10 require a live daemon and are skipped in the no-daemon CI run.
 
@@ -548,7 +548,7 @@ check if vim is already layered before proposing `AddLayeredPackage`).
 | 9 — create toolbox | ✅ (skipped/no-daemon) | ✅ (skipped/no-daemon) |
 | 10 — add SSH key | ❌ crash (daemon absent) | ❌ crash (daemon absent) |
 | 11 — deployments + kernel args | ❌ extra query step | ✅ |
-| 12 — LACS activity log | ❌ wrong tool (deployments) | ✅ (requires Example C) |
+| 12 — SysKnife activity log | ❌ wrong tool (deployments) | ✅ (requires Example C) |
 | 13 — service logs (firewalld) | ❌ wrong plan | ✅ |
 | 14 — triple compound | ❌ extra query steps | ✅ |
 | 15 — rollback history | ❌ wrong tool (deployments) | ✅ (requires Example C) |
