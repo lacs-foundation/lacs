@@ -7,7 +7,7 @@
 # the repo copy at $REPO_DIR, and starts the daemon.
 #
 # The repo copy is expected at $REPO_DIR (default: /home/lacsdev/lacs),
-# matching what tests/e2e/silverblue-vm.sh rsyncs over via `provision`.
+# matching what tests/e2e/atomic-vm.sh rsyncs over via `provision`.
 #
 # If rpm-ostree needs to layer packages, it requires a reboot to take
 # effect. This script handles the two-phase flow:
@@ -179,7 +179,7 @@ ollama pull "$LACS_TEST_MODEL" || fail "Pull $LACS_TEST_MODEL"
 # ---------------------------------------------------------------------------
 
 step "Build LACS from $REPO_DIR"
-[ -d "$REPO_DIR" ] || fail "Repo directory $REPO_DIR not found. Did you run 'silverblue-vm.sh provision'?"
+[ -d "$REPO_DIR" ] || fail "Repo directory $REPO_DIR not found. Did you run 'atomic-vm.sh provision'?"
 cd "$REPO_DIR"
 
 cargo build --release -p lacs-daemon -p lacs-cli || fail "Build lacs-daemon and lacs"

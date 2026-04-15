@@ -2,7 +2,7 @@
 
 Twenty scenarios for validating LACS on a real Fedora Atomic Desktop (Silverblue,
 Kinoite, Sway Atomic, Budgie Atomic, or COSMIC Atomic). Run inside a QEMU/KVM
-VM via `tests/e2e/silverblue-vm.sh`, or on real hardware.
+VM via `tests/e2e/atomic-vm.sh`, or on real hardware.
 
 Each story has:
 
@@ -17,7 +17,7 @@ The **automated** stories (1–7, 11–17) are also covered by the container-bas
 CI smoke test (see `.github/workflows/e2e.yml`). The **semi-automated** stories
 (8–10, 18–20) make real system changes and only run when
 `LACS_ALLOW_DESTRUCTIVE=1` is set — take a VM snapshot first via
-`silverblue-vm.sh snapshot pre-destructive`.
+`atomic-vm.sh snapshot pre-destructive`.
 
 ---
 
@@ -487,19 +487,19 @@ by the manual QA checklist (see `demo-script.md`):
 
 ```sh
 # One-time: download the Fedora Silverblue ISO and install it in QEMU/KVM
-./tests/e2e/silverblue-vm.sh download
-./tests/e2e/silverblue-vm.sh install
+./tests/e2e/atomic-vm.sh download
+./tests/e2e/atomic-vm.sh install
 
 # Every run: boot, provision (rsyncs repo + builds LACS), run stories
-./tests/e2e/silverblue-vm.sh start
-./tests/e2e/silverblue-vm.sh provision
-./tests/e2e/silverblue-vm.sh run
+./tests/e2e/atomic-vm.sh start
+./tests/e2e/atomic-vm.sh provision
+./tests/e2e/atomic-vm.sh run
 
 # Destructive stories — snapshot first, then revert
-./tests/e2e/silverblue-vm.sh stop && ./tests/e2e/silverblue-vm.sh snapshot clean
-./tests/e2e/silverblue-vm.sh start
-LACS_ALLOW_DESTRUCTIVE=1 ./tests/e2e/silverblue-vm.sh run
-./tests/e2e/silverblue-vm.sh stop && ./tests/e2e/silverblue-vm.sh restore clean
+./tests/e2e/atomic-vm.sh stop && ./tests/e2e/atomic-vm.sh snapshot clean
+./tests/e2e/atomic-vm.sh start
+LACS_ALLOW_DESTRUCTIVE=1 ./tests/e2e/atomic-vm.sh run
+./tests/e2e/atomic-vm.sh stop && ./tests/e2e/atomic-vm.sh restore clean
 ```
 
 See [docs/contributing/testing.md](../contributing/testing.md) for

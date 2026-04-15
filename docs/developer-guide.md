@@ -64,7 +64,7 @@ cd apps/lacs-shell && pnpm test && pnpm exec tsc --noEmit
 
 See [docs/contributing/testing.md](contributing/testing.md) for the
 full test pyramid, including how to run the LLM-driven E2E stories
-on your workstation and in a Silverblue VM.
+on your workstation and in a Fedora Atomic VM.
 
 ## Running the Full Stack Locally
 
@@ -221,7 +221,7 @@ apps/
 tests/
   e2e/
     dev-stories.sh  Run E2E stories on any Linux host (uses lacs --dry-run --json)
-    silverblue-vm.sh  Manage a Silverblue QEMU/KVM VM for full E2E
+    atomic-vm.sh  Manage a Silverblue QEMU/KVM VM for full E2E
 docs/
   adr/            Architectural decision records
   contributing/   Testing guide

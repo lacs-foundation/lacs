@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# silverblue-vm.sh — boot a real Fedora Atomic Desktop VM for LACS E2E testing.
+# atomic-vm.sh — boot a real Fedora Atomic Desktop VM for LACS E2E testing.
 #
 # Uses quickemu to download the official Fedora ISO and run it as a
 # QEMU/KVM VM with SSH port forwarding. Works on Linux and macOS hosts.
@@ -8,7 +8,7 @@
 # VirtualBox path.
 #
 # This is the HIGH-FIDELITY path. The VM is a real atomic desktop with
-# rpm-ostree, systemd, flatpak, podman, and toolbox — all 10 user stories
+# rpm-ostree, systemd, flatpak, podman, and toolbox — all 54 user stories
 # (including destructive ones) execute authentically.
 #
 # Subcommands:
@@ -66,7 +66,7 @@ case "$VARIANT" in
     onyx)          QUICKGET_EDITION="Onyx" ;;          # Fedora Budgie Atomic
     cosmic-atomic) QUICKGET_EDITION="COSMIC-Atomic" ;; # Fedora COSMIC Atomic
     *)
-        echo "[silverblue-vm] ERROR: unknown LACS_VM_VARIANT='$VARIANT'." >&2
+        echo "[atomic-vm] ERROR: unknown LACS_VM_VARIANT='$VARIANT'." >&2
         echo "  Accepted: silverblue | kinoite | sericea | onyx | cosmic-atomic" >&2
         exit 1
         ;;
@@ -96,7 +96,7 @@ ssh_opts() {
 # Helpers
 # ---------------------------------------------------------------------------
 
-log() { printf '[silverblue-vm] %s\n' "$*" >&2; }
+log() { printf '[atomic-vm] %s\n' "$*" >&2; }
 die() { log "ERROR: $*"; exit 1; }
 
 require_tools() {
@@ -167,7 +167,7 @@ cmd_download() {
     if ! grep -q '^# LACS E2E overrides' "$CONF_PATH"; then
         cat >> "$CONF_PATH" <<EOF
 
-# LACS E2E overrides — appended by silverblue-vm.sh download
+# LACS E2E overrides — appended by atomic-vm.sh download
 disk_size="${LACS_VM_DISK:-40G}"
 ram="${LACS_VM_MEM:-10G}"
 cpu_cores="${LACS_VM_CPUS:-4}"
@@ -186,7 +186,7 @@ cmd_install() {
     require_tools quickemu
     [ -f "$CONF_PATH" ] || die "Config not found at $CONF_PATH. Run: $0 download"
     cat >&2 <<NOTE
-[silverblue-vm] Starting VM with the Fedora installer (GUI window will open).
+[atomic-vm] Starting VM with the Fedora installer (GUI window will open).
 
   During the Anaconda installer:
     1. Pick language → Continue
@@ -213,7 +213,7 @@ cmd_enable_ssh() {
     require_tools quickemu
     [ -f "$CONF_PATH" ] || die "Config not found at $CONF_PATH. Run: $0 install first."
     cat >&2 <<NOTE
-[silverblue-vm] Booting VM visibly so you can enable sshd.
+[atomic-vm] Booting VM visibly so you can enable sshd.
 
   Log in as '${VM_USER}', open a terminal, and run:
 

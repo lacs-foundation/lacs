@@ -22,26 +22,26 @@ sudo chmod +r /boot/vmlinuz-*            # required for libguestfs, see §2
 test -r /dev/kvm || sudo usermod -aG kvm "$USER"   # then log out / back in
 
 # LACS VM lifecycle
-./tests/e2e/silverblue-vm.sh keygen      # dedicated SSH key (no passphrase)
-./tests/e2e/silverblue-vm.sh download    # fetch Silverblue ISO (~2.7 GB)
-./tests/e2e/silverblue-vm.sh install     # run Anaconda — just click through
-./tests/e2e/silverblue-vm.sh bootstrap   # offline patch: user/passwords/sshd/key
-./tests/e2e/silverblue-vm.sh start       # headless boot with SSH forward
-./tests/e2e/silverblue-vm.sh provision   # build + install LACS + pull model
+./tests/e2e/atomic-vm.sh keygen      # dedicated SSH key (no passphrase)
+./tests/e2e/atomic-vm.sh download    # fetch Silverblue ISO (~2.7 GB)
+./tests/e2e/atomic-vm.sh install     # run Anaconda — just click through
+./tests/e2e/atomic-vm.sh bootstrap   # offline patch: user/passwords/sshd/key
+./tests/e2e/atomic-vm.sh start       # headless boot with SSH forward
+./tests/e2e/atomic-vm.sh provision   # build + install LACS + pull model
 
 # Before running stories — sanity-check the whole stack in one command.
 # If any line comes back [fail], fix that before burning 10 min on a story.
 # See §11 for what each line means.
-./tests/e2e/silverblue-vm.sh ssh \
+./tests/e2e/atomic-vm.sh ssh \
     'sudo -E LACS_LISTEN_URI=unix:///run/lacs/daemon.sock lacs-test-cli --doctor'
 
-./tests/e2e/silverblue-vm.sh stop
-./tests/e2e/silverblue-vm.sh snapshot baseline    # snapshot before tests
-./tests/e2e/silverblue-vm.sh start
-./tests/e2e/silverblue-vm.sh run         # stories 1–7
-LACS_ALLOW_DESTRUCTIVE=1 ./tests/e2e/silverblue-vm.sh run  # all 10
-./tests/e2e/silverblue-vm.sh stop
-./tests/e2e/silverblue-vm.sh restore baseline
+./tests/e2e/atomic-vm.sh stop
+./tests/e2e/atomic-vm.sh snapshot baseline    # snapshot before tests
+./tests/e2e/atomic-vm.sh start
+./tests/e2e/atomic-vm.sh run         # stories 1–7
+LACS_ALLOW_DESTRUCTIVE=1 ./tests/e2e/atomic-vm.sh run  # all 54
+./tests/e2e/atomic-vm.sh stop
+./tests/e2e/atomic-vm.sh restore baseline
 ```
 
 **Want qwen3:8b quality without GPU passthrough?** Run Ollama on the
@@ -51,7 +51,7 @@ at it:
 ```sh
 LACS_OLLAMA_URL=http://10.0.2.2:11434 \
 LACS_LLM_MODEL=qwen3:8b \
-  ./tests/e2e/silverblue-vm.sh run
+  ./tests/e2e/atomic-vm.sh run
 ```
 
 See §8 for the full story on why CPU-only qwen3 doesn't work and the
@@ -142,7 +142,7 @@ world-readable by default.
 
 ## 3. The install — what Anaconda gets wrong
 
-When you run `./tests/e2e/silverblue-vm.sh install`, a QEMU window
+When you run `./tests/e2e/atomic-vm.sh install`, a QEMU window
 opens with the Fedora installer (Anaconda). You're tempted to think you
 need to click through User Creation + set a password.
 
@@ -167,7 +167,7 @@ Instead, just click through Anaconda with default answers (Partitioning
 ISO as a CD-ROM and start the installer over. Close the window
 instead.
 
-Then run `./tests/e2e/silverblue-vm.sh bootstrap`, which via `guestfish`:
+Then run `./tests/e2e/atomic-vm.sh bootstrap`, which via `guestfish`:
 
 - Creates the `lacsdev` user (uid 1000, home `/home/lacsdev`, wheel
   group).
@@ -197,7 +197,7 @@ prompt for a passphrase and silently falls through to password auth
 that we don't allow. End result: `rsync: connection closed` that takes
 twenty minutes of debugging to diagnose.
 
-`./silverblue-vm.sh keygen` generates a dedicated `~/.ssh/lacs-vm` key
+`./atomic-vm.sh keygen` generates a dedicated `~/.ssh/lacs-vm` key
 with **no passphrase**. This is safe because the key only authorizes
 login to your disposable test VM.
 
@@ -240,7 +240,7 @@ So `tests/e2e/provision.sh` splits into:
    interrupted), model pull, cargo build, `make install` with `/etc/`
    overrides, start lacs-daemon.
 
-`./silverblue-vm.sh provision` detects which phase to run via a marker
+`./atomic-vm.sh provision` detects which phase to run via a marker
 file (`/var/lib/lacs-e2e/layered`). You'll need to run it **twice** the
 first time — the script will tell you when to re-run after the
 auto-reboot.
@@ -369,7 +369,7 @@ sudo firewall-cmd --add-port=11434/tcp  # if firewalld is on
 # In the guest, point LACS at the host:
 LACS_OLLAMA_URL=http://10.0.2.2:11434 \
 LACS_LLM_MODEL=qwen3:8b \
-  ./tests/e2e/silverblue-vm.sh run
+  ./tests/e2e/atomic-vm.sh run
 ```
 
 This is *far* faster than GPU passthrough (VFIO) to set up and
@@ -380,15 +380,15 @@ pulls `qwen3:8b` by default. On CPU-only hosts, override with
 `LACS_TEST_MODEL`:
 
 ```sh
-LACS_TEST_MODEL=llama3.2:3b ./tests/e2e/silverblue-vm.sh provision
-LACS_TEST_MODEL=llama3.2:3b ./tests/e2e/silverblue-vm.sh run
+LACS_TEST_MODEL=llama3.2:3b ./tests/e2e/atomic-vm.sh provision
+LACS_TEST_MODEL=llama3.2:3b ./tests/e2e/atomic-vm.sh run
 ```
 
 **Raise the per-story timeout** if you're pushing CPU inference:
 
 ```sh
 LACS_STORY_TIMEOUT=900 LACS_LLM_MODEL=llama3.2:3b \
-    ./tests/e2e/silverblue-vm.sh run
+    ./tests/e2e/atomic-vm.sh run
 ```
 
 **Performance tuning.** By default Ollama uses only `NumCPU/2`
@@ -411,7 +411,7 @@ you pay the 5-10 s load cost on every story.
 
 ## 9. Env vars don't magically cross SSH
 
-This one bit us hard. When you run `./silverblue-vm.sh run`, the
+This one bit us hard. When you run `./atomic-vm.sh run`, the
 wrapper does:
 
 ```
@@ -472,7 +472,7 @@ Forwarded vars: `LACS_ALLOW_DESTRUCTIVE`, `LACS_LLM_PROVIDER`,
 15. **First run fills `/var/home` if you rsync the repo including
     `tests/e2e/vm/`.** That directory contains the VM's own 20 GB
     qcow2 disk image; rsyncing it into the guest loops recursively
-    and hits ENOSPC. `silverblue-vm.sh provision` excludes `tests/e2e/vm`,
+    and hits ENOSPC. `atomic-vm.sh provision` excludes `tests/e2e/vm`,
     but if you rsync manually, remember `--exclude='tests/e2e/vm'`.
 16. **`lacs-test-cli` gets `Permission denied` on `/run/lacs/daemon.sock`
     when invoked as `lacsdev`.** The socket is `srw-rw---- lacs:lacs`;
@@ -545,17 +545,17 @@ Ollama CDN and the Rust release build). Once the VM is provisioned and
 working:
 
 ```sh
-./tests/e2e/silverblue-vm.sh stop
-./tests/e2e/silverblue-vm.sh snapshot baseline
+./tests/e2e/atomic-vm.sh stop
+./tests/e2e/atomic-vm.sh snapshot baseline
 ```
 
 Every subsequent run becomes:
 
 ```sh
-./tests/e2e/silverblue-vm.sh start
-./tests/e2e/silverblue-vm.sh run
-./tests/e2e/silverblue-vm.sh stop
-./tests/e2e/silverblue-vm.sh restore baseline
+./tests/e2e/atomic-vm.sh start
+./tests/e2e/atomic-vm.sh run
+./tests/e2e/atomic-vm.sh stop
+./tests/e2e/atomic-vm.sh restore baseline
 ```
 
 No more waiting on Ollama, Rust, or Anaconda. The baseline is a
@@ -575,7 +575,7 @@ qcow2 internal snapshot — no extra disk space until you diverge.
 
 ## 14. Cleaning up
 
-- `./tests/e2e/silverblue-vm.sh destroy` removes the VM disk but keeps
+- `./tests/e2e/atomic-vm.sh destroy` removes the VM disk but keeps
   the downloaded ISO under `tests/e2e/vm/`. That directory is
   gitignored; feel free to delete it entirely when you're done.
 - The dedicated VM SSH key at `~/.ssh/lacs-vm` is harmless to leave
@@ -631,5 +631,5 @@ chained to the previous one.
   short reference version of this file.
 - [`docs/testing/user-stories.md`](docs/testing/user-stories.md) — the
   10 stories the harness runs and their pass criteria.
-- [`tests/e2e/silverblue-vm.sh help`](tests/e2e/silverblue-vm.sh) — the
+- [`tests/e2e/atomic-vm.sh help`](tests/e2e/atomic-vm.sh) — the
   subcommand reference, kept in sync with the script itself.

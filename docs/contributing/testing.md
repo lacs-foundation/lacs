@@ -13,7 +13,7 @@ validation before a release.
 | Integration (Rust) | Daemon IPC, safety fence, policy | <10s | Every commit, every CI run |
 | **Dev stories (local, no VM)** | LLM plan structure for read-only stories; runs on any Linux host | 1-3 min | After brain/prompt changes |
 | CI smoke (container) | Daemon + Ollama + read-only stories in a Linux runner | 5-10 min | Opt-in (PR label `e2e` or manual trigger) |
-| E2E Silverblue VM | **Real Silverblue** in QEMU/KVM, full stack, all 54 stories | 15-30 min first boot; 2-3 min subsequent | Local / pre-release |
+| E2E Atomic VM | **Real Silverblue** in QEMU/KVM, full stack, all 54 stories | 15-30 min first boot; 2-3 min subsequent | Local / pre-release |
 | Manual QA | Real Silverblue/Kinoite hardware, destructive actions, GUI | 30-60 min | Before releases + demo video |
 
 No single layer is enough on its own. Use the ones that match your change.
@@ -122,7 +122,7 @@ build artifacts.
 - Reboot / kernel-argument flows, rollback execution
 - Tauri GUI rendering
 
-## Running the full E2E suite in a Silverblue VM
+## Running the full E2E suite in a Fedora Atomic VM
 
 This is the **high-fidelity** path. The VM is a real Fedora Atomic Desktop
 (Silverblue, Kinoite, Sway Atomic, Budgie Atomic, or COSMIC Atomic) install
@@ -190,10 +190,10 @@ sudo chmod +r /boot/vmlinuz-*
 # 1. Generate a passphrase-less SSH key dedicated to the VM (you do
 #    not want to reuse your personal id_ed25519 — rsync/non-interactive
 #    ssh cannot prompt for a passphrase). Idempotent.
-./tests/e2e/silverblue-vm.sh keygen
+./tests/e2e/atomic-vm.sh keygen
 
 # 2. Download the Silverblue 42 ISO (~2.5 GB, cached under tests/e2e/vm/).
-./tests/e2e/silverblue-vm.sh download
+./tests/e2e/atomic-vm.sh download
 
 # 3. Run the Fedora installer interactively (GUI window opens).
 #    Just click through it — you don't need to set a password or create
@@ -201,13 +201,13 @@ sudo chmod +r /boot/vmlinuz-*
 #    libguestfs. Shut the VM down when the installer finishes (close
 #    the QEMU window or pick "Power Off" in the post-install screen —
 #    DO NOT click "Reboot": the ISO will re-mount as CD-ROM).
-./tests/e2e/silverblue-vm.sh install
+./tests/e2e/atomic-vm.sh install
 
 # 4. Patch the disk image with our test user, password, sudoers, sshd,
 #    and SSH key. (Implemented via guestfish so it works offline,
 #    bypassing Silverblue's interactive first-boot wizard which has
 #    bugs in F42.)
-./tests/e2e/silverblue-vm.sh install-key
+./tests/e2e/atomic-vm.sh install-key
 ```
 
 > Why no `enable-ssh` step? Earlier versions of this script tried to
@@ -228,7 +228,7 @@ sudo chmod +r /boot/vmlinuz-*
 
 ```sh
 # Boot the VM headlessly (in the background)
-./tests/e2e/silverblue-vm.sh start
+./tests/e2e/atomic-vm.sh start
 
 # First-ever provision: rsyncs the repo into the VM, layers build tools
 # via rpm-ostree, reboots the VM, then runs again to build LACS and
@@ -236,39 +236,39 @@ sudo chmod +r /boot/vmlinuz-*
 # you when). Expect 30-60 minutes total on first run (mostly waiting
 # for Ollama tarball + Rust deps download). ~2 minutes on subsequent
 # provisions.
-./tests/e2e/silverblue-vm.sh provision
+./tests/e2e/atomic-vm.sh provision
 
 # RECOMMENDED: take a "baseline" snapshot now, before any test run.
 # Future test runs can `restore baseline` instead of re-provisioning.
-./tests/e2e/silverblue-vm.sh stop
-./tests/e2e/silverblue-vm.sh snapshot baseline
-./tests/e2e/silverblue-vm.sh start
+./tests/e2e/atomic-vm.sh stop
+./tests/e2e/atomic-vm.sh snapshot baseline
+./tests/e2e/atomic-vm.sh start
 
 # Run the read-only stories (non-destructive default)
-./tests/e2e/silverblue-vm.sh run
+./tests/e2e/atomic-vm.sh run
 
 # Run ALL 54 stories including destructive — restore the baseline afterwards.
-LACS_ALLOW_DESTRUCTIVE=1 ./tests/e2e/silverblue-vm.sh run
+LACS_ALLOW_DESTRUCTIVE=1 ./tests/e2e/atomic-vm.sh run
 
 # Roll back to the clean baseline so the next run is fast
-./tests/e2e/silverblue-vm.sh stop
-./tests/e2e/silverblue-vm.sh restore baseline
+./tests/e2e/atomic-vm.sh stop
+./tests/e2e/atomic-vm.sh restore baseline
 ```
 
 **Other useful commands:**
 
 ```sh
-./tests/e2e/silverblue-vm.sh ssh            # interactive shell in the VM
-./tests/e2e/silverblue-vm.sh stop           # clean shutdown
-./tests/e2e/silverblue-vm.sh destroy        # delete VM disk (ISO kept)
-./tests/e2e/silverblue-vm.sh help
+./tests/e2e/atomic-vm.sh ssh            # interactive shell in the VM
+./tests/e2e/atomic-vm.sh stop           # clean shutdown
+./tests/e2e/atomic-vm.sh destroy        # delete VM disk (ISO kept)
+./tests/e2e/atomic-vm.sh help
 ```
 
 **Try a different atomic variant:**
 
 ```sh
-LACS_VM_VARIANT=kinoite ./tests/e2e/silverblue-vm.sh download
-LACS_VM_VARIANT=kinoite ./tests/e2e/silverblue-vm.sh install
+LACS_VM_VARIANT=kinoite ./tests/e2e/atomic-vm.sh download
+LACS_VM_VARIANT=kinoite ./tests/e2e/atomic-vm.sh install
 # ... all management commands respect LACS_VM_VARIANT.
 ```
 
@@ -299,7 +299,7 @@ manual ISO install:
    `sudo bash tests/e2e/provision.sh` inside the VM
 6. Run stories with `sudo -E tests/e2e/run-stories.sh`
 
-The `silverblue-vm.sh` helper does not automate VirtualBox — that's a
+The `atomic-vm.sh` helper does not automate VirtualBox — that's a
 follow-up if Windows contributor interest warrants it.
 
 ## Running individual stories
@@ -324,7 +324,7 @@ Per-story logs are written to `tests/e2e/logs/story-N.log`.
 2. `cargo clippy --workspace --all-features --locked -- -D warnings`
 3. `cargo fmt --all --check`
 4. For changes to the brain, daemon, IPC, or action catalogue:
-   - Run the VM tests locally (`silverblue-vm.sh` flow)
+   - Run the VM tests locally (`atomic-vm.sh` flow)
    - Add the `e2e` label to trigger the CI smoke test on your PR
 
 ## Before a release
@@ -346,7 +346,7 @@ Check the [quickemu wiki](https://github.com/quickemu-project/quickemu/wiki)
 for current supported editions. Older or newer Silverblue releases may
 also be available; adjust `LACS_VM_RELEASE`.
 
-### VM boots but `silverblue-vm.sh ssh` times out
+### VM boots but `atomic-vm.sh ssh` times out
 
 The Fedora installer doesn't enable sshd by default. Either enable
 `sshd` during the interactive install, or boot the VM's GUI console
@@ -381,9 +381,9 @@ Two distinct downloads can be slow:
 Override the model size with `LACS_TEST_MODEL`:
 
 ```sh
-LACS_TEST_MODEL=llama3.2:3b ./tests/e2e/silverblue-vm.sh provision  # default, CPU-only friendly
-LACS_TEST_MODEL=qwen2.5:3b  ./tests/e2e/silverblue-vm.sh provision  # alt tool-capable 3B
-LACS_TEST_MODEL=qwen3:8b    ./tests/e2e/silverblue-vm.sh provision  # GPU passthrough only
+LACS_TEST_MODEL=llama3.2:3b ./tests/e2e/atomic-vm.sh provision  # default, CPU-only friendly
+LACS_TEST_MODEL=qwen2.5:3b  ./tests/e2e/atomic-vm.sh provision  # alt tool-capable 3B
+LACS_TEST_MODEL=qwen3:8b    ./tests/e2e/atomic-vm.sh provision  # GPU passthrough only
 ```
 
 We default to **`llama3.2:3b`** after empirical live testing on a
@@ -419,8 +419,8 @@ is out of scope for this guide.
 Check the daemon inside the VM:
 
 ```sh
-./tests/e2e/silverblue-vm.sh ssh -- sudo systemctl status lacs-daemon
-./tests/e2e/silverblue-vm.sh ssh -- sudo journalctl -u lacs-daemon -n 100
+./tests/e2e/atomic-vm.sh ssh -- sudo systemctl status lacs-daemon
+./tests/e2e/atomic-vm.sh ssh -- sudo journalctl -u lacs-daemon -n 100
 ```
 
 The provision log at `/var/log/lacs-e2e-provision.log` usually has the
