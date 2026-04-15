@@ -581,7 +581,51 @@ qcow2 internal snapshot — no extra disk space until you diverge.
 - The dedicated VM SSH key at `~/.ssh/lacs-vm` is harmless to leave
   around; you can `rm ~/.ssh/lacs-vm*` if you want.
 
-## 15. See also
+## 15. Verifying the audit trail on the VM
+
+LACS writes two audit records on every safety fence activation:
+
+- `~/.local/share/lacs/safety-audit.jsonl` — append-only JSON lines,
+  always present on any host.
+- systemd journal — forwarded via the native datagram socket protocol;
+  only present on systemd hosts (which Silverblue is).
+
+To trigger a fence activation and verify both records, run this from
+the guest:
+
+```sh
+# Force a rejection: intent that contains a known secret prefix.
+# The planner rejects it before any LLM call.
+LACS_LISTEN_URI=unix:///run/lacs/daemon.sock \
+  lacs "check disk sk-proj-fake-key-for-testing" 2>&1 || true
+
+# Check the JSONL file.
+tail -n 1 ~/.local/share/lacs/safety-audit.jsonl | python3 -m json.tool
+
+# Check journald (structured fields).
+journalctl LACS_EVENT=safety_fence_rejection --since "1 minute ago" --output verbose
+```
+
+**Enabling tamper-evident sealing.**
+The journal is queryable without FSS, but entries can be modified or
+deleted by root. To protect them with Forward Secure Sealing:
+
+```sh
+sudo journalctl --setup-keys
+# Outputs a verification key — store it offline.
+
+# Verify integrity at any time:
+sudo journalctl --verify
+```
+
+Run `--verify` after a story run to confirm no entries were tampered
+with. On a clean run the output ends with `PASS`.
+
+This is a one-time setup step. After it's done, every subsequent
+journal write (including LACS audit entries) is cryptographically
+chained to the previous one.
+
+## 16. See also
 
 - [`docs/contributing/testing.md`](docs/contributing/testing.md) — the
   short reference version of this file.

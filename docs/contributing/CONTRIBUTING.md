@@ -223,6 +223,31 @@ ANTHROPIC_API_KEY=sk-ant-... tests/e2e/dev-stories.sh <story-number>
   executor. Brain and shell must not touch the system directly.
 - Preserve approval, audit, and rollback semantics on every action.
 
+### Security-sensitive areas
+
+Changes to the following require the `security` label on the PR and
+extra reviewer scrutiny:
+
+| Area | File(s) | Why sensitive |
+|---|---|---|
+| Intent validation | `crates/lacs-brain/src/planner.rs` (`INTENT_MAX_BYTES`, guards in `plan_intent`) | First line of defense before any LLM call |
+| Secret patterns | `crates/lacs-brain/src/prefs.rs` (`SENSITIVE_PATTERNS`, `SENSITIVE_PREFIXES`) | Controls what the planner and prefs storage will reject |
+| Action allowlist | `crates/lacs-brain/src/action_name.rs` (`KNOWN_ACTIONS`) | Adding a name here makes it proposable by the LLM |
+| Role policy | `crates/lacs-daemon/src/policy.rs` (`min_role_for_action`) | Governs which groups can execute which actions |
+| Approval / replay | `crates/lacs-daemon/src/transactions.rs` | Hash freshness and TOCTOU protection |
+| Caller auth | `crates/lacs-daemon/src/dispatcher.rs` (`resolve_caller_role`) | SO_PEERCRED group-to-role mapping |
+| Audit log | `crates/lacs-brain/src/audit.rs`, `crates/lacs-brain/src/journal.rs` | Safety fence record and journald forwarding |
+
+When adding a new action to `KNOWN_ACTIONS`, you must also:
+
+1. Add it to `min_role_for_action` in `policy.rs` with the correct
+   minimum role. Omitting it causes the daemon to deny the action for
+   all callers with a validation-failure error — an obvious regression,
+   but better than a silent allow.
+2. Add it to the action catalogue in `crates/lacs-brain/src/prompt.rs`
+   with a correct risk level. The LLM uses this catalogue to decide
+   what to propose; a wrong risk level produces wrong approval gates.
+
 ## Questions
 
 Open a [GitHub Discussion](https://github.com/lacs-foundation/lacs/discussions)
