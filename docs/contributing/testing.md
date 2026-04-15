@@ -192,7 +192,7 @@ sudo chmod +r /boot/vmlinuz-*
 #    ssh cannot prompt for a passphrase). Idempotent.
 ./tests/e2e/atomic-vm.sh keygen
 
-# 2. Download the Silverblue 42 ISO (~2.5 GB, cached under tests/e2e/vm/).
+# 2. Download the Silverblue 43 ISO (~2.5 GB, cached under tests/e2e/vm/).
 ./tests/e2e/atomic-vm.sh download
 
 # 3. Run the Fedora installer interactively (GUI window opens).
@@ -206,7 +206,7 @@ sudo chmod +r /boot/vmlinuz-*
 # 4. Patch the disk image with our test user, password, sudoers, sshd,
 #    and SSH key. (Implemented via guestfish so it works offline,
 #    bypassing Silverblue's interactive first-boot wizard which has
-#    bugs in F42.)
+#    gnome-initial-setup quirks on some hosts.)
 ./tests/e2e/atomic-vm.sh install-key
 ```
 
@@ -340,7 +340,7 @@ The maintainer runs these in order:
 
 ## Troubleshooting
 
-### `quickget fedora 42 silverblue` fails
+### `quickget fedora 43 silverblue` fails
 
 Check the [quickemu wiki](https://github.com/quickemu-project/quickemu/wiki)
 for current supported editions. Older or newer Silverblue releases may

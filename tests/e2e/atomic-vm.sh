@@ -34,7 +34,7 @@
 #   help       — print this help
 #
 # Environment:
-#   LACS_VM_RELEASE  — Fedora release number (default: 42)
+#   LACS_VM_RELEASE  — Fedora release number (default: 43)
 #   LACS_VM_VARIANT  — atomic variant. Accepted values (case-insensitive):
 #                      silverblue (GNOME), kinoite (KDE),
 #                      sericea (Sway Atomic), onyx (Budgie Atomic),
@@ -51,7 +51,7 @@
 
 set -euo pipefail
 
-RELEASE="${LACS_VM_RELEASE:-42}"
+RELEASE="${LACS_VM_RELEASE:-43}"
 # Normalize to lowercase for path consistency; quickget accepts any case.
 VARIANT="$(printf '%s' "${LACS_VM_VARIANT:-silverblue}" | tr '[:upper:]' '[:lower:]')"
 VM_DIR="${LACS_VM_DIR:-tests/e2e/vm}"
@@ -171,10 +171,10 @@ cmd_download() {
 disk_size="${LACS_VM_DISK:-40G}"
 ram="${LACS_VM_MEM:-10G}"
 cpu_cores="${LACS_VM_CPUS:-4}"
-# gl="off" — disable virtio-vga-gl/virgl. Fedora 42's gnome-initial-setup
-# crashes the QEMU window with a flicker-then-freeze on hosts with hybrid
-# graphics (Intel iGPU + NVIDIA dGPU is the common case). Software
-# rendering inside the guest is plenty fast for our use.
+# gl="off" — disable virtio-vga-gl/virgl. gnome-initial-setup can crash
+# the QEMU window with a flicker-then-freeze on hosts with hybrid graphics
+# (Intel iGPU + NVIDIA dGPU is the common case). Software rendering inside
+# the guest is plenty fast for our use.
 gl="off"
 EOF
     fi
@@ -200,7 +200,7 @@ cmd_install() {
     - Do NOT click 'Reboot' — the ISO will re-mount as CD-ROM
 
   After the installer window closes, run '$0 enable-ssh' to boot the VM
-  visibly one more time and turn on sshd + the firewall rule. Silverblue
+  visibly one more time and turn on sshd + the firewall rule. Fedora Atomic
   ships sshd DISABLED by default; we need it on for provisioning.
 NOTE
     (cd "$VM_DIR" && quickemu --vm "$CONF_NAME")
@@ -410,9 +410,9 @@ cmd_install_key() {
 
 cmd_run() {
     if [ "${LACS_ALLOW_DESTRUCTIVE:-}" = "1" ]; then
-        log "Running ALL stories (1-10). Make sure you have a VM snapshot."
+        log "Running ALL 54 stories. Make sure you have a VM snapshot."
     else
-        log "Running read-only stories (1-7). Set LACS_ALLOW_DESTRUCTIVE=1 for 8-10."
+        log "Running read-only stories (default set). Set LACS_ALLOW_DESTRUCTIVE=1 for all 54."
     fi
 
     # Forward relevant env vars through SSH → sudo. Passing them as
