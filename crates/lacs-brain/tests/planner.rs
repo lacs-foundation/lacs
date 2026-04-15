@@ -184,6 +184,78 @@ async fn whitespace_only_intent_returns_empty_intent_error() {
 }
 
 // ---------------------------------------------------------------------------
+// Intent validation — length cap and secret scan
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn intent_exceeding_max_bytes_is_rejected_before_provider_call() {
+    use lacs_brain::planner::INTENT_MAX_BYTES;
+    // Construct an intent that is exactly one byte over the limit.
+    let long = "a".repeat(INTENT_MAX_BYTES + 1);
+    let planner = make_planner(MockProvider::new([])); // no turns — must not be called
+    let err = planner.plan_intent(&long).await.unwrap_err();
+    assert!(
+        matches!(
+            err,
+            PlanningError::IntentTooLong { len, max }
+            if len == INTENT_MAX_BYTES + 1 && max == INTENT_MAX_BYTES
+        ),
+        "expected IntentTooLong, got: {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn intent_at_max_bytes_is_accepted() {
+    use lacs_brain::planner::INTENT_MAX_BYTES;
+    // An intent exactly at the limit must not be rejected by the length check.
+    let exact = "a".repeat(INTENT_MAX_BYTES);
+    let planner = make_planner(MockProvider::new([propose_plan(
+        "disk check",
+        &[("GetDiskUsage", "Check disk", "low")],
+    )]));
+    assert!(planner.plan_intent(&exact).await.is_ok());
+}
+
+#[tokio::test]
+async fn intent_containing_api_key_prefix_is_rejected() {
+    // "sk-" prefix matches OpenAI/Anthropic key pattern.
+    let planner = make_planner(MockProvider::new([]));
+    let err = planner
+        .plan_intent("check disk usage sk-proj-abc123def456")
+        .await
+        .unwrap_err();
+    assert_eq!(
+        err,
+        PlanningError::IntentContainsSensitiveData,
+        "intent containing API key prefix must be rejected"
+    );
+}
+
+#[tokio::test]
+async fn intent_containing_password_keyword_is_rejected() {
+    let planner = make_planner(MockProvider::new([]));
+    let err = planner
+        .plan_intent("my password is hunter2 please remember it")
+        .await
+        .unwrap_err();
+    assert_eq!(
+        err,
+        PlanningError::IntentContainsSensitiveData,
+        "intent containing 'password' must be rejected"
+    );
+}
+
+#[tokio::test]
+async fn intent_without_sensitive_data_is_not_rejected() {
+    // Regression guard: a normal intent must not be falsely blocked.
+    let planner = make_planner(MockProvider::new([propose_plan(
+        "disk check",
+        &[("GetDiskUsage", "Check disk", "low")],
+    )]));
+    assert!(planner.plan_intent("check how much disk space is left").await.is_ok());
+}
+
+// ---------------------------------------------------------------------------
 // Single-turn: propose_plan returned immediately
 // ---------------------------------------------------------------------------
 
@@ -850,9 +922,12 @@ async fn remember_rejects_sensitive_data() {
     )
     .with_prefs_path(prefs_path.clone());
 
-    planner.plan_intent("remember my password").await.unwrap();
+    // Intent itself is benign — the sensitive data is inside the LLM's
+    // remember tool call, which is what the prefs-layer rejection tests.
+    planner.plan_intent("update my preferences").await.unwrap();
 
-    // File should not exist or should be empty — the sensitive fact was rejected.
+    // File should not exist or should be empty — the sensitive fact was rejected
+    // by append_pref() before it could be written to disk.
     assert!(!prefs_path.exists() || std::fs::read_to_string(&prefs_path).unwrap().is_empty());
 }
 
@@ -999,4 +1074,285 @@ async fn remember_io_error_is_reported_to_llm() {
         .plan_intent("remember that I prefer dark theme")
         .await
         .unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// Rate limiting
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn rate_limiter_allows_requests_within_limit() {
+    use lacs_brain::rate_limit::RateLimiter;
+    let dir = tempfile::tempdir().unwrap();
+    let rl = RateLimiter::new(dir.path().join("rate.log"), 3);
+
+    let planner = LlmPlanner::new(
+        Box::new(MockProvider::new([
+            propose_plan("p1", &[("GetDiskUsage", "disk", "low")]),
+            propose_plan("p2", &[("GetDiskUsage", "disk", "low")]),
+            propose_plan("p3", &[("GetDiskUsage", "disk", "low")]),
+        ])),
+        Box::new(MockStateClient::default()),
+        5,
+    )
+    .with_rate_limiter(rl);
+
+    planner.plan_intent("check disk 1").await.unwrap();
+    planner.plan_intent("check disk 2").await.unwrap();
+    planner.plan_intent("check disk 3").await.unwrap();
+}
+
+#[tokio::test]
+async fn rate_limiter_blocks_after_limit_exceeded() {
+    use lacs_brain::rate_limit::RateLimiter;
+    let dir = tempfile::tempdir().unwrap();
+    let rl = RateLimiter::new(dir.path().join("rate.log"), 2);
+
+    let planner = LlmPlanner::new(
+        Box::new(MockProvider::new([
+            propose_plan("p1", &[("GetDiskUsage", "disk", "low")]),
+            propose_plan("p2", &[("GetDiskUsage", "disk", "low")]),
+        ])),
+        Box::new(MockStateClient::default()),
+        5,
+    )
+    .with_rate_limiter(rl);
+
+    planner.plan_intent("check disk 1").await.unwrap();
+    planner.plan_intent("check disk 2").await.unwrap();
+
+    let err = planner.plan_intent("check disk 3").await.unwrap_err();
+    assert!(
+        matches!(err, PlanningError::RateLimitExceeded { retry_after_secs } if retry_after_secs > 0),
+        "expected RateLimitExceeded with retry_after > 0, got: {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn planner_without_rate_limiter_is_unlimited() {
+    // No rate limiter attached — many calls must all succeed.
+    let planner = make_planner(MockProvider::new([
+        propose_plan("p1", &[("GetDiskUsage", "disk", "low")]),
+        propose_plan("p2", &[("GetDiskUsage", "disk", "low")]),
+    ]));
+    planner.plan_intent("check disk 1").await.unwrap();
+    planner.plan_intent("check disk 2").await.unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// summarize() — same guards as plan_intent
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn summarize_rejects_oversized_prompt() {
+    use lacs_brain::planner::INTENT_MAX_BYTES;
+    let long = "a".repeat(INTENT_MAX_BYTES + 1);
+    let planner = make_planner(MockProvider::new([]));
+    let err = planner.summarize(&long).await.unwrap_err();
+    assert!(
+        matches!(
+            err,
+            PlanningError::IntentTooLong { len, max }
+            if len == INTENT_MAX_BYTES + 1 && max == INTENT_MAX_BYTES
+        ),
+        "expected IntentTooLong, got: {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn summarize_rejects_prompt_with_secret() {
+    let planner = make_planner(MockProvider::new([]));
+    let err = planner
+        .summarize("execution output: token=ghp_abc123secrettoken")
+        .await
+        .unwrap_err();
+    assert_eq!(
+        err,
+        PlanningError::IntentContainsSensitiveData,
+        "summarize must reject prompts containing secret patterns"
+    );
+}
+
+#[tokio::test]
+async fn summarize_accepts_normal_output() {
+    let planner = make_planner(MockProvider::new([Ok(
+        lacs_brain::provider::Completion {
+            content: vec![lacs_brain::provider::ContentBlock::Text {
+                text: "System updated successfully.".into(),
+            }],
+            stop_reason: lacs_brain::provider::StopReason::EndTurn,
+        },
+    )]));
+    let result = planner
+        .summarize("rpm-ostree status: idle\nDeployment: fedora/41/x86_64/silverblue")
+        .await;
+    assert!(result.is_ok(), "normal summarize must succeed: {result:?}");
+}
+
+#[tokio::test]
+async fn summarize_at_max_bytes_is_accepted() {
+    use lacs_brain::planner::INTENT_MAX_BYTES;
+    let exact = "a".repeat(INTENT_MAX_BYTES);
+    let planner = make_planner(MockProvider::new([Ok(
+        lacs_brain::provider::Completion {
+            content: vec![lacs_brain::provider::ContentBlock::Text {
+                text: "ok".into(),
+            }],
+            stop_reason: lacs_brain::provider::StopReason::EndTurn,
+        },
+    )]));
+    assert!(
+        planner.summarize(&exact).await.is_ok(),
+        "summarize at exact INTENT_MAX_BYTES must not be rejected"
+    );
+}
+
+#[tokio::test]
+async fn summarize_does_not_reject_benign_output_with_common_words() {
+    // Regression guard: execution output containing "key" or "token" in a
+    // non-secret context must not be falsely blocked.
+    let planner = make_planner(MockProvider::new([Ok(
+        lacs_brain::provider::Completion {
+            content: vec![lacs_brain::provider::ContentBlock::Text {
+                text: "SSH key fingerprint verified.".into(),
+            }],
+            stop_reason: lacs_brain::provider::StopReason::EndTurn,
+        },
+    )]));
+    let result = planner
+        .summarize("authorized_keys updated, fingerprint: SHA256:abc")
+        .await;
+    assert!(
+        result.is_ok(),
+        "summarize must not reject benign output mentioning keys: {result:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Rate limiter through summarize()
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn rate_limiter_blocks_summarize_after_limit_exceeded() {
+    use lacs_brain::rate_limit::RateLimiter;
+    let dir = tempfile::tempdir().unwrap();
+    // Shared rate file: both plan_intent and summarize consume the same window.
+    let rl = RateLimiter::new(dir.path().join("rate.log"), 1);
+    let planner = LlmPlanner::new(
+        Box::new(MockProvider::new([
+            // First call to summarize succeeds.
+            Ok(lacs_brain::provider::Completion {
+                content: vec![lacs_brain::provider::ContentBlock::Text {
+                    text: "done".into(),
+                }],
+                stop_reason: lacs_brain::provider::StopReason::EndTurn,
+            }),
+        ])),
+        Box::new(MockStateClient::default()),
+        5,
+    )
+    .with_rate_limiter(rl);
+
+    planner.summarize("first call").await.unwrap();
+    let err = planner.summarize("second call").await.unwrap_err();
+    assert!(
+        matches!(err, PlanningError::RateLimitExceeded { retry_after_secs } if retry_after_secs > 0 && retry_after_secs <= 60),
+        "expected RateLimitExceeded (1..=60s), got: {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn rate_limiter_blocks_after_limit_exceeded_retry_after_bounded() {
+    // Tighter assertion: retry_after_secs must be in [1, 60].
+    use lacs_brain::rate_limit::RateLimiter;
+    let dir = tempfile::tempdir().unwrap();
+    let rl = RateLimiter::new(dir.path().join("rate.log"), 2);
+    let planner = LlmPlanner::new(
+        Box::new(MockProvider::new([
+            propose_plan("p1", &[("GetDiskUsage", "disk", "low")]),
+            propose_plan("p2", &[("GetDiskUsage", "disk", "low")]),
+        ])),
+        Box::new(MockStateClient::default()),
+        5,
+    )
+    .with_rate_limiter(rl);
+
+    planner.plan_intent("check disk 1").await.unwrap();
+    planner.plan_intent("check disk 2").await.unwrap();
+    let err = planner.plan_intent("check disk 3").await.unwrap_err();
+    assert!(
+        matches!(err, PlanningError::RateLimitExceeded { retry_after_secs } if retry_after_secs >= 1 && retry_after_secs <= 60),
+        "retry_after_secs must be in [1, 60], got: {err:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// RateLimiter isolation unit tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn rate_limiter_new_with_zero_panics() {
+    use lacs_brain::rate_limit::RateLimiter;
+    let dir = tempfile::tempdir().unwrap();
+    let result = std::panic::catch_unwind(|| {
+        RateLimiter::new(dir.path().join("rate.log"), 0);
+    });
+    assert!(result.is_err(), "RateLimiter::new(path, 0) must panic");
+}
+
+#[test]
+fn rate_limiter_file_persistence_across_instances() {
+    use lacs_brain::rate_limit::RateLimiter;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("rate.log");
+    let limit = 2;
+
+    // First instance consumes 1 slot.
+    let rl1 = RateLimiter::new(path.clone(), limit);
+    assert!(rl1.check_and_consume().is_ok());
+    drop(rl1);
+
+    // Second instance reads the file written by rl1 — sees 1 existing slot used.
+    let rl2 = RateLimiter::new(path.clone(), limit);
+    assert!(rl2.check_and_consume().is_ok()); // second slot used
+    drop(rl2);
+
+    // Third instance: window still has 2 calls (both within the last second).
+    let rl3 = RateLimiter::new(path.clone(), limit);
+    let err = rl3.check_and_consume().unwrap_err();
+    assert!(err >= 1 && err <= 60, "retry_after must be 1..=60, got {err}");
+}
+
+#[test]
+fn rate_limiter_io_fail_open_on_unreadable_parent() {
+    use lacs_brain::rate_limit::RateLimiter;
+    // Point the rate limiter at a path with a non-existent parent
+    // that tempdir doesn't own — should fail open (allow the call).
+    let rl = RateLimiter::new(
+        std::path::PathBuf::from("/nonexistent/dir/rate.log"),
+        5,
+    );
+    // Must return Ok (fail-open), not panic.
+    assert!(
+        rl.check_and_consume().is_ok(),
+        "rate limiter must fail open on unreadable path"
+    );
+}
+
+#[test]
+fn rate_limiter_file_is_compacted_after_calls() {
+    use lacs_brain::rate_limit::RateLimiter;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("rate.log");
+    let rl = RateLimiter::new(path.clone(), 10);
+
+    // Make 3 calls.
+    for _ in 0..3 {
+        assert!(rl.check_and_consume().is_ok());
+    }
+
+    // File should have exactly 3 lines (no expired entries accumulated).
+    let content = std::fs::read_to_string(&path).unwrap();
+    let line_count = content.lines().count();
+    assert_eq!(line_count, 3, "file should have 3 timestamp lines, got {line_count}");
 }

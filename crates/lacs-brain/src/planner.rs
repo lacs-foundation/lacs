@@ -66,6 +66,22 @@ pub const OLLAMA_NUM_PREDICT: u32 = 4096;
 /// providers — well-behaved runs rarely exceed 1000.
 pub const PLANNING_MAX_TOKENS: u32 = 4096;
 
+/// Maximum byte length accepted for a natural-language intent.
+///
+/// 2 KB covers any realistic user request. Values larger than this are
+/// almost certainly copy-paste accidents or prompt-injection attempts.
+/// Enforced before the intent string is forwarded to the LLM provider,
+/// so oversized payloads are rejected without incurring API cost.
+pub const INTENT_MAX_BYTES: usize = 2048;
+
+/// Default rate limit applied by `from_config`: 20 planning requests per 60-second
+/// sliding window. Override at runtime with `LACS_MAX_RPM`.
+///
+/// This prevents a looping script or misconfigured automation from exhausting
+/// cloud LLM quota. Interactive users rarely exceed 5 requests per minute;
+/// 20 provides generous headroom while still bounding runaway usage.
+pub const DEFAULT_MAX_RPM: usize = 20;
+
 /// Maximum output tokens for the summarization endpoint.
 ///
 /// Summarization produces short plain-language text (no tools,
@@ -327,6 +343,24 @@ pub enum PlanningError {
     #[error("intent must not be empty")]
     EmptyIntent,
 
+    #[error(
+        "intent exceeds maximum length of {max} bytes (got {len}); \
+         shorten the request or split it into multiple commands"
+    )]
+    IntentTooLong { len: usize, max: usize },
+
+    #[error(
+        "intent contains sensitive data (API keys, passwords, or tokens \
+         must not be forwarded to LLM providers)"
+    )]
+    IntentContainsSensitiveData,
+
+    #[error(
+        "rate limit exceeded; too many planning requests in the last 60 seconds \
+         (retry after {retry_after_secs}s)"
+    )]
+    RateLimitExceeded { retry_after_secs: u64 },
+
     #[error("state unavailable: {0}")]
     StateUnavailable(String),
 
@@ -372,6 +406,7 @@ pub struct LlmPlanner {
     audit_log: Option<SafetyAuditLog>,
     prefs_path: Option<std::path::PathBuf>,
     progress_tx: Option<tokio::sync::mpsc::UnboundedSender<PlanEvent>>,
+    rate_limiter: Option<crate::rate_limit::RateLimiter>,
 }
 
 impl LlmPlanner {
@@ -400,6 +435,7 @@ impl LlmPlanner {
             audit_log: None,
             prefs_path: None,
             progress_tx: None,
+            rate_limiter: None,
         }
     }
 
@@ -432,6 +468,19 @@ impl LlmPlanner {
         self
     }
 
+    /// Attach a [`RateLimiter`] to cap LLM requests per 60-second window.
+    ///
+    /// When set, `plan_intent` and `summarize` call `check_and_consume` before
+    /// forwarding the request to the LLM provider. If the window is full, they
+    /// return [`PlanningError::RateLimitExceeded`] with the number of seconds
+    /// until a slot opens.
+    ///
+    /// [`RateLimiter`]: crate::rate_limit::RateLimiter
+    pub fn with_rate_limiter(mut self, rl: crate::rate_limit::RateLimiter) -> Self {
+        self.rate_limiter = Some(rl);
+        self
+    }
+
     /// Send a [`PlanEvent`] to the progress channel, if one is attached.
     ///
     /// A closed or absent channel is silently ignored — progress events are
@@ -447,6 +496,11 @@ impl LlmPlanner {
     /// Uses Rig provider clients for all backends. Returns an error if the
     /// HTTP client cannot be initialised (rare; only fails if the TLS
     /// subsystem is unavailable).
+    ///
+    /// Rate limiting is **enabled by default** at [`DEFAULT_MAX_RPM`] requests
+    /// per minute. Override with the `LACS_MAX_RPM` environment variable.
+    /// Call `with_rate_limiter` after this to replace the default limiter, or
+    /// use `new` directly to build a planner without any rate limiting.
     pub fn from_config(
         config: BrainConfig,
         state_client: Box<dyn StateClient>,
@@ -533,6 +587,22 @@ impl LlmPlanner {
         };
         let mut planner = Self::new(provider, state_client, config.max_turns);
         planner.prefs_path = Some(lacs_core::config::prefs_path());
+        // Wire the default rate limiter. `LACS_MAX_RPM` overrides at runtime.
+        // The timestamp file lives next to the audit log in $XDG_DATA_HOME/lacs/.
+        let rate_log_path = {
+            let xdg = std::env::var("XDG_DATA_HOME").unwrap_or_default();
+            let base = if xdg.is_empty() {
+                let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+                std::path::PathBuf::from(home).join(".local/share")
+            } else {
+                std::path::PathBuf::from(xdg)
+            };
+            base.join("lacs").join("rate-limit.log")
+        };
+        planner.rate_limiter = Some(crate::rate_limit::RateLimiter::new(
+            rate_log_path,
+            DEFAULT_MAX_RPM,
+        ));
         Ok(planner)
     }
 
@@ -550,6 +620,21 @@ impl LlmPlanner {
     /// Returns the raw text content from the LLM. No tools are provided, so
     /// the LLM is constrained to text-only output.
     pub async fn summarize(&self, prompt: &str) -> Result<String, PlanningError> {
+        if prompt.len() > INTENT_MAX_BYTES {
+            return Err(PlanningError::IntentTooLong {
+                len: prompt.len(),
+                max: INTENT_MAX_BYTES,
+            });
+        }
+        if crate::prefs::contains_sensitive(prompt) {
+            return Err(PlanningError::IntentContainsSensitiveData);
+        }
+        if let Some(ref rl) = self.rate_limiter {
+            if let Err(retry_after_secs) = rl.check_and_consume() {
+                return Err(PlanningError::RateLimitExceeded { retry_after_secs });
+            }
+        }
+
         let messages = vec![Message::user_text(prompt)];
         let completion = self
             .provider
@@ -592,6 +677,20 @@ impl LlmPlanner {
         let intent = intent.trim();
         if intent.is_empty() {
             return Err(PlanningError::EmptyIntent);
+        }
+        if intent.len() > INTENT_MAX_BYTES {
+            return Err(PlanningError::IntentTooLong {
+                len: intent.len(),
+                max: INTENT_MAX_BYTES,
+            });
+        }
+        if crate::prefs::contains_sensitive(intent) {
+            return Err(PlanningError::IntentContainsSensitiveData);
+        }
+        if let Some(ref rl) = self.rate_limiter {
+            if let Err(retry_after_secs) = rl.check_and_consume() {
+                return Err(PlanningError::RateLimitExceeded { retry_after_secs });
+            }
         }
 
         let mut messages: Vec<Message> = vec![Message::user_text(intent)];

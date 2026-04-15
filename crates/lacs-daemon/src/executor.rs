@@ -496,10 +496,24 @@ fn validated_public_key(s: &str) -> Result<String, ExecutorError> {
     if !ALLOWED_PREFIXES.iter().any(|p| s.starts_with(p)) {
         return Err(ExecutorError::InvalidParam("public_key"));
     }
-    // No newlines, no single quotes, only printable ASCII.
-    if s.chars()
-        .any(|c| c == '\n' || c == '\r' || c == '\'' || !c.is_ascii() || c.is_ascii_control())
-    {
+    // No newlines, no shell metacharacters, only printable ASCII.
+    //
+    // Blocked characters and why:
+    //   '\''  — breaks single-quoted shell strings in add_authorized_key
+    //   '|'   — sed address delimiter in remove_authorized_key (\|^key$|d)
+    //   ';'   — shell command separator
+    //   '`'   — shell command substitution
+    //   '$'   — shell variable expansion
+    //   '\\'  — shell escape; could be used to smuggle other metacharacters
+    //   '&'   — shell background / AND operator
+    //
+    // None of these characters appear in valid SSH public key data (type prefix,
+    // base64 body, or ASCII comment) so this list is safe to block unconditionally.
+    if s.chars().any(|c| {
+        matches!(c, '\n' | '\r' | '\'' | '|' | ';' | '`' | '$' | '\\' | '&')
+            || !c.is_ascii()
+            || c.is_ascii_control()
+    }) {
         return Err(ExecutorError::InvalidParam("public_key"));
     }
     Ok(s.to_string())
@@ -1085,6 +1099,37 @@ mod tests {
             validated_public_key(key),
             Err(ExecutorError::InvalidParam("public_key"))
         ));
+    }
+
+    #[test]
+    fn public_key_rejects_pipe_sed_injection() {
+        // '|' is the sed address delimiter in remove_authorized_key.
+        // Allowing it enables sed injection: \|^key|d where key contains '|'.
+        let key = "ssh-ed25519 AAAA|; rm -rf /etc user@host";
+        assert!(matches!(
+            validated_public_key(key),
+            Err(ExecutorError::InvalidParam("public_key"))
+        ));
+    }
+
+    #[test]
+    fn public_key_rejects_shell_metacharacters() {
+        for (metachar, desc) in [
+            (';', "semicolon"),
+            ('`', "backtick"),
+            ('$', "dollar"),
+            ('\\', "backslash"),
+            ('&', "ampersand"),
+        ] {
+            let key = format!("ssh-ed25519 AAAA{metachar}injected user@host");
+            assert!(
+                matches!(
+                    validated_public_key(&key),
+                    Err(ExecutorError::InvalidParam("public_key"))
+                ),
+                "{desc} should be rejected"
+            );
+        }
     }
 
     #[test]

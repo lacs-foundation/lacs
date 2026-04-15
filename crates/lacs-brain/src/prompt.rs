@@ -108,23 +108,23 @@ CRITICAL — `propose_plan` call rules:
 
 This covers two common patterns that must NOT trigger query tools:
 
-**Pattern 1 — question-style:** "is the system low on memory? show me what's using it"
+**Pattern 1 — question-style:** "how much free memory do I have and which processes are consuming the most RAM?"
 
-This looks like a question that needs an answer, but it is a direct
+This looks like a question that needs a live answer, but it is a direct
 read-only request. Both things the user wants — memory stats and the
 process list — map straight to `GetMemoryInfo` and `ListProcesses`.
 
-**Pattern 2 — compound "X and Y":** "list all running containers and show me which services are up"
+**Pattern 2 — compound "X and Y":** "what podman containers are active and what's the current state of my systemd services?"
 
 Even though the user asks for two things, both are read-only actions with
 no ambiguity: `ListContainers` + `ListServices`. There is nothing to DECIDE
 — do not call `query_containers`, `query_services`, or any other tool first.
 
-**Pattern 3 — named-item read-only:** "list all running containers and give me detailed info on the container named 'postgres'"
+**Pattern 3 — named-item read-only:** "list all running containers and give me detailed info on the container called 'nginx'"
 
-The user names a specific item (`postgres`). That name goes **directly into
+The user names a specific item (`nginx`). That name goes **directly into
 `params`** — no query needed. Call `propose_plan` immediately with
-`ListContainers` + `GetContainerInfo(name="postgres")`.
+`ListContainers` + `GetContainerInfo(name="nginx")`.
 
 Do NOT call `query_containers` to "verify the container exists" first.
 The container name is explicitly provided by the user.
@@ -139,7 +139,7 @@ those actions. Do NOT call `query_*` tools first. Do NOT answer in prose.
   → end without `propose_plan`  ← FORBIDDEN
 - call `query_containers` → receive list → call `query_services` → receive
   list → write prose summary → end without `propose_plan`  ← FORBIDDEN
-- call `query_containers` to check if postgres exists → receive error →
+- call `query_containers` to check if nginx exists → receive error →
   retry → never call `propose_plan`  ← FORBIDDEN
 - call `query_firewall` → receive error → drop `GetFirewallState` from plan
   → propose only partial plan  ← FORBIDDEN
@@ -181,7 +181,7 @@ asked for, regardless of what query tools returned.
 }
 ```
 
-### Example B — "install vim" when vim might already be layered
+### Example B — "add htop" when htop might already be layered
 
 Here you need to DECIDE between "add the package" and "do nothing". Use a
 `query_*` tool, then propose:
@@ -215,37 +215,37 @@ lists the information they want, treat it as a **direct read-only request** —
 not as an open-ended diagnosis. Go straight to `propose_plan` with the listed
 actions. Do NOT call `get_system_state` to "gather context" first.
 
-User: "My system feels sluggish since the last update — show me the deployment history, what packages I've layered on top of the base, and how much disk space is left"
+User: "Something broke after my last system update — check what toolbox containers I have, list my configured Flatpak remotes, and tell me if any services are in a failed state"
 
 Three explicit read-only requests, each mapping directly to an action:
-- "deployment history" → `GetDeploymentHistory`
-- "packages I've layered on top of the base" → `GetLayeredPackages`
-- "how much disk space is left" → `GetDiskUsage`
+- "toolbox containers I have" → `ListToolboxes`
+- "configured Flatpak remotes" → `ListFlatpakRemotes`
+- "services in a failed state" → `ListServices`
 
-Do NOT call `get_system_state`, `query_deployments`, `query_packages`, or any
-query tool first. The complaint framing does NOT change the planning rule.
+Do NOT call `get_system_state`, `query_services`, or any query tool first.
+The complaint framing does NOT change the planning rule.
 Call `propose_plan` immediately:
 
 ```json
 {
-  "summary": "Show deployment history, layered packages, and disk usage",
-  "explanation": "The user described a symptom and then listed three specific read-only things to check. All three map directly to named actions — GetDeploymentHistory, GetLayeredPackages, GetDiskUsage. The complaint framing does not require a diagnostic state query first.",
+  "summary": "List toolbox containers, Flatpak remotes, and service states",
+  "explanation": "The user described a problem and then listed three specific read-only things to inspect. All three map directly to named actions — ListToolboxes, ListFlatpakRemotes, ListServices. The complaint framing does not require a diagnostic state query first.",
   "steps": [
     {
-      "action_name": "GetDeploymentHistory",
-      "summary": "List all OSTree deployments to check what changed",
+      "action_name": "ListToolboxes",
+      "summary": "List all toolbox containers",
       "risk_level": "low",
       "params": {}
     },
     {
-      "action_name": "GetLayeredPackages",
-      "summary": "List packages layered on top of the base OSTree image",
+      "action_name": "ListFlatpakRemotes",
+      "summary": "List configured Flatpak remotes",
       "risk_level": "low",
       "params": {}
     },
     {
-      "action_name": "GetDiskUsage",
-      "summary": "Check available disk space on all filesystems",
+      "action_name": "ListServices",
+      "summary": "List systemd services to identify any in a failed state",
       "risk_level": "low",
       "params": {}
     }
@@ -253,10 +253,10 @@ Call `propose_plan` immediately:
 }
 ```
 
-**WRONG** — calling get_system_state because the user said "sluggish":
+**WRONG** — calling get_system_state because the user said "something broke":
 - call `get_system_state` → receive system snapshot → try to diagnose →
   end without `propose_plan`  ← FORBIDDEN
-- call `query_deployments` to "check what changed" → then propose_plan  ← FORBIDDEN
+- call `query_services` to "check for failures first" → then propose_plan  ← FORBIDDEN
 
 The same rule applies regardless of how many actions: "acting weird — show me
 X, Y, Z, and W" with four explicit read-only items → four steps in
@@ -287,8 +287,7 @@ ConfigureWifi, SetDnsServers, ConfigureFirewall,
 SetHostname, SetTimezone, SetLocale, SetNtp,
 AddPackageRepository, RemovePackageRepository, EnablePackageRepository, DisablePackageRepository,
 CreateContainer, StartContainer, StopContainer, RemoveContainer,
-CreateUser, DeleteUser,
-AddAuthorizedKey, RemoveAuthorizedKey
+CreateUser, DeleteUser
 
 ### High risk — approval required, may require reboot
 
@@ -297,13 +296,14 @@ PinDeployment, UnpinDeployment, RebaseSystem, CleanupDeployments, RebootSystem,
 RollbackDeployment, SetKernelArguments,
 InstallPackages, RemovePackages, AddLayeredPackage, RemoveLayeredPackage,
 ReplaceLayeredPackage, ResetLayeredPackageOverride,
-AddUserToGroup, RemoveUserFromGroup
+AddUserToGroup, RemoveUserFromGroup,
+AddAuthorizedKey, RemoveAuthorizedKey
 
 ## Risk classification rules
 
 - LOW: read-only queries, state inspection, log retrieval — no mutation, no approval needed.
-- MEDIUM: reversible changes to user-space configuration (services, apps, network, users) — approval required.
-- HIGH: package layering, deployment lifecycle changes, kernel arguments, reboots — approval required, reboot may be needed.
+- MEDIUM: reversible changes to user-space configuration (services, apps, network, containers) — approval required.
+- HIGH: access-control changes (SSH keys, user group membership), package layering, deployment lifecycle changes, kernel arguments, reboots — approval required, may be irreversible or require reboot.
 
 When in doubt, assign the higher risk level.
 
@@ -422,10 +422,10 @@ mod tests {
         let prompt = build_system_prompt(None);
         // Example D covers complaint/diagnostic framing — must include the key
         // actions and the explicit anti-pattern instruction.
-        assert!(prompt.contains("GetDeploymentHistory"));
-        assert!(prompt.contains("GetLayeredPackages"));
-        assert!(prompt.contains("GetDiskUsage"));
-        assert!(prompt.contains("complaint") || prompt.contains("sluggish") || prompt.contains("acting weird"));
+        assert!(prompt.contains("ListToolboxes"));
+        assert!(prompt.contains("ListFlatpakRemotes"));
+        // Must explicitly teach: complaint framing does not justify get_system_state.
+        assert!(prompt.contains("complaint") || prompt.contains("broke") || prompt.contains("acting weird"));
         assert!(
             prompt.contains("Example D")
                 || prompt.contains("example D")

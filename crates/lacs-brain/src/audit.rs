@@ -18,7 +18,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 ///
 /// Produces `"YYYY-MM-DDThh:mm:ssZ"`. No external dependency needed.
 fn format_rfc3339(t: SystemTime) -> String {
-    let secs = t.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    let secs = t
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_else(|e| {
+            eprintln!(
+                "[lacs-brain] audit: system clock is before Unix epoch ({e}); \
+                 timestamp will be recorded as epoch — audit event timestamps may be wrong"
+            );
+            std::time::Duration::ZERO
+        })
+        .as_secs();
     // Algorithm: civil date from Unix timestamp (days since 1970-01-01).
     let days = (secs / 86400) as i64;
     let time_of_day = secs % 86400;
@@ -81,17 +90,28 @@ impl SafetyAuditLog {
             }
         }
         // Fall back to ~/.local/share
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+        let home = std::env::var("HOME").unwrap_or_else(|_| {
+            eprintln!(
+                "[lacs-brain] audit: HOME is unset; audit log will be written to /tmp \
+                 — this path is world-writable and insecure for production use"
+            );
+            "/tmp".into()
+        });
         PathBuf::from(home)
             .join(".local/share/lacs")
             .join("safety-audit.jsonl")
     }
 
-    /// Append a rejection entry to the log file.
+    /// Append a rejection entry to the log file and forward to journald.
     ///
     /// Creates parent directories if they do not exist. Errors are logged to
     /// stderr but never propagated -- audit logging must not break the
     /// planning loop.
+    ///
+    /// Journald forwarding is best-effort: if the journal socket is absent
+    /// (CI, non-systemd hosts) the call is a no-op. On systemd systems the
+    /// entry is protected by Forward Secure Sealing once FSS is enabled
+    /// (`journalctl --setup-keys`), providing tamper-evident audit records.
     pub fn log_rejection(&self, intent: &str, reason: &str, raw_plan: &str) {
         let timestamp = format_rfc3339(SystemTime::now());
         let entry = AuditEntry {
@@ -106,7 +126,35 @@ impl SafetyAuditLog {
                 "[LACS AUDIT] failed to write safety audit log to {}: {e}",
                 self.path.display()
             );
+            // Record the write failure itself in journald so the audit gap is
+            // traceable even when the JSONL file is unavailable.
+            crate::journal::send(&[
+                ("PRIORITY", "3"), // LOG_ERR
+                ("SYSLOG_IDENTIFIER", "lacs-brain"),
+                (
+                    "MESSAGE",
+                    &format!("LACS audit JSONL write failed: {e}"),
+                ),
+                ("LACS_EVENT", "audit_write_failure"),
+                ("LACS_INTENT", intent),
+                ("LACS_REASON", reason),
+            ]);
         }
+        // Forward to journald for tamper-evident audit trail.
+        // raw_plan is intentionally excluded — it may be large and is already
+        // recorded in the JSONL file.
+        crate::journal::send(&[
+            ("PRIORITY", "4"), // LOG_WARNING
+            ("SYSLOG_IDENTIFIER", "lacs-brain"),
+            (
+                "MESSAGE",
+                &format!("LACS safety fence rejection: {reason}"),
+            ),
+            ("LACS_EVENT", "safety_fence_rejection"),
+            ("LACS_INTENT", intent),
+            ("LACS_REASON", reason),
+            ("LACS_TIMESTAMP", &entry.timestamp),
+        ]);
     }
 
     fn append_entry(&self, entry: &AuditEntry<'_>) -> std::io::Result<()> {

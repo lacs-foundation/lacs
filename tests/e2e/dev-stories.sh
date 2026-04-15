@@ -157,6 +157,31 @@ STORY_NAMES[17]="Container list + specific info"
 STORY_NAMES[18]="Restart bluetooth service (destructive)"
 STORY_NAMES[19]="Update system (destructive)"
 STORY_NAMES[20]="Add user to wheel group (destructive)"
+STORY_NAMES[21]="GetSystemState direct request"
+STORY_NAMES[22]="ListProcesses direct"
+STORY_NAMES[23]="SetTimezone — Europe/Berlin (destructive)"
+STORY_NAMES[24]="StopService — cups (destructive)"
+STORY_NAMES[25]="ListUsers direct"
+STORY_NAMES[26]="ListUsers + ListGroups compound"
+STORY_NAMES[27]="SetServiceEnabled — sshd at boot (destructive)"
+STORY_NAMES[28]="GetKernelArguments + ListDeployments compound"
+STORY_NAMES[29]="Triple compound — processes + network + memory"
+STORY_NAMES[30]="RemoveAuthorizedKey — user alice (destructive)"
+STORY_NAMES[31]="RemoveUserFromGroup — alice from docker (destructive)"
+STORY_NAMES[32]="Security audit — SSH keys + users + groups"
+STORY_NAMES[33]="SetKernelArguments — blacklist nouveau (destructive)"
+STORY_NAMES[34]="RollbackDeployment — resist query temptation (destructive)"
+STORY_NAMES[35]="ConfigureFirewall — open port 8080 (destructive)"
+STORY_NAMES[36]="CreateUser — devteam account (destructive)"
+STORY_NAMES[37]="DeleteUser — oldstaff removal (destructive)"
+STORY_NAMES[38]="Diagnostic compound — processes + nginx logs + job history"
+STORY_NAMES[39]="SetDnsServers — Cloudflare 1.1.1.1 + 1.0.0.1 (destructive)"
+STORY_NAMES[40]="RebaseSystem — Fedora Silverblue 41 (destructive)"
+STORY_NAMES[41]="Read compound — repos + containers + network"
+STORY_NAMES[42]="MaskService cups — not SetServiceEnabled (destructive)"
+STORY_NAMES[43]="CleanupDeployments — free deployment disk (destructive)"
+STORY_NAMES[44]="SetHostname — workstation-42 (destructive)"
+STORY_NAMES[45]="RebootSystem — kernel activation framing (destructive)"
 
 ALLOW_DESTRUCTIVE="${LACS_ALLOW_DESTRUCTIVE:-0}"
 STORY_TIMEOUT="${LACS_STORY_TIMEOUT:-120}"
@@ -174,9 +199,9 @@ declare -A MESSAGES
 if [[ $# -gt 0 ]]; then
     STORIES=("$@")
 elif [[ "$ALLOW_DESTRUCTIVE" == "1" ]]; then
-    STORIES=(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20)
+    STORIES=(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45)
 else
-    STORIES=(1 2 3 4 5 6 7 11 12 13 14 15 16 17)
+    STORIES=(1 2 3 4 5 6 7 11 12 13 14 15 16 17 21 22 25 26 28 29 32 38 41)
 fi
 
 # ---------------------------------------------------------------------------
@@ -299,8 +324,8 @@ echo ""
 if (( fail_count > 0 )); then
     echo "NOTE: On a non-Fedora-Atomic host, stories 8 and 10 are expected to fail"
     echo "because query_packages and query_authorized_keys call rpm-ostree and SSH"
-    echo "tools that are absent. Stories 1-7 and 11-17 should always pass on any"
-    echo "Linux host (plan-structure checks only, no execution)."
+    echo "tools that are absent. Stories 1-7, 11-17, and 21-22, 25-26, 28-29 should"
+    echo "always pass on any Linux host (plan-structure checks only, no execution)."
     echo "Run on a provisioned Silverblue VM for full coverage."
     echo ""
     exit 1

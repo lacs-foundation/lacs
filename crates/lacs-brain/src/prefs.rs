@@ -43,6 +43,12 @@ const SENSITIVE_PREFIXES: &[&str] = &[
     "sg.",         // SendGrid API key
     "key_live_",   // Stripe live key
     "key_test_",   // Stripe test key
+    "eyj",         // JWT (base64url header starts with eyJ — case-folded to eyj)
+    "hvs.",        // HashiCorp Vault service token (v1.10+)
+    "hvb.",        // HashiCorp Vault batch token
+    "s.",          // HashiCorp Vault legacy token prefix
+    "npm_",        // npm access token
+    "pypi-",       // PyPI API token
 ];
 
 /// Read the user preferences file. Returns `Ok(None)` if the file does not
@@ -339,5 +345,27 @@ mod tests {
         assert!(contains_sensitive("use SK-abc123 for anthropic"));
         // Legitimate prefs that happen to contain short matching substrings should not match.
         assert!(!contains_sensitive("prefer skg over skb"));
+    }
+
+    #[test]
+    fn contains_sensitive_detects_jwt_tokens() {
+        // JWT header is base64url({"alg":"HS256",...}) = eyJ...
+        assert!(contains_sensitive(
+            "authenticate with eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyIn0.sig"
+        ));
+        // Case-insensitive: EYJ also matches
+        assert!(contains_sensitive("token EYJhbGciOiJIUzI1NiJ9.payload.sig"));
+    }
+
+    #[test]
+    fn contains_sensitive_detects_vault_tokens() {
+        assert!(contains_sensitive("set VAULT_TOKEN to hvs.AAAAAQIc8Bj7Kk"));
+        assert!(contains_sensitive("batch token hvb.AAAAAQIc8"));
+    }
+
+    #[test]
+    fn contains_sensitive_detects_npm_and_pypi_tokens() {
+        assert!(contains_sensitive("npm login with npm_abc123xyz"));
+        assert!(contains_sensitive("publish with pypi-AgEIcHlwaS5vcmcAA"));
     }
 }

@@ -4,7 +4,8 @@
 # Pass criteria:
 #   - Plan has exactly AddAuthorizedKey step
 #   - params.public_key matches the input verbatim
-#   - Plan marked approvalRequired true, risk medium
+#   - Plan marked approvalRequired true, risk high
+#     (SSH key operations are access-control changes, same class as AddUserToGroup)
 set -euo pipefail
 
 if [[ "${LACS_ALLOW_DESTRUCTIVE:-0}" != "1" ]]; then
@@ -32,10 +33,10 @@ if [[ -z "$ADD_KEY_STEP" || "$ADD_KEY_STEP" == "null" ]]; then
   exit 1
 fi
 
-# Check risk level is medium.
+# Check risk level is high — SSH key operations are access-control changes.
 RISK=$(echo "$ADD_KEY_STEP" | jq -r '.risk')
-if [[ "$RISK" != "medium" ]]; then
-  echo "FAIL: expected risk medium, got $RISK"
+if [[ "$RISK" != "high" ]]; then
+  echo "FAIL: expected risk high, got $RISK (AddAuthorizedKey is an access-control change)"
   exit 1
 fi
 

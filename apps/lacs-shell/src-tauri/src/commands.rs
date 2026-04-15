@@ -418,6 +418,11 @@ fn map_planning_error(err: lacs_brain::planner::PlanningError) -> ShellError {
     use lacs_brain::planner::PlanningError;
     let (code, msg) = match &err {
         PlanningError::EmptyIntent => ("intent_empty", err.to_string()),
+        PlanningError::IntentTooLong { .. } => ("intent_too_long", err.to_string()),
+        PlanningError::IntentContainsSensitiveData => {
+            ("intent_contains_sensitive_data", err.to_string())
+        }
+        PlanningError::RateLimitExceeded { .. } => ("rate_limit_exceeded", err.to_string()),
         PlanningError::StateUnavailable(_) => ("daemon_not_running", err.to_string()),
         PlanningError::Provider(s) => {
             if s.contains("429") {
