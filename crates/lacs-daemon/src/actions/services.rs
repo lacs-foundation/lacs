@@ -113,9 +113,11 @@ pub fn get_service_status(unit: &str) -> ActionSpec {
 }
 
 pub fn reload_service(unit: &str) -> ActionSpec {
-    // Send SIGHUP / reload signal to the unit without stopping it.
-    // Only valid for units that support reload (ExecReload= is defined).
-    // Prefer over RestartService when live reload is sufficient.
+    // Trigger the unit's configured reload procedure (ExecReload=) without
+    // stopping it. Only valid for units that define ExecReload= — attempting
+    // this on a unit without it will fail with "Job type reload is not
+    // applicable for unit X". Prefer over RestartService when live reload
+    // is sufficient and the unit supports it.
     ActionSpec {
         action_name: "ReloadService",
         mechanism: command_mechanism("systemctl", ["reload", unit]),
@@ -139,9 +141,10 @@ pub fn list_timers() -> ActionSpec {
 }
 
 pub fn reload_daemon() -> ActionSpec {
-    // Reload systemd manager configuration after unit files are changed.
-    // Required before start/enable will pick up changes to .service files
-    // dropped into /etc/systemd/system/.
+    // Reload systemd manager configuration after any unit file change on disk —
+    // including new files, edits to existing files, and drop-in overrides in
+    // .d/ directories. Without daemon-reload, systemctl start/enable continue
+    // using the previously-loaded definition even if the file has changed.
     ActionSpec {
         action_name: "ReloadDaemon",
         mechanism: command_mechanism("systemctl", ["daemon-reload"]),

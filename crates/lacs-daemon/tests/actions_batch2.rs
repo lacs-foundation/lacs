@@ -32,6 +32,123 @@ fn services_family_covers_list_control_and_logs() {
 }
 
 #[test]
+fn reload_service_uses_reload_not_restart() {
+    // Regression guard: reload sends ExecReload= signal; restart stops+starts.
+    // These have different availability/disruption profiles.
+    let spec = services::reload_service("nginx.service");
+
+    assert_eq!(spec.action_name, "ReloadService");
+    assert_eq!(spec.risk_level, RiskLevel::Medium);
+    assert_eq!(
+        spec.mechanism,
+        ActionMechanism::Command {
+            program: "systemctl",
+            args: vec!["reload".to_string(), "nginx.service".to_string()],
+        }
+    );
+    // Explicitly guard against the wrong verb.
+    if let ActionMechanism::Command { args, .. } = &spec.mechanism {
+        assert!(
+            !args.contains(&"restart".to_string()),
+            "reload_service must use 'reload', not 'restart'"
+        );
+    }
+}
+
+#[test]
+fn reload_daemon_uses_daemon_reload_subcommand_with_no_unit_arg() {
+    let spec = services::reload_daemon();
+
+    assert_eq!(spec.action_name, "ReloadDaemon");
+    assert_eq!(spec.risk_level, RiskLevel::Medium);
+    assert_eq!(
+        spec.mechanism,
+        ActionMechanism::Command {
+            program: "systemctl",
+            args: vec!["daemon-reload".to_string()],
+        }
+    );
+    // daemon-reload takes no unit argument — verify exactly one arg.
+    if let ActionMechanism::Command { args, .. } = &spec.mechanism {
+        assert_eq!(args.len(), 1, "daemon-reload must have no unit argument");
+    }
+}
+
+#[test]
+fn get_service_status_uses_status_with_no_pager() {
+    // --no-pager is required to prevent systemctl from blocking waiting for
+    // terminal input when output exceeds the screen height (breaks CI / daemon).
+    let spec = services::get_service_status("nginx.service");
+
+    assert_eq!(spec.action_name, "GetServiceStatus");
+    assert_eq!(spec.risk_level, RiskLevel::Low);
+    assert_eq!(
+        spec.mechanism,
+        ActionMechanism::Command {
+            program: "systemctl",
+            args: vec![
+                "status".to_string(),
+                "nginx.service".to_string(),
+                "--no-pager".to_string(),
+            ],
+        }
+    );
+    if let ActionMechanism::Command { args, .. } = &spec.mechanism {
+        assert!(
+            args.contains(&"--no-pager".to_string()),
+            "--no-pager is required to prevent blocking"
+        );
+    }
+}
+
+#[test]
+fn list_timers_includes_all_and_no_pager_flags() {
+    // --all includes inactive timers (not just running ones).
+    // --no-pager prevents blocking when output is long.
+    let spec = services::list_timers();
+
+    assert_eq!(spec.action_name, "ListTimers");
+    assert_eq!(spec.risk_level, RiskLevel::Low);
+    assert_eq!(
+        spec.mechanism,
+        ActionMechanism::Command {
+            program: "systemctl",
+            args: vec![
+                "list-timers".to_string(),
+                "--all".to_string(),
+                "--no-pager".to_string(),
+            ],
+        }
+    );
+    if let ActionMechanism::Command { args, .. } = &spec.mechanism {
+        assert!(
+            args.contains(&"--all".to_string()),
+            "--all is required to show inactive timers"
+        );
+    }
+}
+
+#[test]
+fn get_firewall_state_uses_list_all_not_state() {
+    // Bug fix regression: --state only returns "running"/"not running" with no
+    // config detail. --list-all shows the active zone, services, ports, and rules.
+    let spec = network::get_firewall_state();
+
+    assert_eq!(spec.action_name, "GetFirewallState");
+    assert_eq!(spec.risk_level, RiskLevel::Low);
+    if let ActionMechanism::Command { args, .. } = &spec.mechanism {
+        assert!(
+            args.contains(&"--list-all".to_string()),
+            "--list-all is required for full firewall config inspection"
+        );
+        assert!(
+            !args.contains(&"--state".to_string()),
+            "--state only returns running/not-running — too coarse for config inspection"
+        );
+    }
+}
+
+#[test]
 fn restart_service_uses_systemctl_without_shell() {
     let spec = services::restart_service("NetworkManager.service");
 

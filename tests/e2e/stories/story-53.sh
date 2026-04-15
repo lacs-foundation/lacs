@@ -39,6 +39,14 @@ if echo "$ACTIONS" | grep -q "RemoveLayeredPackage"; then
   exit 1
 fi
 
+# RemovePackages (rpm-ostree uninstall) also fails for base OS packages at runtime
+# and signals the model misunderstood the "base image" context
+if echo "$ACTIONS" | grep -q "RemovePackages"; then
+  echo "FAIL: model used RemovePackages — base image removal requires RemoveBasePackage, not rpm-ostree uninstall"
+  echo "Actions: $ACTIONS"
+  exit 1
+fi
+
 STEP=$(echo "$PLAN" | jq '.plan.steps[] | select(.action == "RemoveBasePackage")')
 if [[ -z "$STEP" || "$STEP" == "null" ]]; then
   echo "FAIL: no RemoveBasePackage step found"

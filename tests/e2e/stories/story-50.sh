@@ -37,6 +37,12 @@ if echo "$ACTIONS" | grep -q "RestartService"; then
   exit 1
 fi
 
+if echo "$ACTIONS" | grep -q "StopService"; then
+  echo "FAIL: model used StopService — 'reload nginx config' must not stop the unit"
+  echo "Actions: $ACTIONS"
+  exit 1
+fi
+
 STEP=$(echo "$PLAN" | jq '.plan.steps[] | select(.action == "ReloadService")')
 if [[ -z "$STEP" || "$STEP" == "null" ]]; then
   echo "FAIL: no ReloadService step found"

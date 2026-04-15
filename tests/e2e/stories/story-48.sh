@@ -22,6 +22,13 @@ echo "$PLAN" | jq .
 
 # --- Assertions ---
 
+# ListServices lists all units — too broad; the intent names a specific unit
+if echo "$PLAN" | jq -r '.plan.steps[].action' | grep -q "ListServices"; then
+  echo "FAIL: model used ListServices — 'is nginx running?' asks about a specific unit, not all services"
+  echo "Actions: $(echo "$PLAN" | jq -r '.plan.steps[].action')"
+  exit 1
+fi
+
 STEP=$(echo "$PLAN" | jq '.plan.steps[] | select(.action == "GetServiceStatus")')
 if [[ -z "$STEP" || "$STEP" == "null" ]]; then
   echo "FAIL: no GetServiceStatus step found"

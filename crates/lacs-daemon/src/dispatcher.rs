@@ -636,7 +636,22 @@ async fn handle_query_action(
     // Non-zero exit codes from read-only actions must not be silently presented
     // as successful output. The LLM would receive error text as if it were valid
     // system state, leading to incorrect planning decisions.
-    if output.exit_code != 0 {
+    //
+    // Some commands use non-zero exit codes as semantic signals rather than
+    // error indicators.  These are whitelisted here so the informative stdout
+    // is passed through to the caller instead of being discarded.
+    //
+    // - rpm-ostree upgrade --check: exits 77 when updates ARE available (0 = up-to-date).
+    //   Treating 77 as an error would fail the "updates available" case — the only
+    //   time a user would ever ask this question.
+    // - systemctl status <unit>: exits 1 when inactive, 3 when dead/failed, 4 when not
+    //   found.  All produce informative output the planner needs for diagnosis.
+    let is_informational_exit = matches!(
+        (action_name, output.exit_code),
+        ("GetPendingUpdates", 77) | ("GetServiceStatus", 1..=4)
+    );
+
+    if output.exit_code != 0 && !is_informational_exit {
         return send_error(
             framed,
             request_id,

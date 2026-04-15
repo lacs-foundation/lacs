@@ -169,6 +169,129 @@ fn layered_package_install_is_high_risk_and_uses_rpm_ostree() {
 }
 
 #[test]
+fn replace_layered_package_uses_install_uninstall_not_override_replace() {
+    // Bug fix regression: the old command was `rpm-ostree override replace OLD NEW`
+    // which is wrong (override replace takes an RPM file, not package names).
+    // The correct command is `rpm-ostree install NEW --uninstall OLD` for an
+    // atomic layered-package swap in a single deployment transaction.
+    let spec = layering::replace_layered_package("vim", "neovim");
+
+    assert_eq!(spec.action_name, "ReplaceLayeredPackage");
+    assert_eq!(spec.risk_level, RiskLevel::High);
+    assert!(spec.reboot_required);
+    assert!(spec.rollback_available);
+    assert_eq!(
+        spec.mechanism,
+        ActionMechanism::Command {
+            program: "rpm-ostree",
+            args: vec![
+                "install".to_string(),
+                "neovim".to_string(),
+                "--uninstall".to_string(),
+                "vim".to_string(),
+            ],
+        }
+    );
+    // Explicitly verify neither "override" nor "replace" appears — those are
+    // the wrong subcommands (rpm-ostree override replace is for local RPM files).
+    if let ActionMechanism::Command { args, .. } = &spec.mechanism {
+        assert!(
+            !args.contains(&"override".to_string()),
+            "must not use 'override' subcommand"
+        );
+    }
+}
+
+#[test]
+fn remove_base_package_uses_override_remove_not_uninstall() {
+    // `rpm-ostree override remove` hides a base OS package; `rpm-ostree uninstall`
+    // removes user-added layered packages. These are distinct and non-interchangeable.
+    let spec = layering::remove_base_package("gedit");
+
+    assert_eq!(spec.action_name, "RemoveBasePackage");
+    assert_eq!(spec.risk_level, RiskLevel::High);
+    assert!(spec.reboot_required);
+    assert!(spec.rollback_available);
+    assert_eq!(
+        spec.mechanism,
+        ActionMechanism::Command {
+            program: "rpm-ostree",
+            args: vec![
+                "override".to_string(),
+                "remove".to_string(),
+                "gedit".to_string(),
+            ],
+        }
+    );
+    // Explicitly verify "uninstall" is not used.
+    if let ActionMechanism::Command { args, .. } = &spec.mechanism {
+        assert!(
+            !args.contains(&"uninstall".to_string()),
+            "must use 'override remove', not 'uninstall'"
+        );
+    }
+}
+
+#[test]
+fn get_pending_updates_uses_check_flag_and_is_low_risk() {
+    let spec = layering::get_pending_updates();
+
+    assert_eq!(spec.action_name, "GetPendingUpdates");
+    assert_eq!(spec.risk_level, RiskLevel::Low);
+    assert!(!spec.reboot_required);
+    assert!(!spec.rollback_available);
+    assert_eq!(
+        spec.mechanism,
+        ActionMechanism::Command {
+            program: "rpm-ostree",
+            args: vec!["upgrade".to_string(), "--check".to_string()],
+        }
+    );
+}
+
+#[test]
+fn update_flatpak_with_app_id_appends_it() {
+    use lacs_daemon::actions::flatpak;
+
+    let spec = flatpak::update_flatpak(Some("org.mozilla.Firefox"));
+
+    assert_eq!(spec.action_name, "UpdateFlatpak");
+    assert_eq!(spec.risk_level, RiskLevel::Medium);
+    assert_eq!(
+        spec.mechanism,
+        ActionMechanism::Command {
+            program: "flatpak",
+            args: vec![
+                "update".to_string(),
+                "-y".to_string(),
+                "org.mozilla.Firefox".to_string(),
+            ],
+        }
+    );
+}
+
+#[test]
+fn update_flatpak_without_app_id_omits_it() {
+    use lacs_daemon::actions::flatpak;
+
+    // None means "update all" — flatpak update -y with no trailing argument.
+    let spec = flatpak::update_flatpak(None);
+
+    assert_eq!(spec.action_name, "UpdateFlatpak");
+    assert_eq!(
+        spec.mechanism,
+        ActionMechanism::Command {
+            program: "flatpak",
+            args: vec!["update".to_string(), "-y".to_string()],
+        }
+    );
+    // Explicitly assert no trailing argument was appended.
+    if let ActionMechanism::Command { args, .. } = &spec.mechanism {
+        assert_eq!(args.len(), 2, "update-all must have exactly 'update -y', no app_id");
+    }
+}
+
+#[test]
 fn package_repo_family_covers_repo_file_management() {
     let names = package_repos::specs()
         .into_iter()

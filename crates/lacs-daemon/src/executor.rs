@@ -124,9 +124,11 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
         "ListInstalledFlatpaks" => Ok(flatpak::list_installed_flatpaks()),
         "UpdateFlatpak" => {
             // app_id is optional — omitting it updates all installed Flatpaks.
+            // Empty string is treated as absent (no app specified → update all).
             let app_id = params
                 .get("app_id")
                 .and_then(|v| v.as_str())
+                .filter(|id| !id.is_empty())
                 .map(|id| validated_safe_arg(id, "app_id"))
                 .transpose()?;
             Ok(flatpak::update_flatpak(app_id.as_deref()))

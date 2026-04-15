@@ -73,8 +73,9 @@ pub fn remove_layered_package(package: &str) -> ActionSpec {
 
 pub fn replace_layered_package(old: &str, new: &str) -> ActionSpec {
     // Atomically swap one layered package for another in a single transaction.
-    // `rpm-ostree install NEW --uninstall OLD` applies both in one deployment,
-    // avoiding intermediate states where neither package is present.
+    // `rpm-ostree install NEW --uninstall OLD` produces one pending deployment
+    // that contains both changes — no intermediate deployment exists where
+    // neither package is present. The running system is unchanged until reboot.
     ActionSpec {
         action_name: "ReplaceLayeredPackage",
         mechanism: command_mechanism("rpm-ostree", ["install", new, "--uninstall", old]),
@@ -100,8 +101,10 @@ pub fn remove_base_package(package: &str) -> ActionSpec {
 
 pub fn get_pending_updates() -> ActionSpec {
     // Check for available OS updates without applying them.
-    // `--check` exits 77 when updates are available, 0 when up-to-date.
-    // Output goes to stdout regardless — safe read-only operation.
+    // `--check` exits 77 when updates ARE available, 0 when up-to-date.
+    // Both exit codes produce informative stdout. The dispatcher special-cases
+    // exit 77 as informational (not an error) so the update list reaches the
+    // caller in both the "updates available" and "up-to-date" cases.
     ActionSpec {
         action_name: "GetPendingUpdates",
         mechanism: command_mechanism("rpm-ostree", ["upgrade", "--check"]),

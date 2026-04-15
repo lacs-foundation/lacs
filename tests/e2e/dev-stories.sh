@@ -190,6 +190,7 @@ STORY_NAMES[50]="ReloadService — nginx without restart (destructive)"
 STORY_NAMES[51]="ReloadDaemon — after unit file creation (destructive)"
 STORY_NAMES[52]="UpdateFlatpak — Firefox (destructive)"
 STORY_NAMES[53]="RemoveBasePackage — gedit from base image (destructive)"
+STORY_NAMES[54]="UpdateFlatpak — update all, no specific app (destructive)"
 
 ALLOW_DESTRUCTIVE="${LACS_ALLOW_DESTRUCTIVE:-0}"
 STORY_TIMEOUT="${LACS_STORY_TIMEOUT:-120}"
@@ -207,7 +208,7 @@ declare -A MESSAGES
 if [[ $# -gt 0 ]]; then
     STORIES=("$@")
 elif [[ "$ALLOW_DESTRUCTIVE" == "1" ]]; then
-    STORIES=(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53)
+    STORIES=(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54)
 else
     STORIES=(1 2 3 4 5 6 7 11 12 13 14 15 16 17 21 22 25 26 28 29 32 38 41 46 47 48 49)
 fi

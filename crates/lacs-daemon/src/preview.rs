@@ -66,8 +66,19 @@ fn preview_profile(action_name: &str) -> PreviewProfile {
             rollback_available: false,
             warnings: Vec::new(),
         },
+        "ReloadService" => PreviewProfile {
+            risk_level: RiskLevel::Medium,
+            expected_side_effects: vec!["service config will be reloaded".to_string()],
+            reboot_required: false,
+            rollback_available: false,
+            warnings: vec![
+                "approval required".to_string(),
+                "requires ExecReload= to be defined in the unit file; \
+                 if not defined, use RestartService instead"
+                    .to_string(),
+            ],
+        },
         "RestartService"
-        | "ReloadService"
         | "ReloadDaemon"
         | "SetServiceEnabled"
         | "StartService"
