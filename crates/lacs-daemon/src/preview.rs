@@ -37,12 +37,16 @@ fn preview_profile(action_name: &str) -> PreviewProfile {
         | "GetDeploymentHistory"
         | "ListDeployments"
         | "GetKernelArguments"
+        | "GetPendingUpdates"
         | "SearchFlatpakApps"
         | "ListFlatpakRemotes"
+        | "ListInstalledFlatpaks"
         | "GetFlatpakAppInfo"
         | "ListToolboxes"
         | "ListServices"
         | "GetServiceLogs"
+        | "GetServiceStatus"
+        | "ListTimers"
         | "GetFirewallState"
         | "ListUsers"
         | "ListGroups"
@@ -63,6 +67,8 @@ fn preview_profile(action_name: &str) -> PreviewProfile {
             warnings: Vec::new(),
         },
         "RestartService"
+        | "ReloadService"
+        | "ReloadDaemon"
         | "SetServiceEnabled"
         | "StartService"
         | "StopService"
@@ -73,6 +79,7 @@ fn preview_profile(action_name: &str) -> PreviewProfile {
         | "RemoveToolbox"
         | "InstallFlatpak"
         | "RemoveFlatpak"
+        | "UpdateFlatpak"
         | "AddFlatpakRemote"
         | "RemoveFlatpakRemote"
         | "MaskService"
@@ -81,21 +88,22 @@ fn preview_profile(action_name: &str) -> PreviewProfile {
         | "SetTimezone"
         | "SetLocale"
         | "SetNtp"
-        | "CreateUser"
-        | "DeleteUser"
-        | "AddAuthorizedKey"
-        | "RemoveAuthorizedKey" => PreviewProfile {
+        | "CreateUser" => PreviewProfile {
             risk_level: RiskLevel::Medium,
             expected_side_effects: vec!["service interruption".to_string()],
             reboot_required: false,
             rollback_available: false,
             warnings: vec!["approval required".to_string()],
         },
-        "AddUserToGroup" | "RemoveUserFromGroup" => PreviewProfile {
-            // High risk: group membership changes to privileged groups (e.g. `wheel`)
-            // constitute privilege escalation; Admin authorization is required.
+        "AddUserToGroup"
+        | "RemoveUserFromGroup"
+        | "DeleteUser"
+        | "AddAuthorizedKey"
+        | "RemoveAuthorizedKey" => PreviewProfile {
+            // High risk: access-control changes — group membership, account
+            // deletion, and SSH key modifications require Admin authorization.
             risk_level: RiskLevel::High,
-            expected_side_effects: vec!["group membership will change".to_string()],
+            expected_side_effects: vec!["access control will change".to_string()],
             reboot_required: false,
             rollback_available: false,
             warnings: vec![
@@ -130,7 +138,8 @@ fn preview_profile(action_name: &str) -> PreviewProfile {
         | "AddLayeredPackage"
         | "RemoveLayeredPackage"
         | "ReplaceLayeredPackage"
-        | "ResetLayeredPackageOverride" => PreviewProfile {
+        | "ResetLayeredPackageOverride"
+        | "RemoveBasePackage" => PreviewProfile {
             risk_level: RiskLevel::High,
             expected_side_effects: vec![
                 "system deployment will change".to_string(),

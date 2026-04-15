@@ -60,7 +60,9 @@ pub fn delete_user(username: &str) -> ActionSpec {
     ActionSpec {
         action_name: "DeleteUser",
         mechanism: command_mechanism("sudo", ["userdel", username]),
-        risk_level: RiskLevel::Medium,
+        // High risk: permanently removes login access — same class as SSH key
+        // removal and group membership changes.
+        risk_level: RiskLevel::High,
         reboot_required: false,
         rollback_available: false,
     }

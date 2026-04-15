@@ -11,6 +11,10 @@ pub fn specs() -> Vec<ActionSpec> {
         mask_service("cups.service"),
         unmask_service("cups.service"),
         get_service_logs("NetworkManager.service"),
+        get_service_status("nginx.service"),
+        reload_service("nginx.service"),
+        list_timers(),
+        reload_daemon(),
     ]
 }
 
@@ -89,6 +93,58 @@ pub fn unmask_service(unit: &str) -> ActionSpec {
     ActionSpec {
         action_name: "UnmaskService",
         mechanism: command_mechanism("systemctl", ["unmask", unit]),
+        risk_level: RiskLevel::Medium,
+        reboot_required: false,
+        rollback_available: false,
+    }
+}
+
+pub fn get_service_status(unit: &str) -> ActionSpec {
+    // Detailed unit status: active state, sub-state, loaded/enabled state,
+    // recent log lines, and PID. More informative than `list-units` for
+    // diagnosing a specific unit.
+    ActionSpec {
+        action_name: "GetServiceStatus",
+        mechanism: command_mechanism("systemctl", ["status", unit, "--no-pager"]),
+        risk_level: RiskLevel::Low,
+        reboot_required: false,
+        rollback_available: false,
+    }
+}
+
+pub fn reload_service(unit: &str) -> ActionSpec {
+    // Send SIGHUP / reload signal to the unit without stopping it.
+    // Only valid for units that support reload (ExecReload= is defined).
+    // Prefer over RestartService when live reload is sufficient.
+    ActionSpec {
+        action_name: "ReloadService",
+        mechanism: command_mechanism("systemctl", ["reload", unit]),
+        risk_level: RiskLevel::Medium,
+        reboot_required: false,
+        rollback_available: false,
+    }
+}
+
+pub fn list_timers() -> ActionSpec {
+    // Show all systemd timer units with their last/next trigger times.
+    // Includes both active and inactive timers — useful for auditing
+    // scheduled tasks.
+    ActionSpec {
+        action_name: "ListTimers",
+        mechanism: command_mechanism("systemctl", ["list-timers", "--all", "--no-pager"]),
+        risk_level: RiskLevel::Low,
+        reboot_required: false,
+        rollback_available: false,
+    }
+}
+
+pub fn reload_daemon() -> ActionSpec {
+    // Reload systemd manager configuration after unit files are changed.
+    // Required before start/enable will pick up changes to .service files
+    // dropped into /etc/systemd/system/.
+    ActionSpec {
+        action_name: "ReloadDaemon",
+        mechanism: command_mechanism("systemctl", ["daemon-reload"]),
         risk_level: RiskLevel::Medium,
         reboot_required: false,
         rollback_available: false,

@@ -23,6 +23,10 @@ fn services_family_covers_list_control_and_logs() {
             "MaskService",
             "UnmaskService",
             "GetServiceLogs",
+            "GetServiceStatus",
+            "ReloadService",
+            "ListTimers",
+            "ReloadDaemon",
         ]
     );
 }

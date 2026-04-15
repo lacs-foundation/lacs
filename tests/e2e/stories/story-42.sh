@@ -34,10 +34,12 @@ echo "$PLAN" | jq .
 
 ACTIONS=$(echo "$PLAN" | jq -r '.plan.steps[].action')
 
-# SetServiceEnabled(enabled=false) only prevents autostart — the user
-# explicitly said "can never be started, even manually". That requires MaskService.
+# SetServiceEnabled(enabled=false) only prevents autostart; the unit can still
+# be started manually with `systemctl start`. The phrase "can never be started,
+# even manually" unambiguously requires MaskService. If the model includes
+# SetServiceEnabled it has failed to understand the distinction.
 if echo "$ACTIONS" | grep -q "SetServiceEnabled"; then
-  echo "FAIL: model used SetServiceEnabled, but 'can never be started, even manually' requires MaskService"
+  echo "FAIL: model used SetServiceEnabled — but 'can never be started even manually' requires MaskService, not SetServiceEnabled"
   echo "Actions: $ACTIONS"
   exit 1
 fi

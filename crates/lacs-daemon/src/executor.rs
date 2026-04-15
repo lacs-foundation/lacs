@@ -121,6 +121,16 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
             let app_id = validated_safe_arg(require_str(params, "app_id")?, "app_id")?;
             Ok(flatpak::get_flatpak_app_info(&app_id))
         }
+        "ListInstalledFlatpaks" => Ok(flatpak::list_installed_flatpaks()),
+        "UpdateFlatpak" => {
+            // app_id is optional — omitting it updates all installed Flatpaks.
+            let app_id = params
+                .get("app_id")
+                .and_then(|v| v.as_str())
+                .map(|id| validated_safe_arg(id, "app_id"))
+                .transpose()?;
+            Ok(flatpak::update_flatpak(app_id.as_deref()))
+        }
 
         // ── Containers ────────────────────────────────────────────────────
         "ListContainers" => Ok(containers::list_containers()),
@@ -180,6 +190,11 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
             let new = validated_safe_arg(require_str(params, "new")?, "new")?;
             Ok(layering::replace_layered_package(&old, &new))
         }
+        "RemoveBasePackage" => {
+            let package = validated_safe_arg(require_str(params, "package")?, "package")?;
+            Ok(layering::remove_base_package(&package))
+        }
+        "GetPendingUpdates" => Ok(layering::get_pending_updates()),
 
         // ── Package repositories ──────────────────────────────────────────
         "ListPackageRepositories" => Ok(package_repos::list_package_repositories()),
@@ -230,6 +245,16 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
             let unit = validated_unit_name(require_str(params, "unit")?, "unit")?;
             Ok(services::get_service_logs(&unit))
         }
+        "GetServiceStatus" => {
+            let unit = validated_unit_name(require_str(params, "unit")?, "unit")?;
+            Ok(services::get_service_status(&unit))
+        }
+        "ReloadService" => {
+            let unit = validated_unit_name(require_str(params, "unit")?, "unit")?;
+            Ok(services::reload_service(&unit))
+        }
+        "ListTimers" => Ok(services::list_timers()),
+        "ReloadDaemon" => Ok(services::reload_daemon()),
 
         // ── Toolbox ───────────────────────────────────────────────────────
         "ListToolboxes" => Ok(toolbox::list_toolboxes()),
@@ -622,7 +647,8 @@ pub fn rollback_spec_for(action_name: &str) -> Option<ActionSpec> {
         | "AddLayeredPackage"
         | "RemoveLayeredPackage"
         | "ReplaceLayeredPackage"
-        | "ResetLayeredPackageOverride" => Some(ActionSpec {
+        | "ResetLayeredPackageOverride"
+        | "RemoveBasePackage" => Some(ActionSpec {
             action_name: "RollbackDeployment",
             mechanism: ActionMechanism::Command {
                 program: "rpm-ostree",

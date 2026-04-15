@@ -29,15 +29,19 @@ pub fn min_role_for_action(action_name: &str) -> Option<CallerRole> {
         | "GetDeploymentHistory"
         | "ListDeployments"
         | "GetKernelArguments"
+        | "GetPendingUpdates"
         | "ListFlatpakRemotes"
         | "SearchFlatpakApps"
         | "GetFlatpakAppInfo"
+        | "ListInstalledFlatpaks"
         | "ListContainers"
         | "GetContainerInfo"
         | "GetLayeredPackages"
         | "ListPackageRepositories"
         | "ListServices"
         | "GetServiceLogs"
+        | "GetServiceStatus"
+        | "ListTimers"
         | "ListToolboxes"
         | "GetFirewallState"
         | "GetNetworkStatus"
@@ -51,11 +55,12 @@ pub fn min_role_for_action(action_name: &str) -> Option<CallerRole> {
 
         // ── Medium-risk mutations (Dev) ──────────────────────────────────
         //
-        // Flatpak install/remove, container lifecycle, service control,
-        // toolbox ops, identity changes, network config, package repos,
-        // and user create/delete.
+        // Flatpak install/remove/update, container lifecycle, service
+        // control, toolbox ops, identity changes, network config,
+        // package repos, and user creation.
         "InstallFlatpak"
         | "RemoveFlatpak"
+        | "UpdateFlatpak"
         | "AddFlatpakRemote"
         | "RemoveFlatpakRemote"
         | "CreateContainer"
@@ -65,6 +70,8 @@ pub fn min_role_for_action(action_name: &str) -> Option<CallerRole> {
         | "StartService"
         | "StopService"
         | "RestartService"
+        | "ReloadService"
+        | "ReloadDaemon"
         | "SetServiceEnabled"
         | "MaskService"
         | "UnmaskService"
@@ -81,15 +88,13 @@ pub fn min_role_for_action(action_name: &str) -> Option<CallerRole> {
         | "RemovePackageRepository"
         | "EnablePackageRepository"
         | "DisablePackageRepository"
-        | "CreateUser"
-        | "DeleteUser"
-        | "AddAuthorizedKey"
-        | "RemoveAuthorizedKey" => CallerRole::Dev,
+        | "CreateUser" => CallerRole::Dev,
 
         // ── High-risk system mutations (Admin) ───────────────────────────
         //
         // Deployment lifecycle, layering, kernel arguments, privilege-
-        // escalation-sensitive user-group operations.
+        // escalation-sensitive user-group and SSH-key operations, and
+        // account deletion (irreversible access removal).
         "UpdateSystem"
         | "PinDeployment"
         | "UnpinDeployment"
@@ -104,8 +109,12 @@ pub fn min_role_for_action(action_name: &str) -> Option<CallerRole> {
         | "RemoveLayeredPackage"
         | "ReplaceLayeredPackage"
         | "ResetLayeredPackageOverride"
+        | "RemoveBasePackage"
         | "AddUserToGroup"
-        | "RemoveUserFromGroup" => CallerRole::Admin,
+        | "RemoveUserFromGroup"
+        | "DeleteUser"
+        | "AddAuthorizedKey"
+        | "RemoveAuthorizedKey" => CallerRole::Admin,
 
         _ => return None,
     };
@@ -232,6 +241,7 @@ mod tests {
         // Medium-risk
         assert!(action_allowed(&role, "InstallFlatpak"));
         assert!(action_allowed(&role, "RemoveFlatpak"));
+        assert!(action_allowed(&role, "UpdateFlatpak"));
         assert!(action_allowed(&role, "AddFlatpakRemote"));
         assert!(action_allowed(&role, "RemoveFlatpakRemote"));
         assert!(action_allowed(&role, "CreateContainer"));
@@ -241,6 +251,8 @@ mod tests {
         assert!(action_allowed(&role, "StartService"));
         assert!(action_allowed(&role, "StopService"));
         assert!(action_allowed(&role, "RestartService"));
+        assert!(action_allowed(&role, "ReloadService"));
+        assert!(action_allowed(&role, "ReloadDaemon"));
         assert!(action_allowed(&role, "SetServiceEnabled"));
         assert!(action_allowed(&role, "MaskService"));
         assert!(action_allowed(&role, "UnmaskService"));
@@ -258,13 +270,14 @@ mod tests {
         assert!(action_allowed(&role, "EnablePackageRepository"));
         assert!(action_allowed(&role, "DisablePackageRepository"));
         assert!(action_allowed(&role, "CreateUser"));
-        assert!(action_allowed(&role, "DeleteUser"));
-        assert!(action_allowed(&role, "AddAuthorizedKey"));
-        assert!(action_allowed(&role, "RemoveAuthorizedKey"));
         // Observer-level actions still allowed
         assert!(action_allowed(&role, "GetSystemState"));
         assert!(action_allowed(&role, "ListServices"));
         assert!(action_allowed(&role, "ListContainers"));
+        assert!(action_allowed(&role, "ListInstalledFlatpaks"));
+        assert!(action_allowed(&role, "GetPendingUpdates"));
+        assert!(action_allowed(&role, "GetServiceStatus"));
+        assert!(action_allowed(&role, "ListTimers"));
     }
 
     // ------------------------------------------------------------------
@@ -288,8 +301,13 @@ mod tests {
         assert!(!action_allowed(&role, "RemoveLayeredPackage"));
         assert!(!action_allowed(&role, "ReplaceLayeredPackage"));
         assert!(!action_allowed(&role, "ResetLayeredPackageOverride"));
+        assert!(!action_allowed(&role, "RemoveBasePackage"));
         assert!(!action_allowed(&role, "AddUserToGroup"));
         assert!(!action_allowed(&role, "RemoveUserFromGroup"));
+        // Access-control operations require Admin
+        assert!(!action_allowed(&role, "DeleteUser"));
+        assert!(!action_allowed(&role, "AddAuthorizedKey"));
+        assert!(!action_allowed(&role, "RemoveAuthorizedKey"));
     }
 
     // ------------------------------------------------------------------
@@ -314,15 +332,26 @@ mod tests {
         assert!(action_allowed(&role, "RemoveLayeredPackage"));
         assert!(action_allowed(&role, "ReplaceLayeredPackage"));
         assert!(action_allowed(&role, "ResetLayeredPackageOverride"));
+        assert!(action_allowed(&role, "RemoveBasePackage"));
         assert!(action_allowed(&role, "AddUserToGroup"));
         assert!(action_allowed(&role, "RemoveUserFromGroup"));
+        assert!(action_allowed(&role, "DeleteUser"));
+        assert!(action_allowed(&role, "AddAuthorizedKey"));
+        assert!(action_allowed(&role, "RemoveAuthorizedKey"));
         // Medium-risk still allowed
         assert!(action_allowed(&role, "InstallFlatpak"));
+        assert!(action_allowed(&role, "UpdateFlatpak"));
         assert!(action_allowed(&role, "CreateToolbox"));
         assert!(action_allowed(&role, "StartService"));
+        assert!(action_allowed(&role, "ReloadService"));
+        assert!(action_allowed(&role, "ReloadDaemon"));
         // Observer-level still allowed
         assert!(action_allowed(&role, "GetSystemState"));
         assert!(action_allowed(&role, "ListUsers"));
+        assert!(action_allowed(&role, "ListInstalledFlatpaks"));
+        assert!(action_allowed(&role, "GetPendingUpdates"));
+        assert!(action_allowed(&role, "GetServiceStatus"));
+        assert!(action_allowed(&role, "ListTimers"));
     }
 
     // ------------------------------------------------------------------
@@ -337,9 +366,16 @@ mod tests {
         assert!(action_allowed(&role, "ListDeployments"));
         assert!(action_allowed(&role, "ListContainers"));
         assert!(action_allowed(&role, "GetFirewallState"));
+        assert!(action_allowed(&role, "ListInstalledFlatpaks"));
+        assert!(action_allowed(&role, "GetPendingUpdates"));
+        assert!(action_allowed(&role, "GetServiceStatus"));
+        assert!(action_allowed(&role, "ListTimers"));
         assert!(action_allowed(&role, "InstallFlatpak"));
+        assert!(action_allowed(&role, "UpdateFlatpak"));
         assert!(action_allowed(&role, "CreateToolbox"));
         assert!(action_allowed(&role, "StartService"));
+        assert!(action_allowed(&role, "ReloadService"));
+        assert!(action_allowed(&role, "ReloadDaemon"));
         assert!(action_allowed(&role, "SetHostname"));
         assert!(action_allowed(&role, "ConfigureWifi"));
         assert!(action_allowed(&role, "CreateUser"));
@@ -347,8 +383,12 @@ mod tests {
         assert!(action_allowed(&role, "RebaseSystem"));
         assert!(action_allowed(&role, "RebootSystem"));
         assert!(action_allowed(&role, "InstallPackages"));
+        assert!(action_allowed(&role, "RemoveBasePackage"));
         assert!(action_allowed(&role, "AddUserToGroup"));
         assert!(action_allowed(&role, "RemoveUserFromGroup"));
+        assert!(action_allowed(&role, "DeleteUser"));
+        assert!(action_allowed(&role, "AddAuthorizedKey"));
+        assert!(action_allowed(&role, "RemoveAuthorizedKey"));
     }
 
     // ------------------------------------------------------------------

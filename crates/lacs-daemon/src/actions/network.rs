@@ -57,9 +57,12 @@ pub fn configure_firewall(zone: &str, service: &str, enabled: bool) -> ActionSpe
 }
 
 pub fn get_firewall_state() -> ActionSpec {
+    // `--list-all` shows the active zone, interfaces, services, ports, and
+    // rich rules — the full picture. `--state` only returns "running"/"not
+    // running" which is useless for actual configuration inspection.
     ActionSpec {
         action_name: "GetFirewallState",
-        mechanism: command_mechanism("firewall-cmd", ["--state"]),
+        mechanism: command_mechanism("firewall-cmd", ["--list-all"]),
         risk_level: RiskLevel::Low,
         reboot_required: false,
         rollback_available: false,

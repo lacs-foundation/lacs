@@ -65,9 +65,11 @@ fn flatpak_family_covers_install_remove_and_query_actions() {
             "RemoveFlatpak",
             "SearchFlatpakApps",
             "ListFlatpakRemotes",
+            "ListInstalledFlatpaks",
             "AddFlatpakRemote",
             "RemoveFlatpakRemote",
             "GetFlatpakAppInfo",
+            "UpdateFlatpak",
         ]
     );
 }
@@ -143,6 +145,8 @@ fn layering_family_covers_package_lifecycle() {
             "RemoveLayeredPackage",
             "ReplaceLayeredPackage",
             "ResetLayeredPackageOverride",
+            "RemoveBasePackage",
+            "GetPendingUpdates",
         ]
     );
 }

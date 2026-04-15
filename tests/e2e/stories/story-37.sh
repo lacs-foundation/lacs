@@ -11,8 +11,8 @@
 #     (remove the account) or RemoveUserFromGroup (remove from a group). The
 #     phrase "user account" and "from the system" disambiguate toward DeleteUser.
 #   - "they left the company" is context justification, not a second action.
-#   - Risk must be medium: account deletion is a user-space config change, not
-#     an access-control group change or kernel/deployment operation.
+#   - Risk must be high: deleting an account permanently removes login access —
+#     the same class as RemoveUserFromGroup and RemoveAuthorizedKey.
 set -euo pipefail
 
 if [[ "${LACS_ALLOW_DESTRUCTIVE:-0}" != "1" ]]; then
@@ -48,9 +48,9 @@ if [[ "$USERNAME" != "oldstaff" ]]; then
 fi
 
 RISK=$(echo "$DELETE_STEP" | jq -r '.risk')
-if [[ "$RISK" != "medium" ]]; then
-  echo "FAIL: expected risk medium for user account deletion, got $RISK"
+if [[ "$RISK" != "high" ]]; then
+  echo "FAIL: expected risk high for user account deletion (access-control removal), got $RISK"
   exit 1
 fi
 
-echo "PASS: Story 37 — plan has DeleteUser(username=oldstaff) with medium risk"
+echo "PASS: Story 37 — plan has DeleteUser(username=oldstaff) with high risk"
