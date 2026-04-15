@@ -1,6 +1,6 @@
-# Contributing to LACS
+# Contributing to SysKnife
 
-Thanks for contributing. LACS is an open source project focused on
+Thanks for contributing. SysKnife is an open source project focused on
 safe, auditable AI-driven Linux system management.
 
 The full contributing guide is at
@@ -19,14 +19,14 @@ The short version:
 
 ```sh
 # Clone and set up
-git clone https://github.com/lacs-foundation/lacs
-cd lacs
+git clone https://github.com/sysknife-foundation/sysknife
+cd sysknife
 pip install pre-commit && pre-commit install
-cd apps/lacs-shell && pnpm install && cd ../..
+cd apps/sysknife-shell && pnpm install && cd ../..
 
 # Run all tests
 cargo test --workspace --locked
-cd apps/lacs-shell && pnpm test && pnpm exec tsc --noEmit && cd ../..
+cd apps/sysknife-shell && pnpm test && pnpm exec tsc --noEmit && cd ../..
 
 # Open an issue, branch off main, implement with TDD, then open a PR
 ```
@@ -35,4 +35,4 @@ For security-sensitive issues (auth bypass, privilege escalation,
 data exposure), follow [SECURITY.md](SECURITY.md) instead of opening
 a public issue.
 
-Questions? Open a [GitHub Discussion](https://github.com/lacs-foundation/lacs/discussions).
+Questions? Open a [GitHub Discussion](https://github.com/sysknife-foundation/sysknife/discussions).

@@ -1,6 +1,6 @@
 # Developer Guide
 
-Welcome to LACS. This guide gets you from zero to a running dev
+Welcome to SysKnife. This guide gets you from zero to a running dev
 environment and covers everything you need to contribute confidently.
 
 ## Read First
@@ -21,7 +21,7 @@ environment and covers everything you need to contribute confidently.
 | Tauri system deps | — | [tauri.app/start/prerequisites](https://tauri.app/start/prerequisites/) |
 | pre-commit | latest | `pip install pre-commit` |
 
-No API key is required to get started. LACS auto-detects a local
+No API key is required to get started. SysKnife auto-detects a local
 Ollama instance (`http://localhost:11434`) when no cloud API key is set.
 If you do not have Ollama installed, you can still run all unit and
 integration tests without it.
@@ -29,15 +29,15 @@ integration tests without it.
 ## Clone and Set Up
 
 ```sh
-git clone https://github.com/lacs-foundation/lacs
-cd lacs
+git clone https://github.com/sysknife-foundation/sysknife
+cd sysknife
 
 # Install git hooks (run once)
 pip install pre-commit
 pre-commit install
 
 # Install frontend dependencies
-cd apps/lacs-shell && pnpm install && cd ../..
+cd apps/sysknife-shell && pnpm install && cd ../..
 ```
 
 ## Building
@@ -47,7 +47,7 @@ cd apps/lacs-shell && pnpm install && cd ../..
 cargo build --workspace
 
 # Build the Tauri app (includes the GUI)
-cd apps/lacs-shell && pnpm tauri build
+cd apps/sysknife-shell && pnpm tauri build
 ```
 
 ## Running Tests
@@ -59,7 +59,7 @@ These run in under 15 seconds and are required before every push:
 cargo test --workspace --locked
 
 # TypeScript / React tests
-cd apps/lacs-shell && pnpm test && pnpm exec tsc --noEmit
+cd apps/sysknife-shell && pnpm test && pnpm exec tsc --noEmit
 ```
 
 See [docs/contributing/testing.md](contributing/testing.md) for the
@@ -73,16 +73,16 @@ You need two terminals.
 **Terminal 1 — daemon**
 
 ```sh
-# Starts on /tmp/lacs-daemon.sock by default.
+# Starts on /tmp/sysknife-daemon.sock by default.
 # Privileged system actions (rpm-ostree, useradd, etc.) require root.
 # For development you can run without root — read-only queries still work.
-cargo run -p lacs-daemon
+cargo run -p sysknife-daemon
 ```
 
 **Terminal 2 — shell (GUI)**
 
 ```sh
-cd apps/lacs-shell
+cd apps/sysknife-shell
 pnpm tauri dev
 ```
 
@@ -109,7 +109,7 @@ tests/e2e/dev-stories.sh
 OPENAI_API_KEY=sk-... tests/e2e/dev-stories.sh 3 6 7
 ```
 
-Run this tier after any change to `crates/lacs-brain/src/prompt.rs` or
+Run this tier after any change to `crates/sysknife-brain/src/prompt.rs` or
 the planning tools. See the testing guide for full details.
 
 ## Inspecting the IPC Protocol
@@ -118,8 +118,8 @@ The daemon speaks length-prefixed JSON over a Unix socket. You can
 poke it manually without the GUI:
 
 ```sh
-cargo run -p lacs-daemon &
-socat - UNIX-CONNECT:/tmp/lacs-daemon.sock
+cargo run -p sysknife-daemon &
+socat - UNIX-CONNECT:/tmp/sysknife-daemon.sock
 ```
 
 Type or paste a JSON message (with a 4-byte LE length prefix). This
@@ -154,12 +154,12 @@ Intentionally excluded from pre-commit (they run in CI instead):
 
 ## Configuration
 
-Config file: `~/.config/lacs/config.toml` (created manually, optional):
+Config file: `~/.config/sysknife/config.toml` (created manually, optional):
 
 ```toml
 [daemon]
-socket   = "/run/lacs/daemon.sock"    # raw path, not URI
-database = "/var/lib/lacs/daemon.sqlite"
+socket   = "/run/sysknife/daemon.sock"    # raw path, not URI
+database = "/var/lib/sysknife/daemon.sqlite"
 
 [llm]
 provider   = "ollama"                 # "ollama" | "anthropic"
@@ -172,19 +172,19 @@ Config file values act as defaults. Environment variables always win.
 
 | Variable | Default | Description |
 |---|---|---|
-| `LACS_LISTEN_URI` | `unix:///tmp/lacs-daemon.sock` | Daemon socket path |
-| `LACS_DATABASE_PATH` | `/tmp/lacs-daemon.sqlite` | SQLite database path |
-| `LACS_LLM_PROVIDER` | auto-detect | `anthropic`, `openai`, `gemini`, or `ollama` |
+| `SYSKNIFE_LISTEN_URI` | `unix:///tmp/sysknife-daemon.sock` | Daemon socket path |
+| `SYSKNIFE_DATABASE_PATH` | `/tmp/sysknife-daemon.sqlite` | SQLite database path |
+| `SYSKNIFE_LLM_PROVIDER` | auto-detect | `anthropic`, `openai`, `gemini`, or `ollama` |
 | `ANTHROPIC_API_KEY` | — | Required for the Anthropic provider |
 | `OPENAI_API_KEY` | — | Required for the OpenAI provider |
 | `GEMINI_API_KEY` | — | Required for the Gemini provider |
-| `LACS_OLLAMA_URL` | `http://localhost:11434` | Ollama base URL |
-| `LACS_LLM_MODEL` | provider default | Override the model name |
-| `LACS_BRAIN_MAX_TURNS` | `5` | Planning loop turn limit |
+| `SYSKNIFE_OLLAMA_URL` | `http://localhost:11434` | Ollama base URL |
+| `SYSKNIFE_LLM_MODEL` | provider default | Override the model name |
+| `SYSKNIFE_BRAIN_MAX_TURNS` | `5` | Planning loop turn limit |
 
 ## User Preferences
 
-LACS remembers user preferences in `~/.config/lacs/prefs.md`. The
+SysKnife remembers user preferences in `~/.config/sysknife/prefs.md`. The
 planner injects them at the start of each `plan_intent()` call.
 
 Preferences are user-stated intentions that inform planning decisions.
@@ -195,13 +195,13 @@ Manage preferences through natural language:
 - "Remember that I always prefer vim-enhanced over vim"
 - "Forget my vim preference"
 
-Or edit `~/.config/lacs/prefs.md` directly. Maximum 10 KB; LACS
+Or edit `~/.config/sysknife/prefs.md` directly. Maximum 10 KB; SysKnife
 rejects passwords, API keys, and tokens automatically.
 
 ## Transaction History
 
 The `ListJobHistory` action and `query_job_history` planning tool
-expose the daemon's SQLite transaction log. Ask "what has LACS done
+expose the daemon's SQLite transaction log. Ask "what has SysKnife done
 recently?" or "did my update succeed?" and the planner queries the
 log directly.
 
@@ -211,16 +211,16 @@ log directly.
 
 ```
 crates/
-  lacs-brain/     LLM planner, provider adapters, safety fence
-  lacs-types/     Shared domain types (CallerRole, RiskLevel, JobState, …)
-  lacs-core/      Config loading, shared constants
-  lacs-daemon/    Privileged executor, 60+ actions, IPC, rollback, SQLite
-  lacs-proto/     Protobuf definitions (future use)
+  sysknife-brain/     LLM planner, provider adapters, safety fence
+  sysknife-types/     Shared domain types (CallerRole, RiskLevel, JobState, …)
+  sysknife-core/      Config loading, shared constants
+  sysknife-daemon/    Privileged executor, 60+ actions, IPC, rollback, SQLite
+  sysknife-proto/     Protobuf definitions (future use)
 apps/
-  lacs-shell/     Tauri + React GUI
+  sysknife-shell/     Tauri + React GUI
 tests/
   e2e/
-    dev-stories.sh  Run E2E stories on any Linux host (uses lacs --dry-run --json)
+    dev-stories.sh  Run E2E stories on any Linux host (uses sysknife --dry-run --json)
     atomic-vm.sh  Manage a Silverblue QEMU/KVM VM for full E2E
 docs/
   adr/            Architectural decision records
@@ -236,8 +236,8 @@ CI runs on every pull request and push to `main`.
 | Rust formatting | `cargo fmt --all --check` |
 | Clippy (warnings as errors) | `cargo clippy --workspace --all-features --locked -- -D warnings` |
 | Rust tests | `cargo test --workspace --locked` |
-| TypeScript type check | `npx tsc --noEmit` (in `apps/lacs-shell`) |
-| Frontend tests | `pnpm test` (in `apps/lacs-shell`) |
+| TypeScript type check | `npx tsc --noEmit` (in `apps/sysknife-shell`) |
+| Frontend tests | `pnpm test` (in `apps/sysknife-shell`) |
 | Markdown lint | `markdownlint-cli2` on contributor-facing docs |
 | Link check | `markdown-link-check` on contributor-facing docs |
 | YAML lint | `yamllint` on issue templates and workflows |

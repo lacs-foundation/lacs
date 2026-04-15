@@ -1,20 +1,20 @@
 [workspace]
 resolver = "2"
 members = [
-  "crates/lacs-core",
-  "crates/lacs-brain",
-  "crates/lacs-daemon",
-  "crates/lacs-proto",
-  "crates/lacs-types",
-  "apps/lacs-shell/src-tauri",
-  "apps/lacs-cli",
+  "crates/sysknife-core",
+  "crates/sysknife-brain",
+  "crates/sysknife-daemon",
+  "crates/sysknife-proto",
+  "crates/sysknife-types",
+  "apps/sysknife-shell/src-tauri",
+  "apps/sysknife-cli",
 ]
 
 [workspace.package]
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/lacs-foundation/lacs"
-homepage = "https://github.com/lacs-foundation/lacs"
+repository = "https://github.com/lacs-foundation/sysknife"
+homepage = "https://github.com/lacs-foundation/sysknife"
 
 [workspace.dependencies]
 async-trait = "0.1"

@@ -12,7 +12,7 @@ contributors where the project is going and what matters next.
 
 ## Phase 2: Protocol and Daemon
 
-- ~~implement the shared protocol crate~~ — done; `lacs-proto` and `lacs-types`
+- ~~implement the shared protocol crate~~ — done; `sysknife-proto` and `sysknife-types`
 - ~~implement the privileged daemon skeleton~~ — done; action families, policy,
   auth, preview, jobs, transactions
 - ~~persist transactions and approvals~~ — done; SQLite-backed `TransactionStore`
@@ -40,7 +40,7 @@ contributors where the project is going and what matters next.
 
 ## Phase 4: Brain and Shell
 
-- ~~implement the planner runtime~~ — done; `lacs-brain` has Anthropic and Ollama
+- ~~implement the planner runtime~~ — done; `sysknife-brain` has Anthropic and Ollama
   providers, a tool-use loop, plan validation, and risk classification
 - ~~implement the shell UI~~ — done; intent, plan, approval gate, job timeline,
   and error states wired end-to-end
@@ -57,12 +57,12 @@ contributors where the project is going and what matters next.
 
 ## Phase 5: Release Quality
 
-- ~~systemd unit file (`lacs-daemon.service`) and install script~~ — done;
+- ~~systemd unit file (`sysknife-daemon.service`) and install script~~ — done;
   sysusers.d, tmpfiles.d, polkit rules, sudoers, Makefile with
   build/install/uninstall targets
 - ~~shell reconnect with exponential backoff~~ — done; background health
-  poller emits `lacs:daemon-status` events
-- ~~`~/.config/lacs/config.toml` support~~ — done; `LacsConfig` reads
+  poller emits `sysknife:daemon-status` events
+- ~~`~/.config/sysknife/config.toml` support~~ — done; `LacsConfig` reads
   XDG-aware config and applies defaults to env vars
 - ~~Tauri bundle configuration for AppImage and RPM~~ — done; Flatpak
   manifest added
@@ -116,15 +116,15 @@ Tracked in the v0.4.0 milestone.
 ## Phase 9: Launch
 
 - record demo video on real Silverblue hardware (#32)
-- MCP server (`lacs mcp-server`) — expose action families as MCP tools for
+- MCP server (`sysknife mcp-server`) — expose action families as MCP tools for
   Claude Desktop, Cursor, and any MCP-capable agent
-- publish `lacs-brain` and `lacs-types` to crates.io
-- Telegram interface (`lacs-bot`) — approve plans from your phone via
+- publish `sysknife-brain` and `sysknife-types` to crates.io
+- Telegram interface (`sysknife-bot`) — approve plans from your phone via
   inline buttons; the viral mechanic
 
 ## Phase 10: Ecosystem
 
 - apt action family (Debian / Ubuntu / Mint)
 - pacman action family (Arch / Manjaro)
-- `lacs audit export --json` — shareable execution history
+- `sysknife audit export --json` — shareable execution history
 - web dashboard for teams and fleet management

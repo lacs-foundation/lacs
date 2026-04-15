@@ -16,7 +16,7 @@ INTENT="show me the current kernel boot arguments and list all my deployments"
 echo "=== Story 28: GetKernelArguments + ListDeployments compound ==="
 echo "Intent: $INTENT"
 
-PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-28-stderr.log)
+PLAN=$(sysknife --dry-run --json "$INTENT" 2>/tmp/sysknife-story-28-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 

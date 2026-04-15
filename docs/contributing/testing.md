@@ -1,6 +1,6 @@
-# Testing LACS
+# Testing SysKnife
 
-This guide explains how to run LACS tests at every level — from the fast
+This guide explains how to run SysKnife tests at every level — from the fast
 unit tests you run locally on every change to the VM-based end-to-end
 validation before a release.
 
@@ -29,7 +29,7 @@ cargo clippy --workspace --all-features --locked -- -D warnings
 cargo test --workspace --locked
 
 # TypeScript / React
-cd apps/lacs-shell
+cd apps/sysknife-shell
 pnpm install --frozen-lockfile
 pnpm test
 pnpm exec tsc --noEmit
@@ -39,7 +39,7 @@ pnpm exec tsc --noEmit
 
 `tests/e2e/dev-stories.sh` runs the 7 read-only user stories directly on
 your workstation. It builds the daemon and test CLI, starts the daemon on
-`/tmp/lacs-daemon.sock`, runs the stories, and then stops the daemon.
+`/tmp/sysknife-daemon.sock`, runs the stories, and then stops the daemon.
 
 **What it validates:** the LLM proposes the correct plan (right action
 names, risk levels, parameters). It does **not** execute the actions — it
@@ -54,9 +54,9 @@ the product's `BrainConfig::from_env`):
 | `ANTHROPIC_API_KEY` | `anthropic` | `claude-sonnet-4-6` |
 | `OPENAI_API_KEY` | `openai` | `gpt-4o` |
 | `GEMINI_API_KEY` | `gemini` | `gemini-2.0-flash` |
-| neither | `ollama` | `qwen3:8b` (must be pulled; CPU-only is impractical — use `LACS_LLM_MODEL=llama3.2:3b` on CPU) |
+| neither | `ollama` | `qwen3:8b` (must be pulled; CPU-only is impractical — use `SYSKNIFE_LLM_MODEL=llama3.2:3b` on CPU) |
 
-Override with `LACS_LLM_PROVIDER` and `LACS_LLM_MODEL`.
+Override with `SYSKNIFE_LLM_PROVIDER` and `SYSKNIFE_LLM_MODEL`.
 
 ```sh
 # Run the default read-only stories with an Anthropic key
@@ -71,15 +71,15 @@ tests/e2e/dev-stories.sh
 # Run specific stories
 OPENAI_API_KEY=sk-... tests/e2e/dev-stories.sh 3 6 7
 
-# Stories 8-10 require LACS_ALLOW_DESTRUCTIVE=1 — they will fail on a
+# Stories 8-10 require SYSKNIFE_ALLOW_DESTRUCTIVE=1 — they will fail on a
 # non-Fedora-Atomic host because query_packages / query_authorized_keys
 # call rpm-ostree and SSH tools that are not installed. This is expected.
 # Run them on a provisioned VM for real coverage.
-LACS_ALLOW_DESTRUCTIVE=1 OPENAI_API_KEY=sk-... tests/e2e/dev-stories.sh
+SYSKNIFE_ALLOW_DESTRUCTIVE=1 OPENAI_API_KEY=sk-... tests/e2e/dev-stories.sh
 ```
 
 **When to use this tier:**
-- After any change to `crates/lacs-brain/src/prompt.rs`
+- After any change to `crates/sysknife-brain/src/prompt.rs`
 - After adding or changing a `query_*` tool or `Get*`/`List*` action
 - As a quick sanity check for brain/planner changes before pushing
 
@@ -219,7 +219,7 @@ sudo chmod +r /boot/vmlinuz-*
 > if your Anaconda install did create a usable user.
 
 > What `bootstrap` does, in one shot: create user `lacsdev`, set the
-> password (`lacsdev`), set root password (`lacs`), install your VM
+> password (`lacsdev`), set root password (`sysknife`), install your VM
 > SSH key, NOPASSWD-sudoers `lacsdev`, enable `sshd`, set SELinux to
 > permissive, and pre-mark `gnome-initial-setup` as done. Idempotent —
 > safe to re-run after `install`.
@@ -231,7 +231,7 @@ sudo chmod +r /boot/vmlinuz-*
 ./tests/e2e/atomic-vm.sh start
 
 # First-ever provision: rsyncs the repo into the VM, layers build tools
-# via rpm-ostree, reboots the VM, then runs again to build LACS and
+# via rpm-ostree, reboots the VM, then runs again to build SysKnife and
 # pull the Ollama model. Re-run after the auto-reboot (the script tells
 # you when). Expect 30-60 minutes total on first run (mostly waiting
 # for Ollama tarball + Rust deps download). ~2 minutes on subsequent
@@ -248,7 +248,7 @@ sudo chmod +r /boot/vmlinuz-*
 ./tests/e2e/atomic-vm.sh run
 
 # Run ALL 54 stories including destructive — restore the baseline afterwards.
-LACS_ALLOW_DESTRUCTIVE=1 ./tests/e2e/atomic-vm.sh run
+SYSKNIFE_ALLOW_DESTRUCTIVE=1 ./tests/e2e/atomic-vm.sh run
 
 # Roll back to the clean baseline so the next run is fast
 ./tests/e2e/atomic-vm.sh stop
@@ -267,14 +267,14 @@ LACS_ALLOW_DESTRUCTIVE=1 ./tests/e2e/atomic-vm.sh run
 **Try a different atomic variant:**
 
 ```sh
-LACS_VM_VARIANT=kinoite ./tests/e2e/atomic-vm.sh download
-LACS_VM_VARIANT=kinoite ./tests/e2e/atomic-vm.sh install
-# ... all management commands respect LACS_VM_VARIANT.
+SYSKNIFE_VM_VARIANT=kinoite ./tests/e2e/atomic-vm.sh download
+SYSKNIFE_VM_VARIANT=kinoite ./tests/e2e/atomic-vm.sh install
+# ... all management commands respect SYSKNIFE_VM_VARIANT.
 ```
 
 Supported variants (these are the names quickget uses):
 
-| `LACS_VM_VARIANT` | Atomic Desktop | Desktop |
+| `SYSKNIFE_VM_VARIANT` | Atomic Desktop | Desktop |
 |---|---|---|
 | `silverblue` (default) | Fedora Silverblue | GNOME |
 | `kinoite` | Fedora Kinoite | KDE Plasma |
@@ -295,7 +295,7 @@ manual ISO install:
 3. Attach the ISO, boot, and run the Fedora installer. Create user
    `lacsdev`. Enable sshd during install.
 4. SSH into the VM: `ssh -p 22220 lacsdev@127.0.0.1`
-5. Clone the repo into `/home/lacsdev/lacs` and run
+5. Clone the repo into `/home/lacsdev/sysknife` and run
    `sudo bash tests/e2e/provision.sh` inside the VM
 6. Run stories with `sudo -E tests/e2e/run-stories.sh`
 
@@ -307,7 +307,7 @@ follow-up if Windows contributor interest warrants it.
 Inside the VM (or on any provisioned Fedora Atomic Desktop):
 
 ```sh
-cd /home/lacsdev/lacs
+cd /home/lacsdev/sysknife
 
 # Run a specific story by number
 sudo -E tests/e2e/run-stories.sh 3
@@ -344,7 +344,7 @@ The maintainer runs these in order:
 
 Check the [quickemu wiki](https://github.com/quickemu-project/quickemu/wiki)
 for current supported editions. Older or newer Silverblue releases may
-also be available; adjust `LACS_VM_RELEASE`.
+also be available; adjust `SYSKNIFE_VM_RELEASE`.
 
 ### VM boots but `atomic-vm.sh ssh` times out
 
@@ -378,12 +378,12 @@ Two distinct downloads can be slow:
    via `ollama pull`. Goes through Ollama's registry (usually faster
    than the ollama.com CDN).
 
-Override the model size with `LACS_TEST_MODEL`:
+Override the model size with `SYSKNIFE_TEST_MODEL`:
 
 ```sh
-LACS_TEST_MODEL=llama3.2:3b ./tests/e2e/atomic-vm.sh provision  # default, CPU-only friendly
-LACS_TEST_MODEL=qwen2.5:3b  ./tests/e2e/atomic-vm.sh provision  # alt tool-capable 3B
-LACS_TEST_MODEL=qwen3:8b    ./tests/e2e/atomic-vm.sh provision  # GPU passthrough only
+SYSKNIFE_TEST_MODEL=llama3.2:3b ./tests/e2e/atomic-vm.sh provision  # default, CPU-only friendly
+SYSKNIFE_TEST_MODEL=qwen2.5:3b  ./tests/e2e/atomic-vm.sh provision  # alt tool-capable 3B
+SYSKNIFE_TEST_MODEL=qwen3:8b    ./tests/e2e/atomic-vm.sh provision  # GPU passthrough only
 ```
 
 We default to **`llama3.2:3b`** after empirical live testing on a
@@ -398,7 +398,7 @@ every `/api/chat` call fails with HTTP 500 before a plan is emitted.
 configured. Gemma 3 (1b / 4b) is fast but Ollama currently rejects
 tool calls with `400: does not support tools`.
 
-Per-story timeout defaults to 10 minutes (`LACS_STORY_TIMEOUT=600`) —
+Per-story timeout defaults to 10 minutes (`SYSKNIFE_STORY_TIMEOUT=600`) —
 small tool-capable models on 4 vCPUs need that much headroom.
 
 For the full history of what we tried and why, see
@@ -419,17 +419,17 @@ is out of scope for this guide.
 Check the daemon inside the VM:
 
 ```sh
-./tests/e2e/atomic-vm.sh ssh -- sudo systemctl status lacs-daemon
-./tests/e2e/atomic-vm.sh ssh -- sudo journalctl -u lacs-daemon -n 100
+./tests/e2e/atomic-vm.sh ssh -- sudo systemctl status sysknife-daemon
+./tests/e2e/atomic-vm.sh ssh -- sudo journalctl -u sysknife-daemon -n 100
 ```
 
-The provision log at `/var/log/lacs-e2e-provision.log` usually has the
+The provision log at `/var/log/sysknife-e2e-provision.log` usually has the
 root cause.
 
 ### Getting help
 
-- Check [existing issues](https://github.com/lacs-foundation/lacs/issues)
+- Check [existing issues](https://github.com/sysknife-foundation/sysknife/issues)
 - Open a new issue with:
   - The failing story log (`tests/e2e/logs/story-N.log`)
-  - The daemon journal: `sudo journalctl -u lacs-daemon -n 200`
+  - The daemon journal: `sudo journalctl -u sysknife-daemon -n 200`
   - Your Fedora variant and release (from `rpm-ostree status`)

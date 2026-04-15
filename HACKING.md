@@ -1,12 +1,12 @@
-# Hacking on LACS
+# Hacking on SysKnife
 
-Real-world notes for getting a working LACS development + testing setup
+Real-world notes for getting a working SysKnife development + testing setup
 on your own hardware, with all the gotchas we hit and the workarounds
 that stuck. If you just want to run unit tests, see
 [CONTRIBUTING.md](CONTRIBUTING.md) — `cargo test --workspace` and `pnpm
 test` are the only required gates for a PR.
 
-If you want to run LACS end-to-end against a real Fedora Atomic Desktop
+If you want to run SysKnife end-to-end against a real Fedora Atomic Desktop
 in a VM — for story validation, demo recording, or pre-release QA —
 keep reading.
 
@@ -21,36 +21,36 @@ sudo apt-get install -y quickemu qemu-system-x86 qemu-utils \
 sudo chmod +r /boot/vmlinuz-*            # required for libguestfs, see §2
 test -r /dev/kvm || sudo usermod -aG kvm "$USER"   # then log out / back in
 
-# LACS VM lifecycle
+# SysKnife VM lifecycle
 ./tests/e2e/atomic-vm.sh keygen      # dedicated SSH key (no passphrase)
 ./tests/e2e/atomic-vm.sh download    # fetch Silverblue ISO (~2.7 GB)
 ./tests/e2e/atomic-vm.sh install     # run Anaconda — just click through
 ./tests/e2e/atomic-vm.sh bootstrap   # offline patch: user/passwords/sshd/key
 ./tests/e2e/atomic-vm.sh start       # headless boot with SSH forward
-./tests/e2e/atomic-vm.sh provision   # build + install LACS + pull model
+./tests/e2e/atomic-vm.sh provision   # build + install SysKnife + pull model
 
 # Before running stories — sanity-check the whole stack in one command.
 # If any line comes back [fail], fix that before burning 10 min on a story.
 # See §11 for what each line means.
 ./tests/e2e/atomic-vm.sh ssh \
-    'sudo -E LACS_LISTEN_URI=unix:///run/lacs/daemon.sock lacs-test-cli --doctor'
+    'sudo -E SYSKNIFE_LISTEN_URI=unix:///run/sysknife/daemon.sock sysknife-test-cli --doctor'
 
 ./tests/e2e/atomic-vm.sh stop
 ./tests/e2e/atomic-vm.sh snapshot baseline    # snapshot before tests
 ./tests/e2e/atomic-vm.sh start
 ./tests/e2e/atomic-vm.sh run         # stories 1–7
-LACS_ALLOW_DESTRUCTIVE=1 ./tests/e2e/atomic-vm.sh run  # all 54
+SYSKNIFE_ALLOW_DESTRUCTIVE=1 ./tests/e2e/atomic-vm.sh run  # all 54
 ./tests/e2e/atomic-vm.sh stop
 ./tests/e2e/atomic-vm.sh restore baseline
 ```
 
 **Want qwen3:8b quality without GPU passthrough?** Run Ollama on the
-host with `OLLAMA_HOST=0.0.0.0:11434`, then from the guest point LACS
+host with `OLLAMA_HOST=0.0.0.0:11434`, then from the guest point SysKnife
 at it:
 
 ```sh
-LACS_OLLAMA_URL=http://10.0.2.2:11434 \
-LACS_LLM_MODEL=qwen3:8b \
+SYSKNIFE_OLLAMA_URL=http://10.0.2.2:11434 \
+SYSKNIFE_LLM_MODEL=qwen3:8b \
   ./tests/e2e/atomic-vm.sh run
 ```
 
@@ -64,11 +64,11 @@ breaks.
 
 ## 1. Why a VM, not just unit tests
 
-LACS is three programs talking over a Unix socket:
+SysKnife is three programs talking over a Unix socket:
 
-- `lacs-brain` (LLM planner)
-- `lacs-daemon` (privileged executor)
-- `lacs-shell` (Tauri/React UI)
+- `sysknife-brain` (LLM planner)
+- `sysknife-daemon` (privileged executor)
+- `sysknife-shell` (Tauri/React UI)
 
 Unit tests cover the parsers, the safety fence, the IPC framing, the
 reducer transitions — the code-shaped bugs. They do **not** cover:
@@ -82,7 +82,7 @@ reducer transitions — the code-shaped bugs. They do **not** cover:
   Unix socket?
 
 A VM is the cheapest way to answer those questions without destroying
-your workstation. LACS is designed to run on Fedora Atomic Desktops
+your workstation. SysKnife is designed to run on Fedora Atomic Desktops
 (Silverblue, Kinoite, Sericea, Onyx), so the VM has to be one of those
 — testing on plain Fedora Cloud doesn't exercise rpm-ostree's
 deployment model.
@@ -171,7 +171,7 @@ Then run `./tests/e2e/atomic-vm.sh bootstrap`, which via `guestfish`:
 
 - Creates the `lacsdev` user (uid 1000, home `/home/lacsdev`, wheel
   group).
-- Sets `lacsdev:lacsdev` and `root:lacs` passwords (SHA-512 via
+- Sets `lacsdev:lacsdev` and `root:sysknife` passwords (SHA-512 via
   `openssl passwd -6`).
 - Adds a NOPASSWD sudoers fragment so `sudo` works without a password
   (required for the automated provisioner).
@@ -197,14 +197,14 @@ prompt for a passphrase and silently falls through to password auth
 that we don't allow. End result: `rsync: connection closed` that takes
 twenty minutes of debugging to diagnose.
 
-`./atomic-vm.sh keygen` generates a dedicated `~/.ssh/lacs-vm` key
+`./atomic-vm.sh keygen` generates a dedicated `~/.ssh/sysknife-vm` key
 with **no passphrase**. This is safe because the key only authorizes
 login to your disposable test VM.
 
 ## 5. The `/usr` is read-only, but our Makefile wrote there
 
 Fedora Atomic Desktops keep `/usr` as a read-only overlay managed by
-rpm-ostree. The LACS Makefile defaults write to `/usr/lib/sysusers.d/`,
+rpm-ostree. The SysKnife Makefile defaults write to `/usr/lib/sysusers.d/`,
 `/usr/lib/tmpfiles.d/`, `/usr/lib/systemd/system/`, and
 `/usr/share/polkit-1/rules.d/` — all of which fail with "Read-only
 file system" on Silverblue.
@@ -238,10 +238,10 @@ So `tests/e2e/provision.sh` splits into:
 2. **Phase 2 (after reboot):** rustup install, Ollama install
    (self-healing systemd unit if the upstream installer was
    interrupted), model pull, cargo build, `make install` with `/etc/`
-   overrides, start lacs-daemon.
+   overrides, start sysknife-daemon.
 
 `./atomic-vm.sh provision` detects which phase to run via a marker
-file (`/var/lib/lacs-e2e/layered`). You'll need to run it **twice** the
+file (`/var/lib/sysknife-e2e/layered`). You'll need to run it **twice** the
 first time — the script will tell you when to re-run after the
 auto-reboot.
 
@@ -290,7 +290,7 @@ passthrough (which is out of scope for this guide — VFIO + IOMMU is a
 separate rabbit hole). Empirically, with the default 4 vCPU / 10 GB
 RAM VM on a mid-range laptop (Intel i5-13th gen), Ollama averages
 **≈ 1 token/sec** prompt eval and **≈ 1.5 token/sec** generation.
-LACS's planner prompt is ~1500-2000 tokens, so **expect 2–5 minutes per
+SysKnife's planner prompt is ~1500-2000 tokens, so **expect 2–5 minutes per
 story** even with a small tool-capable model, and longer with thinking
 models.
 
@@ -298,14 +298,14 @@ Options we've tested live on this class of hardware:
 
 | Model | Size | Tool calling | Reality on 4 vCPU | Notes |
 |---|---|---|---|---|
-| `gemma3:1b` | 815 MB | **no** | fast (~3 s/msg) | Ollama returns `400: does not support tools`. Great for non-tool smoke tests, **not** LACS stories. |
+| `gemma3:1b` | 815 MB | **no** | fast (~3 s/msg) | Ollama returns `400: does not support tools`. Great for non-tool smoke tests, **not** SysKnife stories. |
 | `gemma3:4b` | 3.3 GB | marginal | slow | Occasionally emits tool calls; not reliable. |
 | `qwen2.5:3b` | 1.9 GB | yes | ~2-4 min/story | Lightest tool-capable Qwen; acceptable for dev. |
 | `llama3.2:3b` | 2.0 GB | yes | ~2-4 min/story | **CPU fallback.** No thinking mode; smaller context; tool calling works. Use when you don't have a GPU reachable and don't want to override thinking. |
-| **`qwen3:8b`** | **5.2 GB** | **yes** | **<60 s via host GPU** | **Default.** Most reliable tool-calling. Requires a GPU — either the host's via `LACS_OLLAMA_URL=http://10.0.2.2:11434`, or VFIO passthrough. On CPU-only, thinking exceeds Ollama's ~120 s request timeout: set `ollama_think = false` to force-off (slow but finishes) or switch to `llama3.2:3b`. |
+| **`qwen3:8b`** | **5.2 GB** | **yes** | **<60 s via host GPU** | **Default.** Most reliable tool-calling. Requires a GPU — either the host's via `SYSKNIFE_OLLAMA_URL=http://10.0.2.2:11434`, or VFIO passthrough. On CPU-only, thinking exceeds Ollama's ~120 s request timeout: set `ollama_think = false` to force-off (slow but finishes) or switch to `llama3.2:3b`. |
 | `qwen3:14b` | 9.3 GB | very reliable | GPU-only | Minutes of thinking tokens per story on CPU. Host GPU via `10.0.2.2:11434` works; VFIO passthrough works; CPU does not. |
 
-**The qwen3 thinking-mode trap — and the fix LACS now ships.**
+**The qwen3 thinking-mode trap — and the fix SysKnife now ships.**
 Qwen3 series defaults to "thinking mode": the model emits a long
 hidden reasoning trace before the real answer. On CPU this
 *dominates* latency. Ollama's `/api/chat` enforces a **~120 s
@@ -313,17 +313,17 @@ request timeout** per our live testing; qwen3:8b on 4 vCPUs cannot
 finish its thinking in that budget, so Ollama returns HTTP 500 and
 the plan never arrives.
 
-LACS now exposes thinking mode as a first-class knob:
+SysKnife now exposes thinking mode as a first-class knob:
 
-- `lacs-brain` auto-detects thinking-capable models by name prefix
+- `sysknife-brain` auto-detects thinking-capable models by name prefix
   (`qwen3`, `qwq`, `deepseek-r`) and sends `think: true` for those;
   everything else (llama3.2, gemma, mistral, qwen2.5) gets
   `think: false`, so they no longer return HTTP 400 "does not
   support thinking" in the planning loop. See `THINKING_MODEL_PREFIXES`
-  in `crates/lacs-brain/src/planner.rs` — that slice is the source
+  in `crates/sysknife-brain/src/planner.rs` — that slice is the source
   of truth; add a prefix only after verifying the model + Ollama
   version accepts the field.
-- You can override the decision in `~/.config/lacs/config.toml`:
+- You can override the decision in `~/.config/sysknife/config.toml`:
 
   ```toml
   [llm]
@@ -333,7 +333,7 @@ LACS now exposes thinking mode as a first-class knob:
   # ollama_think omitted     # auto-detect from model name (default)
   ```
 
-- The env var `LACS_OLLAMA_THINK=true|false` has the same effect
+- The env var `SYSKNIFE_OLLAMA_THINK=true|false` has the same effect
   and overrides both the config file and auto-detection.
 - The shell's SetupWizard now surfaces this as a three-way radio
   (Auto / Force on / Force off), visible only when the selected
@@ -347,10 +347,10 @@ LACS now exposes thinking mode as a first-class knob:
 
 | Your setup | What to do |
 |---|---|
-| CPU-only VM, any model | `LACS_LLM_MODEL=llama3.2:3b` — recommended default |
-| CPU-only VM, stuck on qwen3:8b | `LACS_OLLAMA_THINK=false` to disable thinking — still slow, but finishes |
-| Host GPU reachable from VM at `10.0.2.2:11434` | `LACS_OLLAMA_URL=http://10.0.2.2:11434 LACS_LLM_MODEL=qwen3:8b` — keep thinking on |
-| GPU passthrough (VFIO) inside VM | `LACS_LLM_MODEL=qwen3:8b`, defaults work |
+| CPU-only VM, any model | `SYSKNIFE_LLM_MODEL=llama3.2:3b` — recommended default |
+| CPU-only VM, stuck on qwen3:8b | `SYSKNIFE_OLLAMA_THINK=false` to disable thinking — still slow, but finishes |
+| Host GPU reachable from VM at `10.0.2.2:11434` | `SYSKNIFE_OLLAMA_URL=http://10.0.2.2:11434 SYSKNIFE_LLM_MODEL=qwen3:8b` — keep thinking on |
+| GPU passthrough (VFIO) inside VM | `SYSKNIFE_LLM_MODEL=qwen3:8b`, defaults work |
 
 **Pointing the VM at the host GPU.** On the default QEMU SLIRP
 network, the host is reachable from the guest at `10.0.2.2`. If you
@@ -366,9 +366,9 @@ EOF
 sudo systemctl daemon-reload && sudo systemctl restart ollama
 sudo firewall-cmd --add-port=11434/tcp  # if firewalld is on
 
-# In the guest, point LACS at the host:
-LACS_OLLAMA_URL=http://10.0.2.2:11434 \
-LACS_LLM_MODEL=qwen3:8b \
+# In the guest, point SysKnife at the host:
+SYSKNIFE_OLLAMA_URL=http://10.0.2.2:11434 \
+SYSKNIFE_LLM_MODEL=qwen3:8b \
   ./tests/e2e/atomic-vm.sh run
 ```
 
@@ -377,17 +377,17 @@ covers the common case of running against your own dev-box GPU.
 
 **Overriding the provisioner default.** `tests/e2e/provision.sh`
 pulls `qwen3:8b` by default. On CPU-only hosts, override with
-`LACS_TEST_MODEL`:
+`SYSKNIFE_TEST_MODEL`:
 
 ```sh
-LACS_TEST_MODEL=llama3.2:3b ./tests/e2e/atomic-vm.sh provision
-LACS_TEST_MODEL=llama3.2:3b ./tests/e2e/atomic-vm.sh run
+SYSKNIFE_TEST_MODEL=llama3.2:3b ./tests/e2e/atomic-vm.sh provision
+SYSKNIFE_TEST_MODEL=llama3.2:3b ./tests/e2e/atomic-vm.sh run
 ```
 
 **Raise the per-story timeout** if you're pushing CPU inference:
 
 ```sh
-LACS_STORY_TIMEOUT=900 LACS_LLM_MODEL=llama3.2:3b \
+SYSKNIFE_STORY_TIMEOUT=900 SYSKNIFE_LLM_MODEL=llama3.2:3b \
     ./tests/e2e/atomic-vm.sh run
 ```
 
@@ -418,7 +418,7 @@ wrapper does:
 ssh lacsdev@localhost  →  sudo -E  →  bash run-stories.sh
 ```
 
-SSH by default only forwards `TERM` / `LANG` / `LC_*`. Any `LACS_*` env
+SSH by default only forwards `TERM` / `LANG` / `LC_*`. Any `SYSKNIFE_*` env
 var you set on the host **does not** reach the test CLI in the guest
 unless we forward it explicitly. `sudo -E` alone isn't enough either —
 sudoers' `env_reset` default filters unknown variables.
@@ -427,9 +427,9 @@ The fix in `cmd_run` builds a `VAR='val' ...` prefix and passes it to
 sudo directly: `sudo VAR=val bash run-stories.sh`. That injects the
 value into the child's env regardless of sudoers config.
 
-Forwarded vars: `LACS_ALLOW_DESTRUCTIVE`, `LACS_LLM_PROVIDER`,
-`LACS_LLM_MODEL`, `LACS_TEST_MODEL`, `LACS_OLLAMA_URL`,
-`LACS_LISTEN_URI`, `LACS_STORY_TIMEOUT`.
+Forwarded vars: `SYSKNIFE_ALLOW_DESTRUCTIVE`, `SYSKNIFE_LLM_PROVIDER`,
+`SYSKNIFE_LLM_MODEL`, `SYSKNIFE_TEST_MODEL`, `SYSKNIFE_OLLAMA_URL`,
+`SYSKNIFE_LISTEN_URI`, `SYSKNIFE_STORY_TIMEOUT`.
 
 ## 10. Common gotchas, in the order we hit them
 
@@ -458,11 +458,11 @@ Forwarded vars: `LACS_ALLOW_DESTRUCTIVE`, `LACS_LLM_PROVIDER`,
 12. **Qwen3's thinking mode + CPU = Ollama HTTP 500 within 2 min.** The
     `/api/chat` endpoint caps at ~120 s and `qwen3:8b` can't get past
     its thinking preamble in that budget. Either point the VM at the
-    host's GPU (`LACS_OLLAMA_URL=http://10.0.2.2:11434`), force-off
-    thinking (`LACS_OLLAMA_THINK=false`), or switch to `llama3.2:3b`
+    host's GPU (`SYSKNIFE_OLLAMA_URL=http://10.0.2.2:11434`), force-off
+    thinking (`SYSKNIFE_OLLAMA_THINK=false`), or switch to `llama3.2:3b`
     for CPU-only runs. See §8.
 13. **`gemma3:1b` / `gemma3:4b` get `400: does not support tools`
-    from Ollama.** Great for non-tool smoke tests but not for LACS
+    from Ollama.** Great for non-tool smoke tests but not for SysKnife
     stories — pick a tool-capable alternative (`llama3.2:3b`,
     `qwen2.5:3b`).
 14. **Ollama uses only `NumCPU / 2` threads by default.** On a 4-vCPU
@@ -474,44 +474,44 @@ Forwarded vars: `LACS_ALLOW_DESTRUCTIVE`, `LACS_LLM_PROVIDER`,
     qcow2 disk image; rsyncing it into the guest loops recursively
     and hits ENOSPC. `atomic-vm.sh provision` excludes `tests/e2e/vm`,
     but if you rsync manually, remember `--exclude='tests/e2e/vm'`.
-16. **`lacs-test-cli` gets `Permission denied` on `/run/lacs/daemon.sock`
-    when invoked as `lacsdev`.** The socket is `srw-rw---- lacs:lacs`;
+16. **`sysknife-test-cli` gets `Permission denied` on `/run/sysknife/daemon.sock`
+    when invoked as `lacsdev`.** The socket is `srw-rw---- sysknife:sysknife`;
     the ordinary dev user isn't in that group. Two paths:
 
     ```sh
     # Option A — add yourself to the group (persists across reboots):
-    sudo usermod -aG lacs lacsdev
+    sudo usermod -aG sysknife lacsdev
     # log out and back in, or in the current shell:
-    exec newgrp lacs
+    exec newgrp sysknife
 
     # Option B — run via sudo, matching how the story harness does it:
-    sudo -E lacs-test-cli --doctor
+    sudo -E sysknife-test-cli --doctor
     ```
 
     The story harness (`tests/e2e/run-stories.sh`) already does
     `sudo -E`, so this only bites you when you're driving
-    `lacs-test-cli` by hand.
+    `sysknife-test-cli` by hand.
 
 ## 11. The doctor command — your first debugging step
 
-`lacs-test-cli --doctor` runs a sequence of health checks and
+`sysknife-test-cli --doctor` runs a sequence of health checks and
 prints one line per check. Use it **before** running any story —
 five minutes of ambiguous timeouts usually resolve to a single red
 line in the doctor.
 
 ```sh
-LACS_LLM_MODEL=qwen3:8b \
-LACS_OLLAMA_URL=http://10.0.2.2:11434 \
-LACS_LISTEN_URI=unix:///run/lacs/daemon.sock \
-  sudo -E lacs-test-cli --doctor
+SYSKNIFE_LLM_MODEL=qwen3:8b \
+SYSKNIFE_OLLAMA_URL=http://10.0.2.2:11434 \
+SYSKNIFE_LISTEN_URI=unix:///run/sysknife/daemon.sock \
+  sudo -E sysknife-test-cli --doctor
 ```
 
 A clean run:
 
 ```
-lacs-test-cli doctor
+sysknife-test-cli doctor
   [ ok ]  config         provider=ollama, model=qwen3:8b
-  [ ok ]  daemon         reachable at /run/lacs/daemon.sock
+  [ ok ]  daemon         reachable at /run/sysknife/daemon.sock
   [ ok ]  ollama         reachable at http://10.0.2.2:11434
   [ ok ]  model          'qwen3:8b' is pulled
   [ ok ]  thinking       enabled (auto: model starts with 'qwen3')
@@ -525,8 +525,8 @@ What each line actually checks, and what a red line means:
 | Line | What it probes | Red means |
 |---|---|---|
 | `config` | `BrainConfig::from_env()` resolves with `LacsConfig` applied | Missing required API key, unknown provider, bad `max_turns` |
-| `daemon` | Opens `$LACS_LISTEN_URI`, sends a `query_state` frame, reads the reply | Socket missing (daemon not started), Permission denied (see gotcha #16), or daemon crashed |
-| `ollama` | `GET {LACS_OLLAMA_URL}/api/tags` with a 5 s timeout | URL wrong, Ollama down, firewall blocks 11434, or host's `OLLAMA_HOST=0.0.0.0` not set |
+| `daemon` | Opens `$SYSKNIFE_LISTEN_URI`, sends a `query_state` frame, reads the reply | Socket missing (daemon not started), Permission denied (see gotcha #16), or daemon crashed |
+| `ollama` | `GET {SYSKNIFE_OLLAMA_URL}/api/tags` with a 5 s timeout | URL wrong, Ollama down, firewall blocks 11434, or host's `OLLAMA_HOST=0.0.0.0` not set |
 | `model` | Requested model appears in `/api/tags` | `ollama pull <model>` not yet run, or typo in the tag |
 | `thinking` | Decision that `planner.rs::resolve_ollama_think` will make for this model, plus *why* (env override vs. auto-detected prefix) | Never red — this is informational, but read it to confirm your `ollama_think` override took effect |
 | `num_predict` | The `OLLAMA_NUM_PREDICT` constant baked into this binary | Never red — shown so you can confirm which binary is running |
@@ -535,7 +535,7 @@ Exit codes: `0` all green, `1` any red, `2` usage error.
 
 The doctor is also the fastest way to confirm that an env var or
 `config.toml` change actually took effect — if `thinking` shows
-`(auto: ...)` but you expected `(LACS_OLLAMA_THINK=false)`, your
+`(auto: ...)` but you expected `(SYSKNIFE_OLLAMA_THINK=false)`, your
 override didn't reach the process.
 
 ## 12. Snapshots are your friend
@@ -578,14 +578,14 @@ qcow2 internal snapshot — no extra disk space until you diverge.
 - `./tests/e2e/atomic-vm.sh destroy` removes the VM disk but keeps
   the downloaded ISO under `tests/e2e/vm/`. That directory is
   gitignored; feel free to delete it entirely when you're done.
-- The dedicated VM SSH key at `~/.ssh/lacs-vm` is harmless to leave
-  around; you can `rm ~/.ssh/lacs-vm*` if you want.
+- The dedicated VM SSH key at `~/.ssh/sysknife-vm` is harmless to leave
+  around; you can `rm ~/.ssh/sysknife-vm*` if you want.
 
 ## 15. Verifying the audit trail on the VM
 
-LACS writes two audit records on every safety fence activation:
+SysKnife writes two audit records on every safety fence activation:
 
-- `~/.local/share/lacs/safety-audit.jsonl` — append-only JSON lines,
+- `~/.local/share/sysknife/safety-audit.jsonl` — append-only JSON lines,
   always present on any host.
 - systemd journal — forwarded via the native datagram socket protocol;
   only present on systemd hosts (which Silverblue is).
@@ -596,14 +596,14 @@ the guest:
 ```sh
 # Force a rejection: intent that contains a known secret prefix.
 # The planner rejects it before any LLM call.
-LACS_LISTEN_URI=unix:///run/lacs/daemon.sock \
-  lacs "check disk sk-proj-fake-key-for-testing" 2>&1 || true
+SYSKNIFE_LISTEN_URI=unix:///run/sysknife/daemon.sock \
+  sysknife "check disk sk-proj-fake-key-for-testing" 2>&1 || true
 
 # Check the JSONL file.
-tail -n 1 ~/.local/share/lacs/safety-audit.jsonl | python3 -m json.tool
+tail -n 1 ~/.local/share/sysknife/safety-audit.jsonl | python3 -m json.tool
 
 # Check journald (structured fields).
-journalctl LACS_EVENT=safety_fence_rejection --since "1 minute ago" --output verbose
+journalctl SYSKNIFE_EVENT=safety_fence_rejection --since "1 minute ago" --output verbose
 ```
 
 **Enabling tamper-evident sealing.**
@@ -622,7 +622,7 @@ Run `--verify` after a story run to confirm no entries were tampered
 with. On a clean run the output ends with `PASS`.
 
 This is a one-time setup step. After it's done, every subsequent
-journal write (including LACS audit entries) is cryptographically
+journal write (including SysKnife audit entries) is cryptographically
 chained to the previous one.
 
 ## 16. See also

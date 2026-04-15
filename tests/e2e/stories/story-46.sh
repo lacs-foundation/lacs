@@ -16,7 +16,7 @@ INTENT="are there any OS updates available?"
 echo "=== Story 46: GetPendingUpdates — check, NOT UpdateSystem ==="
 echo "Intent: $INTENT"
 
-PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-46-stderr.log)
+PLAN=$(sysknife --dry-run --json "$INTENT" 2>/tmp/sysknife-story-46-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 

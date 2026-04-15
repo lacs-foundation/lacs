@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# atomic-vm.sh — boot a real Fedora Atomic Desktop VM for LACS E2E testing.
+# atomic-vm.sh — boot a real Fedora Atomic Desktop VM for SysKnife E2E testing.
 #
 # Uses quickemu to download the official Fedora ISO and run it as a
 # QEMU/KVM VM with SSH port forwarding. Works on Linux and macOS hosts.
@@ -17,7 +17,7 @@
 #   enable-ssh  — one-time step after install: boot visibly so you can
 #                 enable sshd + firewalld (Silverblue ships sshd disabled)
 #   keygen      — generate a passphrase-less SSH key dedicated to the VM
-#                 (default location: ~/.ssh/lacs-vm)
+#                 (default location: ~/.ssh/sysknife-vm)
 #   bootstrap   — patch the freshly-installed disk offline (VM must be
 #                 stopped): create user, set passwords + sudoers, install
 #                 SSH key, enable sshd, set SELinux permissive, skip
@@ -26,7 +26,7 @@
 #   start       — boot the installed VM headlessly with SSH forwarding
 #   ssh        — open an SSH shell into the VM (or run a command)
 #   provision  — rsync the repo, run tests/e2e/provision.sh inside the VM
-#   run        — run the story harness (reads LACS_ALLOW_DESTRUCTIVE)
+#   run        — run the story harness (reads SYSKNIFE_ALLOW_DESTRUCTIVE)
 #   snapshot   — create a named qcow2 snapshot before destructive tests
 #   restore    — restore the VM to the named snapshot
 #   stop       — shut down the VM
@@ -34,28 +34,28 @@
 #   help       — print this help
 #
 # Environment:
-#   LACS_VM_RELEASE  — Fedora release number (default: 43)
-#   LACS_VM_VARIANT  — atomic variant. Accepted values (case-insensitive):
+#   SYSKNIFE_VM_RELEASE  — Fedora release number (default: 43)
+#   SYSKNIFE_VM_VARIANT  — atomic variant. Accepted values (case-insensitive):
 #                      silverblue (GNOME), kinoite (KDE),
 #                      sericea (Sway Atomic), onyx (Budgie Atomic),
 #                      cosmic-atomic (COSMIC Atomic).
 #                      Default: silverblue.
-#   LACS_VM_DIR      — where to store the ISO + qcow2 (default: tests/e2e/vm)
-#   LACS_VM_USER     — VM user created by the installer (default: lacsdev)
-#   LACS_VM_MEM      — VM RAM (default: 10G; appended to .conf on download).
+#   SYSKNIFE_VM_DIR      — where to store the ISO + qcow2 (default: tests/e2e/vm)
+#   SYSKNIFE_VM_USER     — VM user created by the installer (default: lacsdev)
+#   SYSKNIFE_VM_MEM      — VM RAM (default: 10G; appended to .conf on download).
 #                      Sized for qwen3:8b (~5 GB) + OS overhead (~2 GB) +
 #                      planning headroom. Bump to 14G for qwen3:14b or 16G
 #                      for qwen3:30b-a3b MoE.
-#   LACS_VM_CPUS     — VM CPU count (default: 4; appended to .conf on download)
-#   LACS_VM_DISK     — VM disk size (default: 40G; appended to .conf on download)
+#   SYSKNIFE_VM_CPUS     — VM CPU count (default: 4; appended to .conf on download)
+#   SYSKNIFE_VM_DISK     — VM disk size (default: 40G; appended to .conf on download)
 
 set -euo pipefail
 
-RELEASE="${LACS_VM_RELEASE:-43}"
+RELEASE="${SYSKNIFE_VM_RELEASE:-43}"
 # Normalize to lowercase for path consistency; quickget accepts any case.
-VARIANT="$(printf '%s' "${LACS_VM_VARIANT:-silverblue}" | tr '[:upper:]' '[:lower:]')"
-VM_DIR="${LACS_VM_DIR:-tests/e2e/vm}"
-VM_USER="${LACS_VM_USER:-lacsdev}"
+VARIANT="$(printf '%s' "${SYSKNIFE_VM_VARIANT:-silverblue}" | tr '[:upper:]' '[:lower:]')"
+VM_DIR="${SYSKNIFE_VM_DIR:-tests/e2e/vm}"
+VM_USER="${SYSKNIFE_VM_USER:-lacsdev}"
 
 # quickget's canonical capitalized edition name for the `quickget` CLI.
 # quickget writes the config file with the edition lowercased.
@@ -66,7 +66,7 @@ case "$VARIANT" in
     onyx)          QUICKGET_EDITION="Onyx" ;;          # Fedora Budgie Atomic
     cosmic-atomic) QUICKGET_EDITION="COSMIC-Atomic" ;; # Fedora COSMIC Atomic
     *)
-        echo "[atomic-vm] ERROR: unknown LACS_VM_VARIANT='$VARIANT'." >&2
+        echo "[atomic-vm] ERROR: unknown SYSKNIFE_VM_VARIANT='$VARIANT'." >&2
         echo "  Accepted: silverblue | kinoite | sericea | onyx | cosmic-atomic" >&2
         exit 1
         ;;
@@ -86,7 +86,7 @@ VM_SUBDIR="${VM_DIR}/${VM_NAME}"
 # Dedicated passphrase-less SSH key for the VM. We do NOT reuse the
 # contributor's personal ~/.ssh/id_* keys because those are typically
 # passphrase-protected, which breaks rsync/non-interactive ssh.
-SSH_KEY="${LACS_VM_SSH_KEY:-$HOME/.ssh/lacs-vm}"
+SSH_KEY="${SYSKNIFE_VM_SSH_KEY:-$HOME/.ssh/sysknife-vm}"
 
 ssh_opts() {
     printf -- '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i %s -o IdentitiesOnly=yes' "$SSH_KEY"
@@ -163,14 +163,14 @@ cmd_download() {
     # quickget writes relative to CWD — run it inside VM_DIR.
     (cd "$VM_DIR" && quickget fedora "$RELEASE" "$QUICKGET_EDITION")
     # quickget produces a minimal config; append our resource overrides so
-    # the VM has enough RAM/CPU/disk to build LACS and run a small Ollama model.
-    if ! grep -q '^# LACS E2E overrides' "$CONF_PATH"; then
+    # the VM has enough RAM/CPU/disk to build SysKnife and run a small Ollama model.
+    if ! grep -q '^# SysKnife E2E overrides' "$CONF_PATH"; then
         cat >> "$CONF_PATH" <<EOF
 
-# LACS E2E overrides — appended by atomic-vm.sh download
-disk_size="${LACS_VM_DISK:-40G}"
-ram="${LACS_VM_MEM:-10G}"
-cpu_cores="${LACS_VM_CPUS:-4}"
+# SysKnife E2E overrides — appended by atomic-vm.sh download
+disk_size="${SYSKNIFE_VM_DISK:-40G}"
+ram="${SYSKNIFE_VM_MEM:-10G}"
+cpu_cores="${SYSKNIFE_VM_CPUS:-4}"
 # gl="off" — disable virtio-vga-gl/virgl. gnome-initial-setup can crash
 # the QEMU window with a flicker-then-freeze on hosts with hybrid graphics
 # (Intel iGPU + NVIDIA dGPU is the common case). Software rendering inside
@@ -279,9 +279,9 @@ cmd_provision() {
     rsync -az --exclude=target --exclude=node_modules --exclude=.git \
         --exclude="$VM_DIR" \
         -e "ssh $(ssh_opts) -p $port" \
-        "$repo_root/" "${VM_USER}@127.0.0.1:/home/${VM_USER}/lacs/"
+        "$repo_root/" "${VM_USER}@127.0.0.1:/home/${VM_USER}/sysknife/"
     log "Running provisioner inside the VM..."
-    cmd_ssh "cd /home/${VM_USER}/lacs && sudo bash tests/e2e/provision.sh"
+    cmd_ssh "cd /home/${VM_USER}/sysknife && sudo bash tests/e2e/provision.sh"
 }
 
 # Generate a dedicated SSH key for the VM (no passphrase). Idempotent.
@@ -292,7 +292,7 @@ cmd_keygen() {
     fi
     log "Generating dedicated VM SSH key at $SSH_KEY (no passphrase)..."
     mkdir -p "$(dirname "$SSH_KEY")"
-    ssh-keygen -t ed25519 -N '' -C 'lacs-e2e-vm-only' -f "$SSH_KEY"
+    ssh-keygen -t ed25519 -N '' -C 'sysknife-e2e-vm-only' -f "$SSH_KEY"
     chmod 600 "$SSH_KEY"
 }
 
@@ -305,7 +305,7 @@ cmd_keygen() {
 #     hash that varies per install).
 #   - Create user '${VM_USER}' (uid 1000, gid 1000, /bin/bash, wheel group).
 #   - Set a password (default '${VM_USER}') so console / serial login works.
-#   - Set root password too (default 'lacs') as a fallback.
+#   - Set root password too (default 'sysknife') as a fallback.
 #   - Install the dedicated SSH key into ~${VM_USER}/.ssh/authorized_keys.
 #   - Enable sshd (Silverblue ships it disabled).
 #   - NOPASSWD sudoers for ${VM_USER}.
@@ -322,7 +322,7 @@ cmd_bootstrap() {
     local pubkey lacs_hash root_hash
     pubkey="$(cat "${SSH_KEY}.pub")"
     lacs_hash="$(openssl passwd -6 "$VM_USER")"
-    root_hash="$(openssl passwd -6 lacs)"
+    root_hash="$(openssl passwd -6 sysknife)"
 
     log "Locating rpm-ostree deployment in disk image..."
     local deploy
@@ -348,7 +348,7 @@ mount-options subvol=home /dev/sda3 /home
 copy-out ${deploy_path}/etc/passwd /tmp
 ! grep -q "^${VM_USER}:" /tmp/passwd || true
 ! grep -q "^${VM_USER}:" /tmp/passwd || sed -i "/^${VM_USER}:/d" /tmp/passwd
-! echo "${VM_USER}:x:1000:1000:LACS Dev:/home/${VM_USER}:/bin/bash" >> /tmp/passwd
+! echo "${VM_USER}:x:1000:1000:SysKnife Dev:/home/${VM_USER}:/bin/bash" >> /tmp/passwd
 upload /tmp/passwd ${deploy_path}/etc/passwd
 
 # 2. /etc/shadow — set root + ${VM_USER} passwords
@@ -409,19 +409,19 @@ cmd_install_key() {
 }
 
 cmd_run() {
-    if [ "${LACS_ALLOW_DESTRUCTIVE:-}" = "1" ]; then
+    if [ "${SYSKNIFE_ALLOW_DESTRUCTIVE:-}" = "1" ]; then
         log "Running ALL 54 stories. Make sure you have a VM snapshot."
     else
-        log "Running read-only stories (default set). Set LACS_ALLOW_DESTRUCTIVE=1 for all 54."
+        log "Running read-only stories (default set). Set SYSKNIFE_ALLOW_DESTRUCTIVE=1 for all 54."
     fi
 
     # Forward relevant env vars through SSH → sudo. Passing them as
     # `sudo VAR=val VAR2=val2 cmd` injects them into the command's env
     # regardless of sudoers env_reset/env_keep settings.
     local sudo_env=""
-    for var in LACS_ALLOW_DESTRUCTIVE LACS_LLM_PROVIDER LACS_LLM_MODEL \
-               LACS_TEST_MODEL LACS_OLLAMA_URL LACS_LISTEN_URI \
-               LACS_STORY_TIMEOUT; do
+    for var in SYSKNIFE_ALLOW_DESTRUCTIVE SYSKNIFE_LLM_PROVIDER SYSKNIFE_LLM_MODEL \
+               SYSKNIFE_TEST_MODEL SYSKNIFE_OLLAMA_URL SYSKNIFE_LISTEN_URI \
+               SYSKNIFE_STORY_TIMEOUT; do
         eval "val=\${$var:-}"
         if [ -n "$val" ]; then
             sudo_env+=" $var='$val'"
@@ -435,7 +435,7 @@ cmd_run() {
     if [ $# -gt 0 ]; then
         story_args=" $*"
     fi
-    cmd_ssh "cd /home/${VM_USER}/lacs && sudo${sudo_env} bash tests/e2e/run-stories.sh${story_args}"
+    cmd_ssh "cd /home/${VM_USER}/sysknife && sudo${sudo_env} bash tests/e2e/run-stories.sh${story_args}"
 }
 
 cmd_snapshot() {

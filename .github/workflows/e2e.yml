@@ -105,18 +105,18 @@ jobs:
 
       - name: Start lacs-daemon
         env:
-          LACS_LISTEN_URI: unix:///run/lacs/daemon.sock
-          LACS_DATABASE_PATH: /tmp/lacs-daemon.sqlite
+          SYSKNIFE_LISTEN_URI: unix:///run/sysknife/daemon.sock
+          SYSKNIFE_DATABASE_PATH: /tmp/lacs-daemon.sqlite
         run: |
           sudo -E nohup lacs-daemon > /tmp/lacs-daemon.log 2>&1 &
           for i in $(seq 1 30); do
-            if [ -S /run/lacs/daemon.sock ]; then
+            if [ -S /run/sysknife/daemon.sock ]; then
               echo "Daemon socket ready after ${i}s"
               break
             fi
             sleep 1
           done
-          sudo chmod 0666 /run/lacs/daemon.sock
+          sudo chmod 0666 /run/sysknife/daemon.sock
 
       - name: Pre-seed test user and SSH key
         run: |
@@ -138,16 +138,16 @@ jobs:
 
       - name: Write ready marker
         run: |
-          sudo mkdir -p /var/lib/lacs-e2e
-          sudo touch /var/lib/lacs-e2e/ready
+          sudo mkdir -p /var/lib/sysknife-e2e
+          sudo touch /var/lib/sysknife-e2e/ready
 
       - name: Run read-only stories (1-7)
         env:
-          LACS_LISTEN_URI: unix:///run/lacs/daemon.sock
-          LACS_LLM_PROVIDER: ollama
-          LACS_LLM_MODEL: llama3.2:3b
-          LACS_OLLAMA_URL: http://127.0.0.1:11434
-          LACS_STORY_TIMEOUT: "180"
+          SYSKNIFE_LISTEN_URI: unix:///run/sysknife/daemon.sock
+          SYSKNIFE_LLM_PROVIDER: ollama
+          SYSKNIFE_LLM_MODEL: llama3.2:3b
+          SYSKNIFE_OLLAMA_URL: http://127.0.0.1:11434
+          SYSKNIFE_STORY_TIMEOUT: "180"
         run: bash tests/e2e/run-stories.sh
 
       - name: Dump daemon log on failure

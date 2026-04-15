@@ -14,8 +14,8 @@
 #   - Risk must be high: kernel arg changes persist across deployments.
 set -euo pipefail
 
-if [[ "${LACS_ALLOW_DESTRUCTIVE:-0}" != "1" ]]; then
-  echo "SKIPPED (set LACS_ALLOW_DESTRUCTIVE=1 to run)"
+if [[ "${SYSKNIFE_ALLOW_DESTRUCTIVE:-0}" != "1" ]]; then
+  echo "SKIPPED (set SYSKNIFE_ALLOW_DESTRUCTIVE=1 to run)"
   exit 0
 fi
 
@@ -24,7 +24,7 @@ INTENT="add rd.driver.blacklist=nouveau to the kernel arguments to stop the nouv
 echo "=== Story 33: SetKernelArguments(rd.driver.blacklist=nouveau) ==="
 echo "Intent: $INTENT"
 
-PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-33-stderr.log)
+PLAN=$(sysknife --dry-run --json "$INTENT" 2>/tmp/sysknife-story-33-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 

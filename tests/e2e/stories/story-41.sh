@@ -19,7 +19,7 @@ INTENT="show me the configured package repositories, what containers are running
 echo "=== Story 41: ListPackageRepositories + ListContainers + GetNetworkStatus ==="
 echo "Intent: $INTENT"
 
-PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-41-stderr.log)
+PLAN=$(sysknife --dry-run --json "$INTENT" 2>/tmp/sysknife-story-41-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 

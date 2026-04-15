@@ -14,8 +14,8 @@
 #   - Risk must be high: group membership is an access-control change
 set -euo pipefail
 
-if [[ "${LACS_ALLOW_DESTRUCTIVE:-0}" != "1" ]]; then
-  echo "SKIPPED (set LACS_ALLOW_DESTRUCTIVE=1 to run)"
+if [[ "${SYSKNIFE_ALLOW_DESTRUCTIVE:-0}" != "1" ]]; then
+  echo "SKIPPED (set SYSKNIFE_ALLOW_DESTRUCTIVE=1 to run)"
   exit 0
 fi
 
@@ -24,7 +24,7 @@ INTENT="remove alice from the docker group, she no longer needs container access
 echo "=== Story 31: RemoveUserFromGroup(alice, docker) ==="
 echo "Intent: $INTENT"
 
-PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-31-stderr.log)
+PLAN=$(sysknife --dry-run --json "$INTENT" 2>/tmp/sysknife-story-31-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 

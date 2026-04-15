@@ -1,6 +1,6 @@
-# LACS Operating Notes
+# SysKnife Operating Notes
 
-This repository is for LACS, the Linux Agent Control Standard.
+This repository is for SysKnife, the Linux Agent Control Standard.
 Work here must preserve the trust boundary between the planner,
 the shell, and the privileged daemon.
 
@@ -21,7 +21,7 @@ the shell, and the privileged daemon.
 ## Worktree Convention
 
 - Keep worktrees outside the repo under
-  `~/.config/superpowers/worktrees/lacs/`.
+  `~/.config/superpowers/worktrees/sysknife/`.
 - Do not leave merged worktrees around.
 - Clean up the worktree during branch completion, not later.
 
@@ -53,9 +53,9 @@ the shell, and the privileged daemon.
 
 ## Project Boundaries
 
-- `lacs-brain` plans.
-- `lacs-shell` presents and collects approval.
-- `lacs-daemon` executes privileged actions.
+- `sysknife-brain` plans.
+- `sysknife-shell` presents and collects approval.
+- `sysknife-daemon` executes privileged actions.
 - No component should blur those roles.
 
 ## Code Quality
@@ -67,7 +67,7 @@ the shell, and the privileged daemon.
 
 ## Prompt Engineering — System Prompt Rules
 
-The system prompt in `crates/lacs-brain/src/prompt.rs` is load-bearing.
+The system prompt in `crates/sysknife-brain/src/prompt.rs` is load-bearing.
 Changes to it must be validated against the full E2E story suite before merging.
 
 ### The three worked examples are not optional
@@ -135,14 +135,14 @@ test CLI path) before and after. A story that passed before must not regress.
 
 ### Example C — transaction history
 
-Example C ("did LACS successfully update recently?") teaches the model to use
-`query_job_history` for questions about past LACS actions. Without it, the model
+Example C ("did SysKnife successfully update recently?") teaches the model to use
+`query_job_history` for questions about past SysKnife actions. Without it, the model
 defaults to `query_deployments` or `get_system_state`, which show current system
-state — not LACS's own transaction log.
+state — not SysKnife's own transaction log.
 
 ## User Preferences — `prefs.md`
 
-User preferences live in `~/.config/lacs/prefs.md` and are injected into the
+User preferences live in `~/.config/sysknife/prefs.md` and are injected into the
 system prompt at the start of each `plan_intent()` call. The `remember` and
 `forget` planning tools modify this file during planning.
 

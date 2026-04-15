@@ -16,7 +16,7 @@ INTENT="show me the network status and the current firewall rules"
 echo "=== Story 16: Network status + firewall rules ==="
 echo "Intent: $INTENT"
 
-PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-16-stderr.log)
+PLAN=$(sysknife --dry-run --json "$INTENT" 2>/tmp/sysknife-story-16-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 

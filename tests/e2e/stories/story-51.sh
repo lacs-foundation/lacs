@@ -11,8 +11,8 @@
 #     admin workflow step, not a service reload.
 set -euo pipefail
 
-if [[ "${LACS_ALLOW_DESTRUCTIVE:-0}" != "1" ]]; then
-  echo "SKIPPED (set LACS_ALLOW_DESTRUCTIVE=1 to run)"
+if [[ "${SYSKNIFE_ALLOW_DESTRUCTIVE:-0}" != "1" ]]; then
+  echo "SKIPPED (set SYSKNIFE_ALLOW_DESTRUCTIVE=1 to run)"
   exit 0
 fi
 
@@ -21,7 +21,7 @@ INTENT="I just created a new systemd unit file, reload the daemon"
 echo "=== Story 51: ReloadDaemon — systemctl daemon-reload ==="
 echo "Intent: $INTENT"
 
-PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-51-stderr.log)
+PLAN=$(sysknife --dry-run --json "$INTENT" 2>/tmp/sysknife-story-51-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 

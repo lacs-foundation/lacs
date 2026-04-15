@@ -1,4 +1,4 @@
-# LACS User Stories — End-to-End Code Trace
+# SysKnife User Stories — End-to-End Code Trace
 
 Ten user stories from the perspective of sysadmins, developers, and
 Linux enthusiasts. Each story traces the request through every layer
@@ -15,23 +15,23 @@ system.
 
 **E2E trace:**
 
-1. **IntentPane** (`apps/lacs-shell/src/components/IntentPane.tsx`)
+1. **IntentPane** (`apps/sysknife-shell/src/components/IntentPane.tsx`)
    User types intent, clicks Submit → dispatches `intent_submitted`.
 
-2. **daemonBridge** (`apps/lacs-shell/src/daemonBridge.ts:10`)
+2. **daemonBridge** (`apps/sysknife-shell/src/daemonBridge.ts:10`)
    `requestPlan(intent)` → Tauri IPC `invoke("plan_intent", { intent })`.
 
-3. **Tauri command** (`apps/lacs-shell/src-tauri/src/commands.rs:204`)
+3. **Tauri command** (`apps/sysknife-shell/src-tauri/src/commands.rs:204`)
    `plan_intent()` → `execute_plan_intent()` calls
    `state.planner.plan_intent(intent)`.
 
-4. **LLM planning loop** (`crates/lacs-brain/src/planner.rs:318`)
+4. **LLM planning loop** (`crates/sysknife-brain/src/planner.rs:318`)
    Turn 0: LLM receives system prompt (97 actions, risk rules) +
    user message. LLM calls `get_system_state`.
 
-5. **State injection** (`crates/lacs-brain/src/planner.rs:366`)
+5. **State injection** (`crates/sysknife-brain/src/planner.rs:366`)
    `state_client.curated_state()` → daemon IPC → `collect_state()`
-   (`crates/lacs-daemon/src/state_collector.rs:48`) runs `hostname`,
+   (`crates/sysknife-daemon/src/state_collector.rs:48`) runs `hostname`,
    `rpm-ostree status`, `systemctl list-units`, `flatpak list`,
    `toolbox list`. Returns JSON with host, deployment, services,
    flatpaks, toolboxes.
@@ -46,35 +46,35 @@ system.
                "params": {"packages": ["vim"]}}]}
    ```
 
-7. **Safety fence** (`crates/lacs-brain/src/planning_tools/propose_plan.rs:204`)
+7. **Safety fence** (`crates/sysknife-brain/src/planning_tools/propose_plan.rs:204`)
    `ActionName::parse("InstallPackages")` → OK (in KNOWN\_ACTIONS).
    Risk "high" → `PlanRiskLevel::High`. `PlanStep::new()` succeeds.
 
 8. **Plan returned** to shell as `PlanResponse`
    (`commands.rs:336` `plan_to_response()`).
 
-9. **PlanPane** (`apps/lacs-shell/src/components/PlanPane.tsx`)
+9. **PlanPane** (`apps/sysknife-shell/src/components/PlanPane.tsx`)
    Shows step "InstallPackages" with red HIGH badge. Aggregate risk =
    high → user must type "InstallPackages" to confirm.
 
 10. **Approval** → `requestApproval(steps)` → Tauri `approve_preview`.
 
-11. **Daemon preview** (`crates/lacs-daemon/src/dispatcher.rs:440`)
+11. **Daemon preview** (`crates/sysknife-daemon/src/dispatcher.rs:440`)
     `handle_preview("InstallPackages", params)` → calls
     `preview_action()` → returns risk=High, rollback\_available=true,
     side\_effects, request\_hash.
 
-12. **Daemon execute** (`crates/lacs-daemon/src/dispatcher.rs:535`)
+12. **Daemon execute** (`crates/sysknife-daemon/src/dispatcher.rs:535`)
     Validates approval\_hash == request\_hash. Calls
     `build_action_spec("InstallPackages", params)`
-    (`crates/lacs-daemon/src/executor.rs:63`) → builds
+    (`crates/sysknife-daemon/src/executor.rs:63`) → builds
     `rpm-ostree install vim`. Executes via `execute_spec()`. Streams
     stdout lines as `JobProgress` frames.
 
-13. **Live output** → shell emits `lacs:timeline-entry` events →
+13. **Live output** → shell emits `sysknife:timeline-entry` events →
     ExecutionPane shows live log.
 
-14. **Completion** → `lacs:job-completed` with `succeeded` or
+14. **Completion** → `sysknife:job-completed` with `succeeded` or
     `needs_reboot`. Transaction persisted to SQLite.
 
 **Gap identified:** The LLM sees `flatpaks` and `services` but not
@@ -115,7 +115,7 @@ package info to avoid this.
    Live output streams download progress. If rebase fails,
    `rollback_spec_for("RebaseSystem")` triggers
    `rpm-ostree rollback` automatically
-   (`crates/lacs-daemon/src/executor.rs` rollback path).
+   (`crates/sysknife-daemon/src/executor.rs` rollback path).
 
 6. Job completes with `needs_reboot`. ExecutionPane shows reboot
    banner.
@@ -237,7 +237,7 @@ step outputs feed back into subsequent planning.
 
 ## Story 6: Linux enthusiast explores the system
 
-**Persona:** Curious Fedora user who just installed LACS.
+**Persona:** Curious Fedora user who just installed SysKnife.
 
 **Intent:** "What containers are running and what flatpaks do I have?"
 
@@ -283,7 +283,7 @@ forget" model — the LLM never sees what the commands produced.
    role). Mixed risk. Aggregate = high. User types
    "AddUserToGroup" to confirm.
 
-3. Daemon input validation (`crates/lacs-daemon/src/actions/validate.rs`)
+3. Daemon input validation (`crates/sysknife-daemon/src/actions/validate.rs`)
    checks `validated_username("ci-runner")` and
    `validated_group("docker")` — rejects shell metacharacters.
 
@@ -294,7 +294,7 @@ forget" model — the LLM never sees what the commands produced.
    caller role, and timestamps.
 
 **What works well:** The role-based authorization
-(`crates/lacs-daemon/src/policy.rs:24`) ensures the caller has
+(`crates/sysknife-daemon/src/policy.rs:24`) ensures the caller has
 Admin rights for `AddUserToGroup`. The input validation prevents
 injection (e.g., `ci-runner; rm -rf /`).
 
@@ -371,19 +371,19 @@ single-shot planning model prevents this.
 
 ## Story 10: First-time user with no LLM configured
 
-**Persona:** Curious developer who just cloned and built LACS.
+**Persona:** Curious developer who just cloned and built SysKnife.
 
 **Intent:** (none yet — first launch)
 
 **E2E trace:**
 
-1. **App mount** (`apps/lacs-shell/src/App.tsx`)
+1. **App mount** (`apps/sysknife-shell/src/App.tsx`)
    `checkSetupStatus()` → Tauri command → `commands.rs:363`
-   `config_path_exists()` checks `~/.config/lacs/config.toml`,
+   `config_path_exists()` checks `~/.config/sysknife/config.toml`,
    `provider_is_configured()` checks env vars and config.
 
 2. If neither is set → `needsSetup = true` → **SetupWizard**
-   (`apps/lacs-shell/src/components/SetupWizard.tsx`) renders.
+   (`apps/sysknife-shell/src/components/SetupWizard.tsx`) renders.
 
 3. **Step 1:** User picks Ollama (recommended, no API key) or
    Anthropic.
@@ -394,10 +394,10 @@ single-shot planning model prevents this.
 5. **Step 3:** "Restart the shell to apply."
 
 6. After restart, `BrainConfig::from_env()`
-   (`crates/lacs-brain/src/config.rs:96`) auto-detects Ollama
+   (`crates/sysknife-brain/src/config.rs:96`) auto-detects Ollama
    (no `ANTHROPIC_API_KEY` → fallback to Ollama provider).
 
-7. `LlmPlanner::from_config()` (`crates/lacs-brain/src/planner.rs:287`)
+7. `LlmPlanner::from_config()` (`crates/sysknife-brain/src/planner.rs:287`)
    constructs `OllamaProvider` with `http://localhost:11434` and
    model `llama3.2`.
 

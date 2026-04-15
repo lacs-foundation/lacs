@@ -1,6 +1,6 @@
 # Security Policy
 
-LACS handles privileged local system operations, so security bugs
+SysKnife handles privileged local system operations, so security bugs
 matter.
 
 ## Reporting a Vulnerability
@@ -40,10 +40,10 @@ We will:
 
 ## Security Model
 
-LACS uses a layered enforcement model. Every layer is independent; a
+SysKnife uses a layered enforcement model. Every layer is independent; a
 bypass of one does not bypass the others.
 
-### Layer 1 — Intent validation (lacs-brain, before LLM call)
+### Layer 1 — Intent validation (sysknife-brain, before LLM call)
 
 Every intent string is checked before it is forwarded to the LLM
 provider:
@@ -53,48 +53,48 @@ provider:
   payloads are almost always copy-paste accidents or injection attempts.
 - **Secret scan**: the same pattern list used to guard the preferences
   file (`SENSITIVE_PATTERNS` + `SENSITIVE_PREFIXES` in
-  `crates/lacs-brain/src/prefs.rs`) is applied to the raw intent.
+  `crates/sysknife-brain/src/prefs.rs`) is applied to the raw intent.
   Intents containing API key prefixes (`sk-`, `ghp_`, `xoxb-`, …),
   the words `password`, `token`, `api_key`, and similar are rejected
   with `PlanningError::IntentContainsSensitiveData` before any network
   call is made.
-- **Rate limit** (`RateLimiter` in `crates/lacs-brain/src/rate_limit.rs`,
+- **Rate limit** (`RateLimiter` in `crates/sysknife-brain/src/rate_limit.rs`,
   `DEFAULT_MAX_RPM = 20` in `planner.rs`): a sliding 60-second window
   caps planning requests per session. When the window is full,
   `plan_intent` and `summarize` return
   `PlanningError::RateLimitExceeded { retry_after_secs }` before any
   network call is made. The default limit is 20 requests per minute,
   applied automatically by `LlmPlanner::from_config`; override with
-  `LACS_MAX_RPM` (must be ≥ 1). Call timestamps are persisted to
-  `$XDG_DATA_HOME/lacs/rate-limit.log` so the limit survives process
+  `SYSKNIFE_MAX_RPM` (must be ≥ 1). Call timestamps are persisted to
+  `$XDG_DATA_HOME/sysknife/rate-limit.log` so the limit survives process
   restarts.
 
-### Layer 2 — Action name allowlist (lacs-brain, after LLM call)
+### Layer 2 — Action name allowlist (sysknife-brain, after LLM call)
 
-The `ActionName` newtype in `crates/lacs-brain/src/action_name.rs`
+The `ActionName` newtype in `crates/sysknife-brain/src/action_name.rs`
 validates every action name proposed by the LLM against `KNOWN_ACTIONS`
 at the type boundary. An action name not in that list (e.g.
 `"RunShellCommand"`) is rejected with `UnknownActionName` and the
 planning loop returns an error. The LLM cannot invent actions.
 
-### Layer 3 — Role-based authorization (lacs-daemon)
+### Layer 3 — Role-based authorization (sysknife-daemon)
 
 The daemon resolves the caller's Linux group membership via
 `SO_PEERCRED` on the Unix socket and maps it to a `CallerRole`:
 
 | Group | Role | Can call |
 |---|---|---|
-| `lacs-observer` | Observer | Read-only actions |
-| `lacs-dev` | Dev | Read + medium-risk mutations |
-| `lacs-admin` or `wheel` | Admin | All including rpm-ostree, reboot |
-| `lacs-boot` | Boot | Everything (reserved for boot-time automation) |
+| `sysknife-observer` | Observer | Read-only actions |
+| `sysknife-dev` | Dev | Read + medium-risk mutations |
+| `sysknife-admin` or `wheel` | Admin | All including rpm-ostree, reboot |
+| `sysknife-boot` | Boot | Everything (reserved for boot-time automation) |
 
 The per-action minimum role is a compile-time exhaustive match in
-`crates/lacs-daemon/src/policy.rs`. Unknown actions return `None` and
+`crates/sysknife-daemon/src/policy.rs`. Unknown actions return `None` and
 are denied unconditionally. The caller's role is never supplied by the
 client — it is always derived server-side from kernel credentials.
 
-### Layer 4 — Approval hash (lacs-daemon)
+### Layer 4 — Approval hash (sysknife-daemon)
 
 Every mutating action requires a preview→approve→execute round-trip:
 
@@ -111,50 +111,50 @@ returns only `Queued` transactions within a 15-minute TTL. Once a
 transaction transitions to `Running`, `Succeeded`, or `Failed` it is
 never returned, closing the replay window.
 
-### Layer 5 — Atomic execution claim (lacs-daemon)
+### Layer 5 — Atomic execution claim (sysknife-daemon)
 
 Concurrent execute requests for the same transaction are blocked by an
 atomic `UPDATE WHERE status = 'queued'` SQL statement
-(`claim_for_execution` in `crates/lacs-daemon/src/transactions.rs`).
+(`claim_for_execution` in `crates/sysknife-daemon/src/transactions.rs`).
 Only the first request wins; the second gets `stale_approval`.
 
 ---
 
 ## Deployment — User and Group Setup
 
-The daemon socket lives at `/run/lacs/daemon.sock` in a directory owned
-`lacs:lacs 0750`. A user needs two group memberships to use LACS:
+The daemon socket lives at `/run/sysknife/daemon.sock` in a directory owned
+`sysknife:sysknife 0750`. A user needs two group memberships to use SysKnife:
 
-1. **`lacs` group** — grants access to the socket directory. Without
+1. **`sysknife` group** — grants access to the socket directory. Without
    this the connection is refused before any authentication happens.
 2. **A role group** — determines what the user can do once connected.
    Omitting this falls back to `Observer` (read-only queries only).
 
 ```sh
 # Grant a user read-only access:
-sudo usermod -aG lacs,lacs-observer alice
+sudo usermod -aG sysknife,sysknife-observer alice
 
 # Grant a user medium-risk access (services, containers, SSH keys, flatpaks):
-sudo usermod -aG lacs,lacs-dev alice
+sudo usermod -aG sysknife,sysknife-dev alice
 
 # Grant a user full access (rpm-ostree, reboot, kernel arguments):
-sudo usermod -aG lacs,lacs-admin alice
+sudo usermod -aG sysknife,sysknife-admin alice
 ```
 
 Group changes take effect on next login. To apply without logging out:
 
 ```sh
-exec newgrp lacs
+exec newgrp sysknife
 ```
 
-Members of the `wheel` group are automatically treated as `lacs-admin`
-by the daemon — no explicit `lacs-admin` membership is needed for
-existing `sudo` users. They still need the `lacs` group to reach the
+Members of the `wheel` group are automatically treated as `sysknife-admin`
+by the daemon — no explicit `sysknife-admin` membership is needed for
+existing `sudo` users. They still need the `sysknife` group to reach the
 socket.
 
-The four role groups (`lacs-observer`, `lacs-dev`, `lacs-admin`,
-`lacs-boot`) are created at install time by `systemd-sysusers` via
-`packaging/lacs-sysusers.conf`.
+The four role groups (`sysknife-observer`, `sysknife-dev`, `sysknife-admin`,
+`sysknife-boot`) are created at install time by `systemd-sysusers` via
+`packaging/sysknife-sysusers.conf`.
 
 ## Audit Trail
 
@@ -164,8 +164,8 @@ Every plan rejected by the brain's safety fence (unknown action name,
 bad risk level, etc.) is appended as a JSON line to:
 
 ```
-$XDG_DATA_HOME/lacs/safety-audit.jsonl
-~/.local/share/lacs/safety-audit.jsonl  (fallback)
+$XDG_DATA_HOME/sysknife/safety-audit.jsonl
+~/.local/share/sysknife/safety-audit.jsonl  (fallback)
 ```
 
 Each entry contains `timestamp`, `event`, `intent`, `reason`, and
@@ -175,7 +175,7 @@ Each entry contains `timestamp`, `event`, `intent`, `reason`, and
 
 Every daemon execution — queued, running, succeeded, failed, rolled
 back — is recorded in a SQLite database at the path configured by
-`LACS_DATABASE_PATH` (default `~/.local/share/lacs/daemon.sqlite`).
+`SYSKNIFE_DATABASE_PATH` (default `~/.local/share/sysknife/daemon.sqlite`).
 Query with `journalctl` (see below) or directly with `sqlite3`.
 
 ### Journald forwarding
@@ -184,19 +184,19 @@ On systemd hosts, every safety fence rejection is also forwarded to the
 systemd journal as a structured log entry with these fields:
 
 ```
-LACS_EVENT=safety_fence_rejection
-LACS_INTENT=<the user's original intent>
-LACS_REASON=<why the fence triggered>
-LACS_TIMESTAMP=<RFC 3339 UTC timestamp matching the JSONL entry>
+SYSKNIFE_EVENT=safety_fence_rejection
+SYSKNIFE_INTENT=<the user's original intent>
+SYSKNIFE_REASON=<why the fence triggered>
+SYSKNIFE_TIMESTAMP=<RFC 3339 UTC timestamp matching the JSONL entry>
 PRIORITY=4   (LOG_WARNING)
-SYSLOG_IDENTIFIER=lacs-brain
+SYSLOG_IDENTIFIER=sysknife-brain
 ```
 
 Query live:
 
 ```sh
-journalctl -f LACS_EVENT=safety_fence_rejection
-journalctl SYSLOG_IDENTIFIER=lacs-brain --since today
+journalctl -f SYSKNIFE_EVENT=safety_fence_rejection
+journalctl SYSLOG_IDENTIFIER=sysknife-brain --since today
 ```
 
 ### Enabling tamper-evident sealing (recommended for production)
@@ -232,5 +232,5 @@ security certification work.
 
 | Gap | Issue | Notes |
 |---|---|---|
-| Tool output injection | [#98](https://github.com/lacs-foundation/lacs/issues/98) | `query_*` results re-enter the LLM context unsanitized. A crafted service description or package name could attempt prompt injection. Impact is bounded by Layer 2–5. |
+| Tool output injection | [#98](https://github.com/sysknife-foundation/sysknife/issues/98) | `query_*` results re-enter the LLM context unsanitized. A crafted service description or package name could attempt prompt injection. Impact is bounded by Layer 2–5. |
 | Action param validation | — | Action params are typed per-handler but not validated at a shared schema boundary. A compromised LLM could propose valid action + malicious params (e.g. `AddAuthorizedKey` with an attacker-controlled key). |

@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# LACS E2E test harness — runs user stories against a provisioned VM.
+# SysKnife E2E test harness — runs user stories against a provisioned VM.
 #
 # Usage:
 #   sudo tests/e2e/run-stories.sh                    # read-only stories
-#   sudo LACS_ALLOW_DESTRUCTIVE=1 tests/e2e/run-stories.sh   # all 54
+#   sudo SYSKNIFE_ALLOW_DESTRUCTIVE=1 tests/e2e/run-stories.sh   # all 54
 #   sudo tests/e2e/run-stories.sh 3 5 7              # run specific stories
 #
 # Prerequisites:
-#   - /var/lib/lacs-e2e/ready exists (provisioning complete)
-#   - lacs-daemon systemd service is running
-#   - lacs is installed in PATH
+#   - /var/lib/sysknife-e2e/ready exists (provisioning complete)
+#   - sysknife-daemon systemd service is running
+#   - sysknife is installed in PATH
 #   - Ollama is running with a model pulled
 set -euo pipefail
 
@@ -25,18 +25,18 @@ mkdir -p "$LOG_DIR"
 
 preflight_ok=true
 
-if [[ ! -f /var/lib/lacs-e2e/ready ]]; then
-  echo "ERROR: /var/lib/lacs-e2e/ready not found. Run provisioning first."
+if [[ ! -f /var/lib/sysknife-e2e/ready ]]; then
+  echo "ERROR: /var/lib/sysknife-e2e/ready not found. Run provisioning first."
   preflight_ok=false
 fi
 
-if ! systemctl is-active --quiet lacs-daemon 2>/dev/null; then
-  echo "ERROR: lacs-daemon is not running."
+if ! systemctl is-active --quiet sysknife-daemon 2>/dev/null; then
+  echo "ERROR: sysknife-daemon is not running."
   preflight_ok=false
 fi
 
-if ! command -v lacs &>/dev/null; then
-  echo "ERROR: lacs not found in PATH."
+if ! command -v sysknife &>/dev/null; then
+  echo "ERROR: sysknife not found in PATH."
   preflight_ok=false
 fi
 
@@ -55,26 +55,26 @@ fi
 # LLM + daemon socket env
 # ---------------------------------------------------------------------------
 # BrainConfig::from_env() defaults to Anthropic, and the DaemonIpcClient
-# defaults to /tmp/lacs-daemon.sock — neither matches our provisioned VM.
+# defaults to /tmp/sysknife-daemon.sock — neither matches our provisioned VM.
 # Force the right values here so individual story scripts don't need to
 # know or care.
-export LACS_LLM_PROVIDER="${LACS_LLM_PROVIDER:-ollama}"
-export LACS_LLM_MODEL="${LACS_LLM_MODEL:-${LACS_TEST_MODEL:-qwen3:8b}}"
-export LACS_OLLAMA_URL="${LACS_OLLAMA_URL:-http://127.0.0.1:11434}"
-# lacs-daemon's packaged systemd unit binds /run/lacs/daemon.sock.
-export LACS_LISTEN_URI="${LACS_LISTEN_URI:-unix:///run/lacs/daemon.sock}"
+export SYSKNIFE_LLM_PROVIDER="${SYSKNIFE_LLM_PROVIDER:-ollama}"
+export SYSKNIFE_LLM_MODEL="${SYSKNIFE_LLM_MODEL:-${SYSKNIFE_TEST_MODEL:-qwen3:8b}}"
+export SYSKNIFE_OLLAMA_URL="${SYSKNIFE_OLLAMA_URL:-http://127.0.0.1:11434}"
+# sysknife-daemon's packaged systemd unit binds /run/sysknife/daemon.sock.
+export SYSKNIFE_LISTEN_URI="${SYSKNIFE_LISTEN_URI:-unix:///run/sysknife/daemon.sock}"
 
 # ---------------------------------------------------------------------------
 # Determine which stories to run
 # ---------------------------------------------------------------------------
 
-ALLOW_DESTRUCTIVE="${LACS_ALLOW_DESTRUCTIVE:-0}"
+ALLOW_DESTRUCTIVE="${SYSKNIFE_ALLOW_DESTRUCTIVE:-0}"
 
 # Timeout per story (seconds). With qwen3:8b on host GPU, stories
 # finish in <60 s; with llama3.2:3b on 4 vCPU CPU, 2–4 min; with
 # qwen3:8b on CPU, impractical. 600 s is generous for the GPU path
-# and tolerant of the CPU fallback. Override with LACS_STORY_TIMEOUT.
-STORY_TIMEOUT="${LACS_STORY_TIMEOUT:-600}"
+# and tolerant of the CPU fallback. Override with SYSKNIFE_STORY_TIMEOUT.
+STORY_TIMEOUT="${SYSKNIFE_STORY_TIMEOUT:-600}"
 
 declare -A STORY_NAMES
 STORY_NAMES[1]="Check disk usage"
@@ -88,7 +88,7 @@ STORY_NAMES[8]="Layer vim via rpm-ostree (destructive)"
 STORY_NAMES[9]="Create a toolbox (destructive)"
 STORY_NAMES[10]="Add SSH authorized key (destructive)"
 STORY_NAMES[11]="Deployment status + kernel arguments"
-STORY_NAMES[12]="LACS activity log — today"
+STORY_NAMES[12]="SysKnife activity log — today"
 STORY_NAMES[13]="Service logs for firewalld"
 STORY_NAMES[14]="Triple compound — disk + memory + services"
 STORY_NAMES[15]="Rollback history"
@@ -144,7 +144,7 @@ elif [[ "$ALLOW_DESTRUCTIVE" == "1" ]]; then
            41 42 43 44 45 46 47 48 49 50 51 52 53 54)
 else
   # Read-only and non-destructive stories only. Stories self-gate via
-  # LACS_ALLOW_DESTRUCTIVE — skipped ones still appear in results as SKIP.
+  # SYSKNIFE_ALLOW_DESTRUCTIVE — skipped ones still appear in results as SKIP.
   STORIES=(1 2 3 4 5 6 7 11 12 13 14 15 16 17 \
            21 22 25 26 28 29 32 38 41 46 47 48 49)
 fi
@@ -205,7 +205,7 @@ run_story() {
 # ---------------------------------------------------------------------------
 
 echo ""
-echo "LACS E2E Test Run"
+echo "SysKnife E2E Test Run"
 echo "================="
 echo "Date:        $(date --iso-8601=seconds)"
 echo "Stories:     ${STORIES[*]}"

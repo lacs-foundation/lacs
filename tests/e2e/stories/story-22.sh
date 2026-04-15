@@ -13,7 +13,7 @@ INTENT="show me all running processes"
 echo "=== Story 22: ListProcesses ==="
 echo "Intent: $INTENT"
 
-PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-22-stderr.log)
+PLAN=$(sysknife --dry-run --json "$INTENT" 2>/tmp/sysknife-story-22-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 

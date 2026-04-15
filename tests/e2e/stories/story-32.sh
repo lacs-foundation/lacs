@@ -20,7 +20,7 @@ INTENT="security audit: show me root's authorized SSH keys, all local users, and
 echo "=== Story 32: Security audit — GetAuthorizedKeys + ListUsers + ListGroups ==="
 echo "Intent: $INTENT"
 
-PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-32-stderr.log)
+PLAN=$(sysknife --dry-run --json "$INTENT" 2>/tmp/sysknife-story-32-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 

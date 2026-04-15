@@ -1,4 +1,4 @@
-# LACS — MVP Gaps, Remaining Work, and Growth Strategy
+# SysKnife — MVP Gaps, Remaining Work, and Growth Strategy
 
 > **Not tracked by git.** Lives in `docs/local/` which is gitignored.
 > Last updated: 2026-04-10.
@@ -18,16 +18,16 @@ does nothing end-to-end on a real system.
 
 ### 1.1 The four remaining IPC steps
 
-The daemon IPC spec (`docs/plans/2026-04-10-lacs-daemon-ipc-spec.md`)
+The daemon IPC spec (`docs/plans/2026-04-10-sysknife-daemon-ipc-spec.md`)
 tracks implementation as an 8-step sequence. Steps 1–4 are done.
 Steps 5–8 remain.
 
 | Step | File to create/modify | What it does |
 |---|---|---|
-| 5 | `crates/lacs-daemon/src/dispatcher.rs` | `connection_handler`: reads a `DaemonRequest` from a framed stream, authenticates the caller via group membership, routes to preview or execute, streams `job_event` messages back |
-| 6 | `crates/lacs-daemon/src/main.rs` | Accept loop: `listener.accept()` → spawn Tokio task → `connection_handler` |
-| 7 | `apps/lacs-shell/src-tauri/src/daemon_client.rs` | `DaemonIpcClient`: opens the Unix socket, implements `StateClient` (replaces `DemoStateClient`), sends preview/execute/cancel requests, runs a reader task for streaming events |
-| 8 | `apps/lacs-shell/src-tauri/src/commands.rs` | Wire `approve_preview` to daemon; replace `DemoStateClient`; surface `DaemonIpcClient` errors as typed `ShellError` |
+| 5 | `crates/sysknife-daemon/src/dispatcher.rs` | `connection_handler`: reads a `DaemonRequest` from a framed stream, authenticates the caller via group membership, routes to preview or execute, streams `job_event` messages back |
+| 6 | `crates/sysknife-daemon/src/main.rs` | Accept loop: `listener.accept()` → spawn Tokio task → `connection_handler` |
+| 7 | `apps/sysknife-shell/src-tauri/src/daemon_client.rs` | `DaemonIpcClient`: opens the Unix socket, implements `StateClient` (replaces `DemoStateClient`), sends preview/execute/cancel requests, runs a reader task for streaming events |
+| 8 | `apps/sysknife-shell/src-tauri/src/commands.rs` | Wire `approve_preview` to daemon; replace `DemoStateClient`; surface `DaemonIpcClient` errors as typed `ShellError` |
 
 Everything the dispatcher needs already exists:
 - `FramedStream` (framing.rs) — done
@@ -73,7 +73,7 @@ These gaps do not block compilation but block real-world use.
 The daemon must run as root to execute `rpm-ostree`, `systemctl`,
 `useradd`, and similar privileged commands. Currently there is no:
 
-- systemd service unit file (`lacs-daemon.service` with `User=root`)
+- systemd service unit file (`sysknife-daemon.service` with `User=root`)
 - polkit rules or setuid wrapper
 - RPM, Flatpak, or AppImage package for the shell
 - Install script, Makefile target, or `cargo install` path
@@ -83,8 +83,8 @@ manually starting the daemon as root. This blocks every user who is
 not also a Rust developer.
 
 **What to build:**
-- `packaging/lacs-daemon.service` — systemd unit, `User=root`,
-  `ExecStart=/usr/local/bin/lacs-daemon`, `Restart=on-failure`
+- `packaging/sysknife-daemon.service` — systemd unit, `User=root`,
+  `ExecStart=/usr/local/bin/sysknife-daemon`, `Restart=on-failure`
 - `Makefile` with `install` target: copies daemon binary to
   `/usr/local/bin`, enables and starts the service
 - Tauri `tauri.conf.json` bundle config for AppImage (Linux, easiest
@@ -109,7 +109,7 @@ this — it is additive work, not structural change. The daemon also
 needs runtime distro detection so it routes to the right action family
 for the host.
 
-Without multi-distro support, the addressable install base for LACS is
+Without multi-distro support, the addressable install base for SysKnife is
 too small to generate organic growth.
 
 ### 2.3 Rollback is metadata, not execution
@@ -163,7 +163,7 @@ shell has no recovery. For a tool used on servers this needs:
 - Ollama fallback works in `config.rs` but is not documented as the
   recommended default for users who don't have an API key.
 - No config file support — everything is environment variables. For a
-  desktop app, a `~/.config/lacs/config.toml` would be more ergonomic.
+  desktop app, a `~/.config/sysknife/config.toml` would be more ergonomic.
 
 ---
 
@@ -178,11 +178,11 @@ that hit 70k in 2 months are statistical outliers requiring a viral
 moment that is hard to engineer.
 
 What *can* be engineered: the conditions that make a viral moment
-possible. Here is what those conditions look like for LACS.
+possible. Here is what those conditions look like for SysKnife.
 
 ### The narrative that could make it viral
 
-LACS has a genuinely differentiated position that no other project
+SysKnife has a genuinely differentiated position that no other project
 owns clearly:
 
 > "The only AI agent for Linux that cannot do anything you didn't
@@ -191,7 +191,7 @@ owns clearly:
 
 The comparison writes itself:
 
-| Tool | Problem LACS solves |
+| Tool | Problem SysKnife solves |
 |---|---|
 | Open Interpreter | Runs arbitrary shell commands with no friction. No audit log. No rollback. Dangerous on servers. |
 | Claude Computer Use | Uncontrolled. Terrifying on production infrastructure. |
@@ -201,7 +201,7 @@ The comparison writes itself:
 The target audience — sysadmins, DevOps, Fedora power users — is
 exactly the audience that would never touch Open Interpreter on a
 production machine but *would* use something with an explicit approval
-gate and an audit log. LACS is the responsible, conservative option.
+gate and an audit log. SysKnife is the responsible, conservative option.
 That is rare in AI tooling and genuinely sellable.
 
 ### The five things that determine whether it goes viral
@@ -245,7 +245,7 @@ enthusiast crowd who amplify things on Reddit and HN.
 **5. The launch post matters as much as the product.**
 HN "Show HN" posts that reach the front page can deliver 2,000–5,000
 stars in a single day. The post needs:
-- First sentence: "LACS is an AI agent for Linux that shows you a
+- First sentence: "SysKnife is an AI agent for Linux that shows you a
   plan and asks for your approval before changing anything."
 - Link to the GIF/video demo — text alone does not move people
 - Clear distinction from Open Interpreter (the comparison people

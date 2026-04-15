@@ -12,7 +12,7 @@ echo "=== Story 1: Check disk usage ==="
 echo "Intent: $INTENT"
 
 # Get the plan from the LLM.
-PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-1-stderr.log)
+PLAN=$(sysknife --dry-run --json "$INTENT" 2>/tmp/sysknife-story-1-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 

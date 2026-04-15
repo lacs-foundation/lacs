@@ -1,6 +1,6 @@
-# `lacs` CLI Reference
+# `sysknife` CLI Reference
 
-`lacs` is the command-line interface to the LACS daemon.  It turns a
+`sysknife` is the command-line interface to the SysKnife daemon.  It turns a
 natural-language intent into a risk-labelled plan, asks for approval where
 needed, and streams execution output in real time.
 
@@ -10,16 +10,16 @@ needed, and streams execution output in real time.
 
 ```sh
 # Check that the daemon is reachable
-lacs doctor
+sysknife doctor
 
 # Plan + execute a single intent
-lacs "check disk usage"
+sysknife "check disk usage"
 
 # Preview the plan without executing
-lacs --dry-run "list running containers"
+sysknife --dry-run "list running containers"
 
 # Open the interactive REPL
-lacs
+sysknife
 ```
 
 ---
@@ -27,26 +27,26 @@ lacs
 ## Synopsis
 
 ```
-lacs [GLOBAL FLAGS] [SUBCOMMAND | INTENT WORDS...]
+sysknife [GLOBAL FLAGS] [SUBCOMMAND | INTENT WORDS...]
 ```
 
-When no subcommand is given and no intent words are provided, `lacs` starts
+When no subcommand is given and no intent words are provided, `sysknife` starts
 an interactive REPL.
 
 ---
 
 ## Subcommands
 
-### `lacs <intent>`
+### `sysknife <intent>`
 
 Plan and (optionally) execute a natural-language intent.
 
 ```sh
-lacs "check disk usage"
-lacs check disk usage            # words are joined — same result
-lacs "list running containers"
-lacs "is firewalld active?"
-lacs "layer vim via rpm-ostree"
+sysknife "check disk usage"
+sysknife check disk usage            # words are joined — same result
+sysknife "list running containers"
+sysknife "is firewalld active?"
+sysknife "layer vim via rpm-ostree"
 ```
 
 **What happens:**
@@ -62,13 +62,13 @@ lacs "layer vim via rpm-ostree"
 
 ---
 
-### `lacs doctor`
+### `sysknife doctor`
 
 Check daemon connectivity and print the resolved configuration.
 
 ```sh
-lacs doctor
-lacs --json doctor      # machine-readable
+sysknife doctor
+sysknife --json doctor      # machine-readable
 ```
 
 Exit code `0` on success, non-zero if the daemon is unreachable.
@@ -77,7 +77,7 @@ Sample output:
 
 ```
 ✓  daemon ok
-  socket    /run/lacs/lacs.sock
+  socket    /run/sysknife/sysknife.sock
   host      my-silverblue
   provider  anthropic
   model     claude-sonnet-4-6
@@ -85,17 +85,17 @@ Sample output:
 
 ---
 
-### `lacs history`
+### `sysknife history`
 
-Query past LACS execution history.
+Query past SysKnife execution history.
 
 ```sh
-lacs history
-lacs history --limit 50
-lacs history --status failed
-lacs history --action InstallPackages
-lacs history --since 2026-04-01T00:00:00Z
-lacs history --status succeeded --limit 5 --since 2026-04-10T00:00:00Z
+sysknife history
+sysknife history --limit 50
+sysknife history --status failed
+sysknife history --action InstallPackages
+sysknife history --since 2026-04-01T00:00:00Z
+sysknife history --status succeeded --limit 5 --since 2026-04-10T00:00:00Z
 ```
 
 **Flags:**
@@ -109,14 +109,14 @@ lacs history --status succeeded --limit 5 --since 2026-04-10T00:00:00Z
 
 ---
 
-### `lacs completions <shell>`
+### `sysknife completions <shell>`
 
 Print a shell completion script to stdout.
 
 ```sh
-lacs completions bash   >> ~/.bashrc
-lacs completions zsh    >> ~/.zshrc
-lacs completions fish   >> ~/.config/fish/completions/lacs.fish
+sysknife completions bash   >> ~/.bashrc
+sysknife completions zsh    >> ~/.zshrc
+sysknife completions fish   >> ~/.config/fish/completions/sysknife.fish
 ```
 
 Supported shells: `bash`, `zsh`, `fish`, `elvish`, `powershell`.
@@ -126,7 +126,7 @@ Supported shells: `bash`, `zsh`, `fish`, `elvish`, `powershell`.
 ### REPL (no arguments)
 
 ```sh
-lacs
+sysknife
 ```
 
 Starts an interactive session.  Each line is treated as a natural-language
@@ -144,7 +144,7 @@ intent and planned + executed in sequence.
 | Ctrl+D | Exit the REPL |
 | `exit` / `quit` | Exit the REPL |
 
-History is persisted to `~/.local/share/lacs/history` between sessions.
+History is persisted to `~/.local/share/sysknife/history` between sessions.
 
 ---
 
@@ -183,22 +183,22 @@ All flags apply to every subcommand and to free-form intents.
 
 ### LLM provider
 
-`lacs` auto-detects the provider from API keys.  Set `LACS_LLM_PROVIDER`
+`sysknife` auto-detects the provider from API keys.  Set `SYSKNIFE_LLM_PROVIDER`
 to override.
 
 | Variable | Description |
 |---|---|
-| `LACS_LLM_PROVIDER` | Force a provider: `anthropic`, `openai`, `gemini`, `ollama`, `groq`, `deepseek`, `mistral`, `xai` |
-| `LACS_LLM_MODEL` | Override the model name for the selected provider |
+| `SYSKNIFE_LLM_PROVIDER` | Force a provider: `anthropic`, `openai`, `gemini`, `ollama`, `groq`, `deepseek`, `mistral`, `xai` |
+| `SYSKNIFE_LLM_MODEL` | Override the model name for the selected provider |
 | `ANTHROPIC_API_KEY` | Use the Anthropic provider (default model: `claude-sonnet-4-6`) |
 | `OPENAI_API_KEY` | Use the OpenAI provider (default model: `gpt-4o-2024-11-20`) |
 | `GEMINI_API_KEY` | Use the Gemini provider (default model: `gemini-2.0-flash`) |
-| `LACS_ANTHROPIC_URL` | Override the Anthropic base URL (default: `https://api.anthropic.com`) |
-| `LACS_OLLAMA_URL` | Override the Ollama base URL (default: `http://localhost:11434`) |
-| `LACS_BRAIN_MAX_TURNS` | Planning loop turn limit — integer ≥ 1 (default: `10`) |
-| `LACS_OLLAMA_THINK` | Set `true`/`false` to override thinking-mode detection for Ollama models |
+| `SYSKNIFE_ANTHROPIC_URL` | Override the Anthropic base URL (default: `https://api.anthropic.com`) |
+| `SYSKNIFE_OLLAMA_URL` | Override the Ollama base URL (default: `http://localhost:11434`) |
+| `SYSKNIFE_BRAIN_MAX_TURNS` | Planning loop turn limit — integer ≥ 1 (default: `10`) |
+| `SYSKNIFE_OLLAMA_THINK` | Set `true`/`false` to override thinking-mode detection for Ollama models |
 
-**Auto-detection order** (when `LACS_LLM_PROVIDER` is not set):
+**Auto-detection order** (when `SYSKNIFE_LLM_PROVIDER` is not set):
 
 1. `ANTHROPIC_API_KEY` present and non-empty → `anthropic`
 2. `OPENAI_API_KEY` present → `openai`
@@ -209,7 +209,7 @@ to override.
 
 | Variable | Description |
 |---|---|
-| `LACS_SOCKET` | Path to the daemon Unix socket (default: `/run/lacs/lacs.sock`) |
+| `SYSKNIFE_SOCKET` | Path to the daemon Unix socket (default: `/run/sysknife/sysknife.sock`) |
 
 ---
 
@@ -220,15 +220,15 @@ For non-interactive use (scripts, CI pipelines), combine `--json`,
 
 ```sh
 # Plan only — parse the JSON to inspect before executing
-PLAN=$(lacs --dry-run --json "check disk usage")
+PLAN=$(sysknife --dry-run --json "check disk usage")
 echo "$PLAN" | jq '.plan.steps[].action'
 
 # Execute automatically up to medium risk; fail if anything higher appears
-lacs --yes --max-risk medium --non-interactive "list layered packages"
+sysknife --yes --max-risk medium --non-interactive "list layered packages"
 
 # Full pipeline with a timeout and log
-lacs --yes --max-risk low --non-interactive --timeout 60 \
-     --log-to /var/log/lacs/run.log \
+sysknife --yes --max-risk low --non-interactive --timeout 60 \
+     --log-to /var/log/sysknife/run.log \
      "check disk usage"
 ```
 
@@ -255,28 +255,28 @@ The `--json` output schema:
 
 ```sh
 # Check if any services are failing
-lacs "which systemd services are failed?"
+sysknife "which systemd services are failed?"
 
-# See recent LACS activity
-lacs history --limit 10
+# See recent SysKnife activity
+sysknife history --limit 10
 
 # Dry-run a destructive action to inspect the plan
-lacs --dry-run "layer vim via rpm-ostree"
+sysknife --dry-run "layer vim via rpm-ostree"
 
 # Execute step-by-step with manual approval of each action
-lacs --step-by-step "update system"
+sysknife --step-by-step "update system"
 
 # Non-interactive: fail fast if the plan needs a human
-lacs --non-interactive --max-risk low "check memory pressure"
+sysknife --non-interactive --max-risk low "check memory pressure"
 
 # Get JSON output and parse with jq
-lacs --dry-run --json "list containers" | jq '.plan.steps[].action'
+sysknife --dry-run --json "list containers" | jq '.plan.steps[].action'
 
 # Override the LLM for a single run
-LACS_LLM_PROVIDER=openai OPENAI_API_KEY=sk-... lacs "check disk usage"
+SYSKNIFE_LLM_PROVIDER=openai OPENAI_API_KEY=sk-... sysknife "check disk usage"
 
 # Use a local Ollama model
-LACS_LLM_PROVIDER=ollama LACS_LLM_MODEL=llama3.2:3b lacs "list services"
+SYSKNIFE_LLM_PROVIDER=ollama SYSKNIFE_LLM_MODEL=llama3.2:3b sysknife "list services"
 ```
 
 ---
@@ -287,13 +287,13 @@ Run once per shell:
 
 ```sh
 # bash (add to ~/.bashrc)
-eval "$(lacs completions bash)"
+eval "$(sysknife completions bash)"
 
 # zsh (add to ~/.zshrc)
-eval "$(lacs completions zsh)"
+eval "$(sysknife completions zsh)"
 
 # fish
-lacs completions fish | source
+sysknife completions fish | source
 ```
 
 ---

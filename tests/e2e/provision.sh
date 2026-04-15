@@ -1,29 +1,29 @@
 #!/usr/bin/env bash
-# LACS E2E VM provisioning script.
+# SysKnife E2E VM provisioning script.
 #
 # Runs inside a Fedora Atomic Desktop VM (Silverblue, Kinoite, Sway Atomic,
 # Budgie Atomic, or COSMIC Atomic) as root. It layers required build tools
-# via rpm-ostree, installs Ollama, pulls a small model, builds LACS from
+# via rpm-ostree, installs Ollama, pulls a small model, builds SysKnife from
 # the repo copy at $REPO_DIR, and starts the daemon.
 #
-# The repo copy is expected at $REPO_DIR (default: /home/lacsdev/lacs),
+# The repo copy is expected at $REPO_DIR (default: /home/lacsdev/sysknife),
 # matching what tests/e2e/atomic-vm.sh rsyncs over via `provision`.
 #
 # If rpm-ostree needs to layer packages, it requires a reboot to take
 # effect. This script handles the two-phase flow:
 #   - First run: layers build tools + reboots
-#   - Second run: builds LACS + starts daemon
-# A sentinel file at /var/lib/lacs-e2e/layered marks phase 1 complete.
+#   - Second run: builds SysKnife + starts daemon
+# A sentinel file at /var/lib/sysknife-e2e/layered marks phase 1 complete.
 
 set -euo pipefail
 
-REPO_DIR="${REPO_DIR:-/home/lacsdev/lacs}"
+REPO_DIR="${REPO_DIR:-/home/lacsdev/sysknife}"
 VM_USER="${VM_USER:-lacsdev}"
-MARKER="/var/lib/lacs-e2e/ready"
-LAYERED_MARKER="/var/lib/lacs-e2e/layered"
-LOG="/var/log/lacs-e2e-provision.log"
+MARKER="/var/lib/sysknife-e2e/ready"
+LAYERED_MARKER="/var/lib/sysknife-e2e/layered"
+LOG="/var/log/sysknife-e2e-provision.log"
 
-mkdir -p /var/lib/lacs-e2e
+mkdir -p /var/lib/sysknife-e2e
 rm -f "$MARKER"
 
 # Redirect all output to both the console and the log file.
@@ -149,43 +149,43 @@ curl -sf http://127.0.0.1:11434/api/tags > /dev/null || fail "Ollama not respond
 
 step "Pull test LLM model"
 # qwen3:8b is the default because it produces the most reliable tool
-# calls in LACS's planning loop. 5.2 GB disk, thinking-capable, tool-
-# capable. LACS auto-detects the `qwen3` prefix and enables thinking
+# calls in SysKnife's planning loop. 5.2 GB disk, thinking-capable, tool-
+# capable. SysKnife auto-detects the `qwen3` prefix and enables thinking
 # mode via `options` (see THINKING_MODEL_PREFIXES in
-# crates/lacs-brain/src/planner.rs).
+# crates/sysknife-brain/src/planner.rs).
 #
 # Performance expectations:
-#   - Host GPU via LACS_OLLAMA_URL=http://10.0.2.2:11434 — <60 s/story
+#   - Host GPU via SYSKNIFE_OLLAMA_URL=http://10.0.2.2:11434 — <60 s/story
 #   - GPU passthrough (VFIO) — similar
 #   - CPU-only on a 4 vCPU VM — impractical: thinking exceeds Ollama's
 #     ~120 s request timeout. Either disable thinking
 #     (`ollama_think = false` in config.toml or
-#     LACS_OLLAMA_THINK=false), or switch to a non-thinking model
-#     via LACS_TEST_MODEL (see below). See HACKING.md §8.
+#     SYSKNIFE_OLLAMA_THINK=false), or switch to a non-thinking model
+#     via SYSKNIFE_TEST_MODEL (see below). See HACKING.md §8.
 #
-# Override with LACS_TEST_MODEL. Known-good alternatives:
-#   LACS_TEST_MODEL=llama3.2:3b      # CPU fallback: 2 GB, no thinking,
+# Override with SYSKNIFE_TEST_MODEL. Known-good alternatives:
+#   SYSKNIFE_TEST_MODEL=llama3.2:3b      # CPU fallback: 2 GB, no thinking,
 #                                    # ~2–4 min/story on 4 vCPUs.
-#   LACS_TEST_MODEL=qwen2.5:3b       # lighter CPU fallback, no thinking
-#   LACS_TEST_MODEL=qwen3:30b-a3b    # MoE, needs 16 GB+ VM RAM + GPU
+#   SYSKNIFE_TEST_MODEL=qwen2.5:3b       # lighter CPU fallback, no thinking
+#   SYSKNIFE_TEST_MODEL=qwen3:30b-a3b    # MoE, needs 16 GB+ VM RAM + GPU
 #
 # Known-bad (returned 400 "does not support tools" or similar):
 #   gemma3:1b, gemma3:4b, qwen3:0.6b, qwen3:1.7b.
-LACS_TEST_MODEL="${LACS_TEST_MODEL:-qwen3:8b}"
-ollama pull "$LACS_TEST_MODEL" || fail "Pull $LACS_TEST_MODEL"
+SYSKNIFE_TEST_MODEL="${SYSKNIFE_TEST_MODEL:-qwen3:8b}"
+ollama pull "$SYSKNIFE_TEST_MODEL" || fail "Pull $SYSKNIFE_TEST_MODEL"
 
 # ---------------------------------------------------------------------------
-# Phase 2: Build LACS
+# Phase 2: Build SysKnife
 # ---------------------------------------------------------------------------
 
-step "Build LACS from $REPO_DIR"
+step "Build SysKnife from $REPO_DIR"
 [ -d "$REPO_DIR" ] || fail "Repo directory $REPO_DIR not found. Did you run 'atomic-vm.sh provision'?"
 cd "$REPO_DIR"
 
-cargo build --release -p lacs-daemon -p lacs-cli || fail "Build lacs-daemon and lacs"
+cargo build --release -p sysknife-daemon -p sysknife-cli || fail "Build sysknife-daemon and sysknife"
 
 echo "Binaries:"
-ls -lh target/release/lacs-daemon target/release/lacs
+ls -lh target/release/sysknife-daemon target/release/sysknife
 
 # ---------------------------------------------------------------------------
 # Phase 2: Install the daemon via Makefile
@@ -237,20 +237,20 @@ firewall-cmd --permanent --add-service=ssh 2>/dev/null || true
 firewall-cmd --reload || true
 
 # ---------------------------------------------------------------------------
-# Phase 2: Start the LACS daemon
+# Phase 2: Start the SysKnife daemon
 # ---------------------------------------------------------------------------
 
-step "Start LACS daemon"
-systemctl enable --now lacs-daemon || fail "Start lacs-daemon"
+step "Start SysKnife daemon"
+systemctl enable --now sysknife-daemon || fail "Start sysknife-daemon"
 sleep 1
-systemctl is-active lacs-daemon || fail "lacs-daemon not running"
+systemctl is-active sysknife-daemon || fail "sysknife-daemon not running"
 
 # ---------------------------------------------------------------------------
-# Phase 2: Install lacs CLI to PATH
+# Phase 2: Install sysknife CLI to PATH
 # ---------------------------------------------------------------------------
 
-step "Install lacs CLI"
-install -m 755 "$REPO_DIR/target/release/lacs" /usr/local/bin/lacs
+step "Install sysknife CLI"
+install -m 755 "$REPO_DIR/target/release/sysknife" /usr/local/bin/sysknife
 
 # ---------------------------------------------------------------------------
 # Phase 2: Write ready marker
@@ -262,6 +262,6 @@ echo ""
 echo "================================================================"
 echo "  PROVISIONING COMPLETE"
 echo "  Ready marker: $MARKER"
-echo "  Ollama model: $LACS_TEST_MODEL"
+echo "  Ollama model: $SYSKNIFE_TEST_MODEL"
 echo "  Run stories:  cd $REPO_DIR && sudo -E tests/e2e/run-stories.sh"
 echo "================================================================"

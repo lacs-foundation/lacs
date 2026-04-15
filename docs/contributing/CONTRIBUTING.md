@@ -1,6 +1,6 @@
-# Contributing to LACS
+# Contributing to SysKnife
 
-Thank you for your interest in LACS. Contributions of all sizes are
+Thank you for your interest in SysKnife. Contributions of all sizes are
 welcome — from typo fixes to new action families to multi-distro
 support. This document explains how to go from idea to merged PR.
 
@@ -11,7 +11,7 @@ support. This document explains how to go from idea to merged PR.
 2. Read the [developer guide](../developer-guide.md) for prerequisites
    and build instructions.
 3. Read the [testing guide](testing.md) for which tests to run and when.
-4. Check [open issues](https://github.com/lacs-foundation/lacs/issues)
+4. Check [open issues](https://github.com/sysknife-foundation/sysknife/issues)
    to avoid duplicating work in progress.
 5. For any substantial change, open an issue first and describe what
    you want to build. This prevents wasted effort and keeps the
@@ -37,19 +37,19 @@ High-impact areas where contributions are most needed:
 ## Setting Up Your Development Environment
 
 ```sh
-git clone https://github.com/lacs-foundation/lacs
-cd lacs
+git clone https://github.com/sysknife-foundation/sysknife
+cd sysknife
 
 # Install git hooks (once)
 pip install pre-commit
 pre-commit install
 
 # Install frontend dependencies
-cd apps/lacs-shell && pnpm install && cd ../..
+cd apps/sysknife-shell && pnpm install && cd ../..
 
 # Run all tests to verify everything works
 cargo test --workspace --locked
-cd apps/lacs-shell && pnpm test && pnpm exec tsc --noEmit && cd ../..
+cd apps/sysknife-shell && pnpm test && pnpm exec tsc --noEmit && cd ../..
 ```
 
 See [docs/developer-guide.md](../developer-guide.md) for the full
@@ -83,7 +83,7 @@ Keep one branch per issue. For larger changes, use a git worktree
 to keep your main checkout clean:
 
 ```sh
-git worktree add ~/.config/superpowers/worktrees/lacs/<branch-name> -b <branch-name>
+git worktree add ~/.config/superpowers/worktrees/sysknife/<branch-name> -b <branch-name>
 ```
 
 ### 2. Implement
@@ -107,7 +107,7 @@ cargo clippy --workspace --all-features --locked -- -D warnings
 cargo test --workspace --locked
 
 # Frontend
-cd apps/lacs-shell && pnpm test && pnpm exec tsc --noEmit && cd ../..
+cd apps/sysknife-shell && pnpm test && pnpm exec tsc --noEmit && cd ../..
 
 # All pre-commit hooks
 pre-commit run --all-files
@@ -173,17 +173,17 @@ Subject line under 72 characters. Add a body for non-obvious changes.
 ## How to Add a New Daemon Action
 
 1. Add the action name to `KNOWN_ACTIONS` in
-   `crates/lacs-brain/src/action_name.rs`.
+   `crates/sysknife-brain/src/action_name.rs`.
 2. Add the execution spec to
-   `crates/lacs-daemon/src/executor.rs` (`build_action_spec`).
+   `crates/sysknife-daemon/src/executor.rs` (`build_action_spec`).
 3. Add the preview logic to
-   `crates/lacs-daemon/src/preview.rs` (`preview_action`).
+   `crates/sysknife-daemon/src/preview.rs` (`preview_action`).
 4. Add the rollback spec (if applicable) to
-   `crates/lacs-daemon/src/executor.rs` (`rollback_spec_for`).
+   `crates/sysknife-daemon/src/executor.rs` (`rollback_spec_for`).
 5. Add input validation to
-   `crates/lacs-daemon/src/actions/validate.rs`.
+   `crates/sysknife-daemon/src/actions/validate.rs`.
 6. Add an entry to the system prompt's action catalogue in
-   `crates/lacs-brain/src/prompt.rs` (name, description, params,
+   `crates/sysknife-brain/src/prompt.rs` (name, description, params,
    risk level).
 7. Write unit tests for the preview and execution logic.
 8. Write or extend an E2E story if the action is user-facing.
@@ -195,7 +195,7 @@ implementation is large.
 
 E2E stories live in `tests/e2e/`. Each story is a shell script that:
 
-1. Calls `lacs --dry-run --json "<intent>"` and captures the plan.
+1. Calls `sysknife --dry-run --json "<intent>"` and captures the plan.
 2. Parses the resulting JSON plan.
 3. Asserts that the correct action names, risk levels, and parameters
    are present.
@@ -230,13 +230,13 @@ extra reviewer scrutiny:
 
 | Area | File(s) | Why sensitive |
 |---|---|---|
-| Intent validation | `crates/lacs-brain/src/planner.rs` (`INTENT_MAX_BYTES`, guards in `plan_intent`) | First line of defense before any LLM call |
-| Secret patterns | `crates/lacs-brain/src/prefs.rs` (`SENSITIVE_PATTERNS`, `SENSITIVE_PREFIXES`) | Controls what the planner and prefs storage will reject |
-| Action allowlist | `crates/lacs-brain/src/action_name.rs` (`KNOWN_ACTIONS`) | Adding a name here makes it proposable by the LLM |
-| Role policy | `crates/lacs-daemon/src/policy.rs` (`min_role_for_action`) | Governs which groups can execute which actions |
-| Approval / replay | `crates/lacs-daemon/src/transactions.rs` | Hash freshness and TOCTOU protection |
-| Caller auth | `crates/lacs-daemon/src/dispatcher.rs` (`resolve_caller_role`) | SO_PEERCRED group-to-role mapping |
-| Audit log | `crates/lacs-brain/src/audit.rs`, `crates/lacs-brain/src/journal.rs` | Safety fence record and journald forwarding |
+| Intent validation | `crates/sysknife-brain/src/planner.rs` (`INTENT_MAX_BYTES`, guards in `plan_intent`) | First line of defense before any LLM call |
+| Secret patterns | `crates/sysknife-brain/src/prefs.rs` (`SENSITIVE_PATTERNS`, `SENSITIVE_PREFIXES`) | Controls what the planner and prefs storage will reject |
+| Action allowlist | `crates/sysknife-brain/src/action_name.rs` (`KNOWN_ACTIONS`) | Adding a name here makes it proposable by the LLM |
+| Role policy | `crates/sysknife-daemon/src/policy.rs` (`min_role_for_action`) | Governs which groups can execute which actions |
+| Approval / replay | `crates/sysknife-daemon/src/transactions.rs` | Hash freshness and TOCTOU protection |
+| Caller auth | `crates/sysknife-daemon/src/dispatcher.rs` (`resolve_caller_role`) | SO_PEERCRED group-to-role mapping |
+| Audit log | `crates/sysknife-brain/src/audit.rs`, `crates/sysknife-brain/src/journal.rs` | Safety fence record and journald forwarding |
 
 When adding a new action to `KNOWN_ACTIONS`, you must also:
 
@@ -244,12 +244,12 @@ When adding a new action to `KNOWN_ACTIONS`, you must also:
    minimum role. Omitting it causes the daemon to deny the action for
    all callers with a validation-failure error — an obvious regression,
    but better than a silent allow.
-2. Add it to the action catalogue in `crates/lacs-brain/src/prompt.rs`
+2. Add it to the action catalogue in `crates/sysknife-brain/src/prompt.rs`
    with a correct risk level. The LLM uses this catalogue to decide
    what to propose; a wrong risk level produces wrong approval gates.
 
 ## Questions
 
-Open a [GitHub Discussion](https://github.com/lacs-foundation/lacs/discussions)
+Open a [GitHub Discussion](https://github.com/sysknife-foundation/sysknife/discussions)
 or tag your issue with `question`. We are friendly and genuinely want
 to help new contributors succeed.

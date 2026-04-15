@@ -7,7 +7,7 @@ Accepted.
 ## Context
 
 The daemon and shell need a local IPC protocol. The codebase already
-has a `.proto` file (`lacs-proto`) with message definitions for
+has a `.proto` file (`sysknife-proto`) with message definitions for
 `RequestEnvelope`, `PreviewEnvelope`, `ResultEnvelope`, and
 `TransactionRecord`, and a `bind_unix_listener` helper. The question
 is what framing and encoding to use over the Unix domain socket.
@@ -20,7 +20,7 @@ Candidates considered:
 2. **Length-prefixed protobuf** — binary, compact. Requires a
    custom dispatcher (no HTTP/2). Harder to inspect without tooling.
 3. **Length-prefixed JSON** — 4-byte LE `u32` length + UTF-8 JSON
-   body. Uses the same Rust structs (`lacs-types`) already tested for
+   body. Uses the same Rust structs (`sysknife-types`) already tested for
    serialization. Human-readable, easy to debug with `socat`.
 
 ## Decision
@@ -28,11 +28,11 @@ Candidates considered:
 Use **length-prefixed JSON** (option 3) for the Unix socket protocol.
 
 Each message carries a `"type"` discriminant string so the dispatcher
-can route without a full decode. The `lacs-types` structs are reused
+can route without a full decode. The `sysknife-types` structs are reused
 as-is — no additional generated code or build-time proto compilation
 beyond what already exists.
 
-The proto definitions in `lacs-proto` are kept for potential future
+The proto definitions in `sysknife-proto` are kept for potential future
 use (e.g., a networked or gRPC-based control plane) but are not the
 primary on-wire encoding for local IPC.
 

@@ -15,7 +15,7 @@ INTENT="show me the logs for the firewalld service"
 echo "=== Story 13: Service logs for firewalld ==="
 echo "Intent: $INTENT"
 
-PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-13-stderr.log)
+PLAN=$(sysknife --dry-run --json "$INTENT" 2>/tmp/sysknife-story-13-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 

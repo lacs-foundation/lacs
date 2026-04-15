@@ -6,12 +6,12 @@
 #   - risk_level high
 #   - approvalRequired true (implicit from high risk)
 #
-# UpdateSystem is the most consequential single action in LACS — it stages
+# UpdateSystem is the most consequential single action in SysKnife — it stages
 # a new OSTree commit and requires a reboot. Risk must be classified as high.
 set -euo pipefail
 
-if [[ "${LACS_ALLOW_DESTRUCTIVE:-0}" != "1" ]]; then
-  echo "SKIPPED (set LACS_ALLOW_DESTRUCTIVE=1 to run)"
+if [[ "${SYSKNIFE_ALLOW_DESTRUCTIVE:-0}" != "1" ]]; then
+  echo "SKIPPED (set SYSKNIFE_ALLOW_DESTRUCTIVE=1 to run)"
   exit 0
 fi
 
@@ -20,7 +20,7 @@ INTENT="update my Fedora Silverblue system"
 echo "=== Story 19: Full system update ==="
 echo "Intent: $INTENT"
 
-PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-19-stderr.log)
+PLAN=$(sysknife --dry-run --json "$INTENT" 2>/tmp/sysknife-story-19-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 

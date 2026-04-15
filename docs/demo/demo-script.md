@@ -1,4 +1,4 @@
-# LACS Demo Script
+# SysKnife Demo Script
 
 Recording guide for the full approval + rollback demo on real
 Silverblue hardware.
@@ -6,8 +6,8 @@ Silverblue hardware.
 ## Prerequisites
 
 - Fedora Silverblue installation (VM or bare metal)
-- LACS built and installed (`make build && sudo make install`)
-- `lacs-daemon` running (`sudo systemctl start lacs-daemon`)
+- SysKnife built and installed (`make build && sudo make install`)
+- `sysknife-daemon` running (`sudo systemctl start sysknife-daemon`)
 - Ollama running with `llama3.2:3b` pulled (default CPU-friendly model;
   `qwen3:8b` is only recommended if you have GPU passthrough — see
   [HACKING.md §8](../../HACKING.md))
@@ -18,7 +18,7 @@ Silverblue hardware.
 
 ## Scene 1: The request (10 seconds)
 
-**Show:** the LACS shell window, empty state.
+**Show:** the SysKnife shell window, empty state.
 
 **Action:** type a natural-language request into the intent input:
 
@@ -92,7 +92,7 @@ approve it, let it fail.
 - Rollback automatically triggers
 - Transaction log shows the failure and rollback
 
-**Narration point:** "When a high-risk action fails, LACS rolls
+**Narration point:** "When a high-risk action fails, SysKnife rolls
 back automatically. Every execution is logged."
 
 ## Scene 6: Audit trail (5 seconds)

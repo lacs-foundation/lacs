@@ -6,17 +6,17 @@ Accepted.
 
 ## Context
 
-`lacs-brain` needs to talk to an LLM to plan system actions.
+`sysknife-brain` needs to talk to an LLM to plan system actions.
 Different users will have different LLM setups: some will use the
 Anthropic API, others will run a local model via Ollama, and future
 contributors may want to add other providers.
 
-Additionally, the API key must never be visible outside `lacs-brain`
-to prevent accidental logging or exposure through `lacs-shell`.
+Additionally, the API key must never be visible outside `sysknife-brain`
+to prevent accidental logging or exposure through `sysknife-shell`.
 
 ## Decision
 
-`lacs-brain` exposes a single `LlmProvider` trait:
+`sysknife-brain` exposes a single `LlmProvider` trait:
 
 ```rust
 #[async_trait]
@@ -41,12 +41,12 @@ Two implementations ship with the crate:
 
 `LlmPlanner::from_config(BrainConfig, Box<dyn StateClient>)` builds
 the provider from environment-derived config, keeping the API key
-inside `lacs-brain`. `ProviderConfig` and `BrainConfig.provider` are
+inside `sysknife-brain`. `ProviderConfig` and `BrainConfig.provider` are
 `pub(crate)` so the shell cannot read credentials.
 
 `BrainConfig::from_env()` validates inputs at the boundary:
 
-- `LACS_BRAIN_MAX_TURNS` must be a positive integer when set.
+- `SYSKNIFE_BRAIN_MAX_TURNS` must be a positive integer when set.
 - `ANTHROPIC_API_KEY` must be non-empty when provider is `anthropic`.
 
 ## Alternatives Considered

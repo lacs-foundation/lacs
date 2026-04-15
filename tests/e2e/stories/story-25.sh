@@ -14,7 +14,7 @@ INTENT="show me all local user accounts on this system"
 echo "=== Story 25: ListUsers ==="
 echo "Intent: $INTENT"
 
-PLAN=$(lacs --dry-run --json "$INTENT" 2>/tmp/lacs-story-25-stderr.log)
+PLAN=$(sysknife --dry-run --json "$INTENT" 2>/tmp/sysknife-story-25-stderr.log)
 echo "Plan JSON:"
 echo "$PLAN" | jq .
 
