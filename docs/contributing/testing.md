@@ -11,9 +11,9 @@ validation before a release.
 | Unit tests (Rust) | Individual functions, parsers, traits | <5s | Every commit, every CI run |
 | Unit tests (TypeScript) | React components, reducers, IPC shims | <5s | Every commit, every CI run |
 | Integration (Rust) | Daemon IPC, safety fence, policy | <10s | Every commit, every CI run |
-| **Dev stories (local, no VM)** | LLM plan structure for stories 1-7; runs on any Linux host | 1-3 min | After brain/prompt changes |
+| **Dev stories (local, no VM)** | LLM plan structure for read-only stories; runs on any Linux host | 1-3 min | After brain/prompt changes |
 | CI smoke (container) | Daemon + Ollama + read-only stories in a Linux runner | 5-10 min | Opt-in (PR label `e2e` or manual trigger) |
-| E2E Silverblue VM | **Real Silverblue** in QEMU/KVM, full stack, all 10 stories | 15-30 min first boot; 2-3 min subsequent | Local / pre-release |
+| E2E Silverblue VM | **Real Silverblue** in QEMU/KVM, full stack, all 54 stories | 15-30 min first boot; 2-3 min subsequent | Local / pre-release |
 | Manual QA | Real Silverblue/Kinoite hardware, destructive actions, GUI | 30-60 min | Before releases + demo video |
 
 No single layer is enough on its own. Use the ones that match your change.
@@ -59,10 +59,10 @@ the product's `BrainConfig::from_env`):
 Override with `LACS_LLM_PROVIDER` and `LACS_LLM_MODEL`.
 
 ```sh
-# Run stories 1-7 with an Anthropic key
+# Run the default read-only stories with an Anthropic key
 ANTHROPIC_API_KEY=sk-ant-... tests/e2e/dev-stories.sh
 
-# Run stories 1-7 with OpenAI
+# Run with OpenAI
 OPENAI_API_KEY=sk-proj-... tests/e2e/dev-stories.sh
 
 # Run with local Ollama (must have qwen3:8b or llama3.2:3b pulled)
@@ -125,9 +125,9 @@ build artifacts.
 ## Running the full E2E suite in a Silverblue VM
 
 This is the **high-fidelity** path. The VM is a real Fedora Atomic Desktop
-(Silverblue / Kinoite / Sericea / Onyx) install with rpm-ostree, systemd,
-flatpak, podman, and toolbox. All 10 user stories — including destructive
-ones — execute authentically.
+(Silverblue, Kinoite, Sway Atomic, Budgie Atomic, or COSMIC Atomic) install
+with rpm-ostree, systemd, flatpak, podman, and toolbox. All 54 user stories —
+including destructive ones — execute authentically.
 
 ### Linux and macOS hosts (recommended)
 
@@ -147,7 +147,7 @@ distro.
 # Fedora 41+ (default repos have a current quickemu)
 sudo dnf install quickemu qemu qemu-img
 
-# Fedora Atomic Desktops (Silverblue / Kinoite / Sericea / Onyx host)
+# Fedora Atomic Desktops
 sudo rpm-ostree install quickemu qemu qemu-img
 # Reboot to activate, then proceed.
 
@@ -244,11 +244,10 @@ sudo chmod +r /boot/vmlinuz-*
 ./tests/e2e/silverblue-vm.sh snapshot baseline
 ./tests/e2e/silverblue-vm.sh start
 
-# Run the read-only stories (1-7)
+# Run the read-only stories (non-destructive default)
 ./tests/e2e/silverblue-vm.sh run
 
-# Run ALL stories including destructive (8-10) — the destructive ones
-# layer packages, create toolboxes, etc. Restore the baseline afterwards.
+# Run ALL 54 stories including destructive — restore the baseline afterwards.
 LACS_ALLOW_DESTRUCTIVE=1 ./tests/e2e/silverblue-vm.sh run
 
 # Roll back to the clean baseline so the next run is fast
@@ -281,9 +280,7 @@ Supported variants (these are the names quickget uses):
 | `kinoite` | Fedora Kinoite | KDE Plasma |
 | `sericea` | Fedora Sway Atomic | Sway |
 | `onyx` | Fedora Budgie Atomic | Budgie |
-
-COSMIC Atomic is not yet packaged by quickget; install it manually from
-the ISO if needed.
+| `cosmic-atomic` | Fedora COSMIC Atomic | COSMIC |
 
 ### Windows hosts
 
@@ -338,7 +335,7 @@ The maintainer runs these in order:
 2. VM tests (at least Silverblue + one other atomic variant) pass locally
 3. Manual QA on real Silverblue hardware using
    [docs/testing/user-stories.md](../testing/user-stories.md) as the
-   checklist — all 10 stories including destructive ones
+   checklist — all 54 stories including destructive ones
 4. Record the demo video on real hardware (issue #32)
 
 ## Troubleshooting

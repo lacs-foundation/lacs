@@ -13,7 +13,7 @@ between planning, presentation, and execution.
 | `crates/lacs-daemon/` | `lacs-daemon` | Privileged executor |
 | `crates/lacs-proto/` | `lacs-proto` | Protobuf definitions (future use) |
 | `apps/lacs-shell/` | `lacs-shell` | Tauri + React GUI |
-| `tests/e2e/bin/` | `lacs-test-cli` | E2E test harness CLI |
+| `apps/lacs-cli/` | `lacs` | Production CLI — also used headlessly by E2E stories (`--dry-run --json`) |
 
 ### lacs-brain
 
@@ -68,16 +68,12 @@ that provides:
 - Live job timeline with streaming output
 - Setup wizard for first-run LLM configuration
 
-### lacs-test-cli
+### lacs-cli
 
-A headless CLI (`tests/e2e/bin/`) used only by the E2E test harness.
-It reads a natural-language intent from stdin, connects to a running
-daemon, calls the LLM planner, and writes the resulting plan as JSON
-on stdout. Also supports a `--doctor` mode that checks daemon
-reachability, Ollama availability, and model presence.
-
-This is a test tool, not a production interface. Users interact with
-LACS through `lacs-shell`.
+The production CLI (`apps/lacs-cli/`). Accepts a natural-language intent,
+calls the LLM planner, and prints or executes the resulting plan.
+`--dry-run --json` mode emits the plan as JSON on stdout without executing —
+this is the mode used by every E2E story script.
 
 ## Trust Boundary
 

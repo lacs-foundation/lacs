@@ -2,14 +2,14 @@
 # LACS E2E test harness — runs user stories against a provisioned VM.
 #
 # Usage:
-#   sudo tests/e2e/run-stories.sh          # run read-only stories 1-7
-#   sudo LACS_ALLOW_DESTRUCTIVE=1 tests/e2e/run-stories.sh   # all 10
-#   sudo tests/e2e/run-stories.sh 3 5 7    # run specific stories
+#   sudo tests/e2e/run-stories.sh                    # read-only stories
+#   sudo LACS_ALLOW_DESTRUCTIVE=1 tests/e2e/run-stories.sh   # all 54
+#   sudo tests/e2e/run-stories.sh 3 5 7              # run specific stories
 #
 # Prerequisites:
 #   - /var/lib/lacs-e2e/ready exists (provisioning complete)
 #   - lacs-daemon systemd service is running
-#   - lacs-test-cli is installed in PATH
+#   - lacs is installed in PATH
 #   - Ollama is running with a model pulled
 set -euo pipefail
 
@@ -35,8 +35,8 @@ if ! systemctl is-active --quiet lacs-daemon 2>/dev/null; then
   preflight_ok=false
 fi
 
-if ! command -v lacs-test-cli &>/dev/null; then
-  echo "ERROR: lacs-test-cli not found in PATH."
+if ! command -v lacs &>/dev/null; then
+  echo "ERROR: lacs not found in PATH."
   preflight_ok=false
 fi
 
@@ -52,18 +52,16 @@ if [[ "$preflight_ok" != "true" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# LLM + daemon socket env for lacs-test-cli
+# LLM + daemon socket env
 # ---------------------------------------------------------------------------
-# The test CLI's BrainConfig::from_env() defaults to Anthropic, and the
-# DaemonIpcClient defaults to /tmp/lacs-daemon.sock — neither matches our
-# provisioned VM. Force the right values here so individual story scripts
-# don't need to know or care.
+# BrainConfig::from_env() defaults to Anthropic, and the DaemonIpcClient
+# defaults to /tmp/lacs-daemon.sock — neither matches our provisioned VM.
+# Force the right values here so individual story scripts don't need to
+# know or care.
 export LACS_LLM_PROVIDER="${LACS_LLM_PROVIDER:-ollama}"
 export LACS_LLM_MODEL="${LACS_LLM_MODEL:-${LACS_TEST_MODEL:-qwen3:8b}}"
 export LACS_OLLAMA_URL="${LACS_OLLAMA_URL:-http://127.0.0.1:11434}"
-# lacs-daemon's packaged systemd unit binds /run/lacs/daemon.sock. The
-# test CLI defaults to /tmp/lacs-daemon.sock — force the real path via
-# LACS_LISTEN_URI (the var the brain and shell clients both honour).
+# lacs-daemon's packaged systemd unit binds /run/lacs/daemon.sock.
 export LACS_LISTEN_URI="${LACS_LISTEN_URI:-unix:///run/lacs/daemon.sock}"
 
 # ---------------------------------------------------------------------------
@@ -99,20 +97,56 @@ STORY_NAMES[17]="Container list + specific info"
 STORY_NAMES[18]="Restart bluetooth service (destructive)"
 STORY_NAMES[19]="Update system (destructive)"
 STORY_NAMES[20]="Add user to wheel group (destructive)"
+STORY_NAMES[21]="GetSystemState direct request"
+STORY_NAMES[22]="ListProcesses direct"
+STORY_NAMES[23]="SetTimezone — Europe/Berlin (destructive)"
+STORY_NAMES[24]="StopService — cups (destructive)"
+STORY_NAMES[25]="ListUsers direct"
+STORY_NAMES[26]="ListUsers + ListGroups compound"
+STORY_NAMES[27]="SetServiceEnabled — sshd at boot (destructive)"
+STORY_NAMES[28]="GetKernelArguments + ListDeployments compound"
+STORY_NAMES[29]="Triple compound — processes + network + memory"
+STORY_NAMES[30]="RemoveAuthorizedKey — user alice (destructive)"
+STORY_NAMES[31]="RemoveUserFromGroup — alice from docker (destructive)"
+STORY_NAMES[32]="Security audit — SSH keys + users + groups"
+STORY_NAMES[33]="SetKernelArguments — blacklist nouveau (destructive)"
+STORY_NAMES[34]="RollbackDeployment — resist query temptation (destructive)"
+STORY_NAMES[35]="ConfigureFirewall — open port 8080 (destructive)"
+STORY_NAMES[36]="CreateUser — devteam account (destructive)"
+STORY_NAMES[37]="DeleteUser — oldstaff removal (destructive)"
+STORY_NAMES[38]="Diagnostic compound — processes + nginx logs + job history"
+STORY_NAMES[39]="SetDnsServers — Cloudflare 1.1.1.1 + 1.0.0.1 (destructive)"
+STORY_NAMES[40]="RebaseSystem — Fedora Silverblue 41 (destructive)"
+STORY_NAMES[41]="Read compound — repos + containers + network"
+STORY_NAMES[42]="MaskService cups — not SetServiceEnabled (destructive)"
+STORY_NAMES[43]="CleanupDeployments — free deployment disk (destructive)"
+STORY_NAMES[44]="SetHostname — workstation-42 (destructive)"
+STORY_NAMES[45]="RebootSystem — kernel activation framing (destructive)"
+STORY_NAMES[46]="GetPendingUpdates — check not apply"
+STORY_NAMES[47]="ListInstalledFlatpaks — local vs remote"
+STORY_NAMES[48]="GetServiceStatus — nginx single unit"
+STORY_NAMES[49]="ListTimers — scheduled tasks"
+STORY_NAMES[50]="ReloadService — nginx without restart (destructive)"
+STORY_NAMES[51]="ReloadDaemon — after unit file creation (destructive)"
+STORY_NAMES[52]="UpdateFlatpak — Firefox (destructive)"
+STORY_NAMES[53]="RemoveBasePackage — gedit from base image (destructive)"
+STORY_NAMES[54]="UpdateFlatpak — update all, no specific app (destructive)"
 
 declare -A RESULTS
 declare -A DURATIONS
 declare -A MESSAGES
 
 if [[ $# -gt 0 ]]; then
-  # Run specific stories passed as arguments.
   STORIES=("$@")
+elif [[ "$ALLOW_DESTRUCTIVE" == "1" ]]; then
+  STORIES=(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 \
+           21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 \
+           41 42 43 44 45 46 47 48 49 50 51 52 53 54)
 else
-  if [[ "$ALLOW_DESTRUCTIVE" == "1" ]]; then
-    STORIES=(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20)
-  else
-    STORIES=(1 2 3 4 5 6 7 11 12 13 14 15 16 17)
-  fi
+  # Read-only and non-destructive stories only. Stories self-gate via
+  # LACS_ALLOW_DESTRUCTIVE — skipped ones still appear in results as SKIP.
+  STORIES=(1 2 3 4 5 6 7 11 12 13 14 15 16 17 \
+           21 22 25 26 28 29 32 38 41 46 47 48 49)
 fi
 
 # ---------------------------------------------------------------------------
@@ -132,38 +166,38 @@ run_story() {
     return
   fi
 
-  # Destructive stories (8-10, 18-20) require explicit opt-in.
-  if { [[ "$n" -ge 8 && "$n" -le 10 ]] || [[ "$n" -ge 18 && "$n" -le 20 ]]; } \
-      && [[ "$ALLOW_DESTRUCTIVE" != "1" ]]; then
-    RESULTS[$n]="SKIP"
-    MESSAGES[$n]="set LACS_ALLOW_DESTRUCTIVE=1 to run"
-    DURATIONS[$n]="0.0"
-    return
-  fi
-
-  echo -n "  Story $n ($name): "
+  printf "  Story %2d (%-46s) " "$n" "$name"
 
   local start_time
   start_time=$(date +%s.%N)
 
   if timeout "$STORY_TIMEOUT" bash "$script" > "$log" 2>&1; then
-    RESULTS[$n]="PASS"
-    MESSAGES[$n]=""
+    local last_line
+    last_line=$(grep -E '^(PASS|SKIP)' "$log" | tail -1 || true)
+    if [[ "$last_line" == SKIP* ]]; then
+      RESULTS[$n]="SKIP"
+      MESSAGES[$n]="${last_line#SKIP}"
+      DURATIONS[$n]="0.0"
+      echo "SKIP"
+    else
+      RESULTS[$n]="PASS"
+      local end_time
+      end_time=$(date +%s.%N)
+      DURATIONS[$n]=$(echo "$end_time - $start_time" | bc 2>/dev/null || echo "?")
+      echo "PASS (${DURATIONS[$n]}s)"
+    fi
   else
     local exit_code=$?
     RESULTS[$n]="FAIL"
-    # Extract the last non-empty line as the failure message.
     MESSAGES[$n]=$(tail -n 5 "$log" | grep -v '^$' | tail -n 1)
     if [[ $exit_code -eq 124 ]]; then
       MESSAGES[$n]="timed out after ${STORY_TIMEOUT}s"
     fi
+    local end_time
+    end_time=$(date +%s.%N)
+    DURATIONS[$n]=$(echo "$end_time - $start_time" | bc 2>/dev/null || echo "?")
+    echo "FAIL (${DURATIONS[$n]}s)"
   fi
-
-  local end_time
-  end_time=$(date +%s.%N)
-  DURATIONS[$n]=$(echo "$end_time - $start_time" | bc 2>/dev/null || echo "?")
-
-  echo "${RESULTS[$n]} (${DURATIONS[$n]}s)"
 }
 
 # ---------------------------------------------------------------------------
@@ -202,8 +236,7 @@ for n in "${STORIES[@]}"; do
   local_duration="${DURATIONS[$n]}"
   local_msg="${MESSAGES[$n]}"
 
-  # Pad the story label for alignment.
-  printf "  Story %2d (%-40s) " "$n" "$local_name"
+  printf "  Story %2d (%-46s) " "$n" "$local_name"
 
   case "$local_result" in
     PASS)

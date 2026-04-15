@@ -30,9 +30,9 @@
 # Override with LACS_LLM_PROVIDER and LACS_LLM_MODEL.
 #
 # Usage:
-#   tests/e2e/dev-stories.sh            # stories 1-7
+#   tests/e2e/dev-stories.sh            # read-only stories (default)
 #   tests/e2e/dev-stories.sh 3 6 7      # specific stories
-#   LACS_ALLOW_DESTRUCTIVE=1 tests/e2e/dev-stories.sh   # all 10
+#   LACS_ALLOW_DESTRUCTIVE=1 tests/e2e/dev-stories.sh   # all 54
 #   LACS_LLM_PROVIDER=openai OPENAI_API_KEY=sk-... tests/e2e/dev-stories.sh
 #
 set -euo pipefail

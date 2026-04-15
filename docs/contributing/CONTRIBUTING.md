@@ -116,7 +116,7 @@ pre-commit run --all-files
 For changes touching the brain, planning tools, or the prompt:
 
 ```sh
-# Run the 7 read-only E2E stories (requires a running daemon + LLM)
+# Run the read-only E2E stories (requires a running daemon + LLM)
 ANTHROPIC_API_KEY=sk-ant-... tests/e2e/dev-stories.sh
 ```
 
@@ -195,7 +195,7 @@ implementation is large.
 
 E2E stories live in `tests/e2e/`. Each story is a shell script that:
 
-1. Sends a natural-language intent to `lacs-test-cli` on stdin.
+1. Calls `lacs --dry-run --json "<intent>"` and captures the plan.
 2. Parses the resulting JSON plan.
 3. Asserts that the correct action names, risk levels, and parameters
    are present.

@@ -37,9 +37,9 @@
 #   LACS_VM_RELEASE  — Fedora release number (default: 42)
 #   LACS_VM_VARIANT  — atomic variant. Accepted values (case-insensitive):
 #                      silverblue (GNOME), kinoite (KDE),
-#                      sericea (Sway), onyx (Budgie).
+#                      sericea (Sway Atomic), onyx (Budgie Atomic),
+#                      cosmic-atomic (COSMIC Atomic).
 #                      Default: silverblue.
-#                      Note: COSMIC Atomic is not yet in quickget.
 #   LACS_VM_DIR      — where to store the ISO + qcow2 (default: tests/e2e/vm)
 #   LACS_VM_USER     — VM user created by the installer (default: lacsdev)
 #   LACS_VM_MEM      — VM RAM (default: 10G; appended to .conf on download).
@@ -62,11 +62,12 @@ VM_USER="${LACS_VM_USER:-lacsdev}"
 case "$VARIANT" in
     silverblue) QUICKGET_EDITION="Silverblue" ;;
     kinoite)    QUICKGET_EDITION="Kinoite" ;;
-    sericea)    QUICKGET_EDITION="Sericea" ;;   # Sway Atomic
-    onyx)       QUICKGET_EDITION="Onyx" ;;      # Budgie Atomic
+    sericea)       QUICKGET_EDITION="Sericea" ;;       # Fedora Sway Atomic
+    onyx)          QUICKGET_EDITION="Onyx" ;;          # Fedora Budgie Atomic
+    cosmic-atomic) QUICKGET_EDITION="COSMIC-Atomic" ;; # Fedora COSMIC Atomic
     *)
         echo "[silverblue-vm] ERROR: unknown LACS_VM_VARIANT='$VARIANT'." >&2
-        echo "  Accepted: silverblue | kinoite | sericea | onyx" >&2
+        echo "  Accepted: silverblue | kinoite | sericea | onyx | cosmic-atomic" >&2
         exit 1
         ;;
 esac

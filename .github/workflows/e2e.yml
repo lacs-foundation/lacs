@@ -4,7 +4,7 @@
 # Two jobs:
 #
 # 1. `scripts-lint`: always runs. ShellCheck on tests/e2e/, and compile
-#    lacs-test-cli. Fast (~1 min), safe on every PR.
+#    lacs-cli. Fast (~1 min), safe on every PR.
 #
 # 2. `container-smoke`: runs on workflow_dispatch or when a PR is labeled
 #    `e2e`. Boots Ollama and the daemon directly in the runner, pulls a
@@ -46,8 +46,8 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
 
-      - name: Build lacs-test-cli
-        run: cargo build -p lacs-test-cli --locked
+      - name: Build lacs-cli
+        run: cargo build -p lacs-cli --locked
 
   container-smoke:
     # Opt-in: runs on manual dispatch or PRs labeled `e2e`.
@@ -92,11 +92,11 @@ jobs:
       - name: Pull tool-capable model
         run: ollama pull llama3.2:3b
 
-      - name: Build lacs-daemon and lacs-test-cli
+      - name: Build lacs-daemon and lacs
         run: |
-          cargo build --release -p lacs-daemon -p lacs-test-cli --locked
+          cargo build --release -p lacs-daemon -p lacs-cli --locked
           sudo cp target/release/lacs-daemon /usr/local/bin/
-          sudo cp target/release/lacs-test-cli /usr/local/bin/
+          sudo cp target/release/lacs /usr/local/bin/
 
       - name: Set up daemon socket directory
         run: |

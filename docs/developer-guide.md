@@ -220,8 +220,7 @@ apps/
   lacs-shell/     Tauri + React GUI
 tests/
   e2e/
-    bin/          lacs-test-cli — headless test harness (not a production CLI)
-    dev-stories.sh  Run read-only E2E stories on any Linux host
+    dev-stories.sh  Run E2E stories on any Linux host (uses lacs --dry-run --json)
     silverblue-vm.sh  Manage a Silverblue QEMU/KVM VM for full E2E
 docs/
   adr/            Architectural decision records

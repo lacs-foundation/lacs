@@ -94,7 +94,8 @@ if ! command -v ollama &>/dev/null; then
 fi
 
 # The official installer tries to create a systemd unit + ollama system
-# user. On rpm-ostree systems (Silverblue, Kinoite, Sericea, Onyx) that
+# user. On rpm-ostree systems (Silverblue, Kinoite, Sway Atomic, Budgie Atomic,
+# COSMIC Atomic) that
 # can fail because /usr is read-only, or because the install was
 # interrupted. Write a minimal unit ourselves if it's missing. Idempotent.
 if [ ! -f /etc/systemd/system/ollama.service ] \
@@ -181,19 +182,18 @@ step "Build LACS from $REPO_DIR"
 [ -d "$REPO_DIR" ] || fail "Repo directory $REPO_DIR not found. Did you run 'silverblue-vm.sh provision'?"
 cd "$REPO_DIR"
 
-cargo build --release -p lacs-daemon       || fail "Build lacs-daemon"
-cargo build --release -p lacs-test-cli     || fail "Build lacs-test-cli"
+cargo build --release -p lacs-daemon -p lacs-cli || fail "Build lacs-daemon and lacs"
 
 echo "Binaries:"
-ls -lh target/release/lacs-daemon target/release/lacs-test-cli
+ls -lh target/release/lacs-daemon target/release/lacs
 
 # ---------------------------------------------------------------------------
 # Phase 2: Install the daemon via Makefile
 # ---------------------------------------------------------------------------
 
 step "Install daemon"
-# On rpm-ostree systems (Silverblue, Kinoite, Sericea, Onyx) /usr is
-# read-only, so the default Makefile paths fail. Detect ostree and redirect
+# On rpm-ostree systems (Silverblue, Kinoite, Sway Atomic, Budgie Atomic,
+# COSMIC Atomic) /usr is read-only, so the default Makefile paths fail. Detect ostree and redirect
 # the systemd / polkit / sysusers / tmpfiles fragments into /etc instead.
 if command -v rpm-ostree &>/dev/null && rpm-ostree status --booted &>/dev/null; then
     echo "Detected rpm-ostree host — installing with /etc overrides."
@@ -246,11 +246,11 @@ sleep 1
 systemctl is-active lacs-daemon || fail "lacs-daemon not running"
 
 # ---------------------------------------------------------------------------
-# Phase 2: Install lacs-test-cli to PATH
+# Phase 2: Install lacs CLI to PATH
 # ---------------------------------------------------------------------------
 
-step "Install lacs-test-cli"
-install -m 755 "$REPO_DIR/target/release/lacs-test-cli" /usr/local/bin/lacs-test-cli
+step "Install lacs CLI"
+install -m 755 "$REPO_DIR/target/release/lacs" /usr/local/bin/lacs
 
 # ---------------------------------------------------------------------------
 # Phase 2: Write ready marker
