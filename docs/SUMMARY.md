@@ -8,6 +8,7 @@
 
 - [Quick Start](quickstart.md)
 - [CLI Reference](cli.md)
+- [MCP Server](mcp.md)
 
 # Architecture
 
