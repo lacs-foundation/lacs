@@ -7,8 +7,8 @@
 # User Guide
 
 - [Quick Start](quickstart.md)
-- [CLI Reference](cli.md)
 - [MCP Server](mcp.md)
+- [CLI Reference](cli.md)
 
 # Architecture
 

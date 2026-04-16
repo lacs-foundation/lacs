@@ -1,10 +1,17 @@
 # SysKnife — Linux Agent Control Standard
 
-**Describe what you want in plain language. Review a typed plan with risk levels. Approve explicitly. Watch it execute.**
+**Describe what you want in plain language. Review a typed plan with
+risk levels. Approve explicitly. Watch it execute.**
 
-SysKnife never runs a shell command. Every action is a typed operation with a formal risk level. The AI cannot touch your system directly.
+SysKnife never runs a shell command. Every action is a typed operation
+with a formal risk level. The AI cannot touch your system directly.
 
-SysKnife is the reference implementation of the [LACS (Linux Agent Control Standard)](https://github.com/lacs-foundation/specification) protocol — an open, CC0-licensed specification for AI agents that operate at the Linux system level. Any implementation that conforms to LACS provides the same safety guarantees: typed actions, formal risk enforcement, mandatory approval gates, immutable audit trail.
+SysKnife is the reference implementation of the
+[LACS (Linux Agent Control Standard)](https://github.com/lacs-foundation/specification)
+protocol — an open, CC0-licensed specification for AI agents that
+operate at the Linux system level. Any implementation that conforms to
+LACS provides the same safety guarantees: typed actions, formal risk
+enforcement, mandatory approval gates, immutable audit trail.
 
 ```sh
 # Try it — no daemon, no execution, no risk.
@@ -16,23 +23,28 @@ sysknife --dry-run "show disk usage"
 
 ## The problem with every other tool
 
-Every AI agent that can touch your system has the same flaw: you find out what it did after. Open Interpreter runs arbitrary Python and shell. Goose by Block pops confirmation dialogs. Neither has a formal model of what "safe" means.
+Every AI agent that can touch your system has the same flaw: you find
+out what it did after. Open Interpreter runs arbitrary Python and shell.
+Goose by Block pops confirmation dialogs. Neither has a formal model of
+what "safe" means.
 
 **SysKnife is different.**
 
-The AI proposes a **typed plan**. Every step is a named action — not a shell command — with a formal risk level:
+The AI proposes a **typed plan**. Every step is a named action — not a
+shell command — with a formal risk level:
 
 - **Low** — read-only. Executes automatically.
 - **Medium** — reversible change. Requires your approval.
 - **High** — irreversible or access-control. Requires typed confirmation.
 
-You see the plan before anything happens. If you decline, nothing runs. The AI cannot override this.
+You see the plan before anything happens. If you decline, nothing runs.
+The AI cannot override this.
 
 ---
 
 ## How it works
 
-```
+```text
 sysknife-brain  →  sysknife-shell  →  sysknife-daemon
  (planner)      (approval)     (executor)
 ```
@@ -44,25 +56,35 @@ sysknife-brain  →  sysknife-shell  →  sysknife-daemon
 5. The daemon executes with live output and automatic rollback
 6. Every execution is logged to a local SQLite audit trail
 
-The brain proposes but **cannot touch the system**. The daemon is the only privileged process.
+The brain proposes but **cannot touch the system**. The daemon is the
+only privileged process.
 
 ---
 
-## Use from Claude Desktop (MCP)
+## Recommended: use via Claude Code or Claude Desktop (MCP)
 
-SysKnife exposes an MCP server so Claude Desktop and Cursor can call the planner directly:
+The fastest way to use SysKnife is through the MCP server. Claude Code,
+Claude Desktop, and Cursor all support it. You get the full
+plan/approve/execute loop inside your AI assistant — no separate
+terminal needed.
 
-```json
-{
-  "mcpServers": {
-    "sysknife": { "command": "sysknife", "args": ["mcp-server"] }
-  }
-}
+```sh
+# 1. Build the binary
+cargo build -p sysknife-cli --release
+
+# 2. Add to .mcp.json (copy .mcp.json.example and fill in your values)
+cp .mcp.json.example .mcp.json
+
+# 3. Reload the MCP server in your client
+# In Claude Code: /reload-plugins
 ```
 
+See the [MCP Server guide](mcp.md) for the full setup, including SSH
+tunnel configuration and the required approval-gate hook.
+
 ---
 
-## Quick start
+## Use from the CLI
 
 ```sh
 git clone https://github.com/lacs-foundation/sysknife
@@ -73,12 +95,16 @@ sudo systemctl enable --now sysknife-daemon
 sysknife "show disk usage"
 ```
 
-See the [Developer Guide](developer-guide.md) for the full setup.
+See the [Quick Start](quickstart.md) and [CLI Reference](cli.md) for
+details.
 
 ---
 
 ## Status
 
-230+ tests. 54 executable E2E user stories. Fedora Silverblue / Atomic Desktop fully supported.
+230+ tests. 54 executable E2E user stories. Fedora Silverblue / Atomic
+Desktop fully supported.
 
-Multi-distro (apt, dnf, pacman), Telegram approval interface, and `sysknife audit export` are on the [roadmap](https://github.com/lacs-foundation/sysknife/blob/main/ROADMAP.md).
+Multi-distro (apt, dnf, pacman), Telegram approval interface, and
+`sysknife audit export` are on the
+[roadmap](https://github.com/lacs-foundation/sysknife/blob/main/ROADMAP.md).
