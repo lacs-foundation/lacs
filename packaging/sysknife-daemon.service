@@ -17,10 +17,11 @@ Restart=on-failure
 RestartSec=5s
 
 # Harden the service:
-# - NoNewPrivileges prevents the daemon itself from gaining additional
-#   privileges after launch; polkit rules grant per-action elevation.
 # - ProtectHome and ProtectSystem prevent reads outside /var/lib/sysknife.
-NoNewPrivileges=yes
+# NOTE: NoNewPrivileges is intentionally absent. Setting PR_SET_NO_NEW_PRIVS
+# is inherited by all child processes and prevents setuid executables
+# (including sudo) from gaining elevated privileges — breaking every
+# privileged action that relies on sudoers + sudo-prefixed commands.
 ProtectHome=yes
 ProtectSystem=strict
 ReadWritePaths=/var/lib/sysknife /run/sysknife

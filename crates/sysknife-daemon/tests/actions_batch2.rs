@@ -42,8 +42,8 @@ fn reload_service_uses_reload_not_restart() {
     assert_eq!(
         spec.mechanism,
         ActionMechanism::Command {
-            program: "systemctl",
-            args: vec!["reload".to_string(), "nginx.service".to_string()],
+            program: "sudo",
+            args: vec!["systemctl".to_string(), "reload".to_string(), "nginx.service".to_string()],
         }
     );
     // Explicitly guard against the wrong verb.
@@ -64,13 +64,13 @@ fn reload_daemon_uses_daemon_reload_subcommand_with_no_unit_arg() {
     assert_eq!(
         spec.mechanism,
         ActionMechanism::Command {
-            program: "systemctl",
-            args: vec!["daemon-reload".to_string()],
+            program: "sudo",
+            args: vec!["systemctl".to_string(), "daemon-reload".to_string()],
         }
     );
-    // daemon-reload takes no unit argument — verify exactly one arg.
+    // daemon-reload takes no unit argument — verify exactly two args (systemctl + daemon-reload).
     if let ActionMechanism::Command { args, .. } = &spec.mechanism {
-        assert_eq!(args.len(), 1, "daemon-reload must have no unit argument");
+        assert_eq!(args.len(), 2, "daemon-reload must have no unit argument");
     }
 }
 
@@ -149,7 +149,7 @@ fn get_firewall_state_uses_list_all_not_state() {
 }
 
 #[test]
-fn restart_service_uses_systemctl_without_shell() {
+fn restart_service_uses_sudo_systemctl() {
     let spec = services::restart_service("NetworkManager.service");
 
     assert_eq!(spec.action_name, "RestartService");
@@ -157,8 +157,8 @@ fn restart_service_uses_systemctl_without_shell() {
     assert_eq!(
         spec.mechanism,
         ActionMechanism::Command {
-            program: "systemctl",
-            args: vec!["restart".to_string(), "NetworkManager.service".to_string()],
+            program: "sudo",
+            args: vec!["systemctl".to_string(), "restart".to_string(), "NetworkManager.service".to_string()],
         }
     );
 }
@@ -190,15 +190,15 @@ fn service_enable_and_disable_use_matching_systemctl_commands() {
     assert_eq!(
         enabled.mechanism,
         ActionMechanism::Command {
-            program: "systemctl",
-            args: vec!["enable".to_string(), "sshd.service".to_string()],
+            program: "sudo",
+            args: vec!["systemctl".to_string(), "enable".to_string(), "sshd.service".to_string()],
         }
     );
     assert_eq!(
         disabled.mechanism,
         ActionMechanism::Command {
-            program: "systemctl",
-            args: vec!["disable".to_string(), "sshd.service".to_string()],
+            program: "sudo",
+            args: vec!["systemctl".to_string(), "disable".to_string(), "sshd.service".to_string()],
         }
     );
 }
@@ -251,8 +251,9 @@ fn set_dns_servers_uses_resolvectl() {
     assert_eq!(
         spec.mechanism,
         ActionMechanism::Command {
-            program: "resolvectl",
+            program: "sudo",
             args: vec![
+                "resolvectl".to_string(),
                 "dns".to_string(),
                 "wlp1s0".to_string(),
                 "1.1.1.1".to_string(),
@@ -263,37 +264,35 @@ fn set_dns_servers_uses_resolvectl() {
 }
 
 #[test]
-fn configure_firewall_uses_firewall_cmd_without_shell() {
+fn configure_firewall_enable_uses_permanent_and_reload() {
     let spec = network::configure_firewall("public", "ssh", true);
 
     assert_eq!(spec.action_name, "ConfigureFirewall");
     assert_eq!(
         spec.mechanism,
         ActionMechanism::Command {
-            program: "firewall-cmd",
+            program: "sudo",
             args: vec![
-                "--zone".to_string(),
-                "public".to_string(),
-                "--add-service".to_string(),
-                "ssh".to_string(),
+                "sh".to_string(),
+                "-c".to_string(),
+                "firewall-cmd --permanent --zone='public' --add-service='ssh' && firewall-cmd --reload".to_string(),
             ],
         }
     );
 }
 
 #[test]
-fn configure_firewall_disable_uses_firewall_cmd_without_shell() {
+fn configure_firewall_disable_uses_remove_service_with_reload() {
     let spec = network::configure_firewall("public", "ssh", false);
 
     assert_eq!(
         spec.mechanism,
         ActionMechanism::Command {
-            program: "firewall-cmd",
+            program: "sudo",
             args: vec![
-                "--zone".to_string(),
-                "public".to_string(),
-                "--remove-service".to_string(),
-                "ssh".to_string(),
+                "sh".to_string(),
+                "-c".to_string(),
+                "firewall-cmd --permanent --zone='public' --remove-service='ssh' && firewall-cmd --reload".to_string(),
             ],
         }
     );
@@ -322,31 +321,56 @@ fn identity_changes_use_systemd_tools() {
     assert_eq!(
         hostname.mechanism,
         ActionMechanism::Command {
-            program: "hostnamectl",
-            args: vec!["hostname".to_string(), "sysknife-lab".to_string()],
+            program: "sudo",
+            args: vec!["hostnamectl".to_string(), "set-hostname".to_string(), "sysknife-lab".to_string()],
         }
     );
     assert_eq!(
         timezone.mechanism,
         ActionMechanism::Command {
-            program: "timedatectl",
-            args: vec!["set-timezone".to_string(), "America/Chicago".to_string()],
+            program: "sudo",
+            args: vec!["timedatectl".to_string(), "set-timezone".to_string(), "America/Chicago".to_string()],
         }
     );
     assert_eq!(
         locale.mechanism,
         ActionMechanism::Command {
-            program: "localectl",
-            args: vec!["set-locale".to_string(), "en_US.UTF-8".to_string()],
+            program: "sudo",
+            args: vec!["localectl".to_string(), "set-locale".to_string(), "en_US.UTF-8".to_string()],
         }
     );
     assert_eq!(
         ntp.mechanism,
         ActionMechanism::Command {
-            program: "timedatectl",
-            args: vec!["set-ntp".to_string(), "true".to_string()],
+            program: "sudo",
+            args: vec!["timedatectl".to_string(), "set-ntp".to_string(), "true".to_string()],
         }
     );
+}
+
+#[test]
+fn identity_and_service_write_ops_use_sudo() {
+    // Regression guard: all state-changing commands require root via sudo.
+    // The daemon runs as sysknife (non-root); plain systemctl/hostnamectl/etc.
+    // fail with polkit "interactive authentication required".
+    use sysknife_daemon::actions::{identity, services};
+    let specs = vec![
+        services::start_service("sshd.service"),
+        services::stop_service("sshd.service"),
+        services::restart_service("sshd.service"),
+        services::mask_service("cups.service"),
+        services::unmask_service("cups.service"),
+        services::reload_daemon(),
+        identity::set_hostname("test"),
+        identity::set_timezone("UTC"),
+        identity::set_locale("en_US.UTF-8"),
+        identity::set_ntp(true),
+    ];
+    for spec in &specs {
+        if let sysknife_daemon::actions::ActionMechanism::Command { program, .. } = &spec.mechanism {
+            assert_eq!(*program, "sudo", "{} must use sudo", spec.action_name);
+        }
+    }
 }
 
 #[test]

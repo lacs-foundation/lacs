@@ -726,8 +726,8 @@ mod tests {
         assert_eq!(
             spec.mechanism,
             ActionMechanism::Command {
-                program: "ostree",
-                args: vec!["admin".to_string(), "pin".to_string(), "1".to_string()],
+                program: "sudo",
+                args: vec!["ostree".to_string(), "admin".to_string(), "pin".to_string(), "1".to_string()],
             }
         );
     }
@@ -738,8 +738,9 @@ mod tests {
         assert_eq!(
             spec.mechanism,
             ActionMechanism::Command {
-                program: "ostree",
+                program: "sudo",
                 args: vec![
+                    "ostree".to_string(),
                     "admin".to_string(),
                     "pin".to_string(),
                     "--unpin".to_string(),
@@ -768,8 +769,9 @@ mod tests {
         assert_eq!(
             spec.mechanism,
             ActionMechanism::Command {
-                program: "rpm-ostree",
+                program: "sudo",
                 args: vec![
+                    "rpm-ostree".to_string(),
                     "rebase".to_string(),
                     "fedora/41/x86_64/silverblue".to_string(),
                 ],
@@ -787,8 +789,9 @@ mod tests {
         assert_eq!(
             spec.mechanism,
             ActionMechanism::Command {
-                program: "rpm-ostree",
+                program: "sudo",
                 args: vec![
+                    "rpm-ostree".to_string(),
                     "kargs".to_string(),
                     "--append=mitigations=off".to_string(),
                     "--delete=quiet".to_string(),
@@ -804,8 +807,8 @@ mod tests {
         assert_eq!(
             spec.mechanism,
             ActionMechanism::Command {
-                program: "rpm-ostree",
-                args: vec!["kargs".to_string()],
+                program: "sudo",
+                args: vec!["rpm-ostree".to_string(), "kargs".to_string()],
             }
         );
     }
@@ -816,8 +819,8 @@ mod tests {
         assert_eq!(
             spec.mechanism,
             ActionMechanism::Command {
-                program: "rpm-ostree",
-                args: vec!["kargs".to_string()],
+                program: "sudo",
+                args: vec!["rpm-ostree".to_string(), "kargs".to_string()],
             }
         );
     }

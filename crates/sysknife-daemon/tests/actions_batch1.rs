@@ -45,8 +45,8 @@ fn update_system_is_planned_as_a_high_risk_rpm_ostree_upgrade() {
     assert_eq!(
         spec.mechanism,
         ActionMechanism::Command {
-            program: "rpm-ostree",
-            args: vec!["upgrade".to_string()],
+            program: "sudo",
+            args: vec!["rpm-ostree".to_string(), "upgrade".to_string()],
         }
     );
 }
@@ -162,8 +162,13 @@ fn layered_package_install_is_high_risk_and_uses_rpm_ostree() {
     assert_eq!(
         spec.mechanism,
         ActionMechanism::Command {
-            program: "rpm-ostree",
-            args: vec!["install".to_string(), "podman".to_string()],
+            program: "sudo",
+            args: vec![
+                "rpm-ostree".to_string(),
+                "install".to_string(),
+                "--idempotent".to_string(),
+                "podman".to_string(),
+            ],
         }
     );
 }
@@ -183,8 +188,9 @@ fn replace_layered_package_uses_install_uninstall_not_override_replace() {
     assert_eq!(
         spec.mechanism,
         ActionMechanism::Command {
-            program: "rpm-ostree",
+            program: "sudo",
             args: vec![
+                "rpm-ostree".to_string(),
                 "install".to_string(),
                 "neovim".to_string(),
                 "--uninstall".to_string(),
@@ -215,8 +221,9 @@ fn remove_base_package_uses_override_remove_not_uninstall() {
     assert_eq!(
         spec.mechanism,
         ActionMechanism::Command {
-            program: "rpm-ostree",
+            program: "sudo",
             args: vec![
+                "rpm-ostree".to_string(),
                 "override".to_string(),
                 "remove".to_string(),
                 "gedit".to_string(),
@@ -392,4 +399,32 @@ fn container_create_uses_podman_without_shell() {
             ],
         }
     );
+}
+
+#[test]
+fn collect_diagnostics_is_bounded_to_500_lines() {
+    // journalctl -b --no-pager without a line limit dumps the entire boot journal.
+    // On an active system this can be 100K+ lines. -n 500 caps the output.
+    let spec = deployment::collect_diagnostics();
+    if let ActionMechanism::Command { args, .. } = &spec.mechanism {
+        assert!(args.contains(&"-n".to_string()), "-n flag required to bound output");
+        assert!(args.contains(&"500".to_string()), "limit must be 500 lines");
+        assert!(args.contains(&"--no-pager".to_string()), "--no-pager required");
+    }
+}
+
+#[test]
+fn destructive_deployment_commands_use_sudo() {
+    let cmds = vec![
+        deployment::update_system(),
+        deployment::reboot_system(),
+        deployment::rollback_deployment(),
+        deployment::cleanup_deployments(),
+        deployment::rebase_system("fedora/41/x86_64/silverblue"),
+    ];
+    for spec in &cmds {
+        if let ActionMechanism::Command { program, .. } = &spec.mechanism {
+            assert_eq!(*program, "sudo", "{} must use sudo", spec.action_name);
+        }
+    }
 }
