@@ -227,10 +227,25 @@ if ! id lacsdev &>/dev/null; then
     useradd -m -s /bin/bash lacsdev
 fi
 
-# Add lacsdev to the sysknife socket-gating group (required to reach the socket)
-# and the sysknife-dev role group (required for mutation actions such as SSH key ops).
+# Add lacsdev to all three sysknife role groups:
+#   sysknife       — socket access gate (SO_PEERCRED check on daemon socket)
+#   sysknife-dev   — Dev role (service control, flatpak, container, user creation)
+#   sysknife-admin — Admin role (SSH key ops, user deletion, group management,
+#                    deployment lifecycle)
 # make install above ran systemd-sysusers which created these groups.
-usermod --append --groups sysknife,sysknife-dev lacsdev
+usermod --append --groups sysknife,sysknife-dev,sysknife-admin lacsdev
+
+# Sub-UID/GID ranges — required by rootless Podman and Toolbox so the kernel
+# can map container UIDs into the user's namespace. Without these entries,
+# podman/toolbox fail with "cannot find newuidmap" or namespace mapping errors.
+# usermod --add-subuids/--add-subgids allocates the next available range;
+# the fallback appends a fixed range if the flag is unsupported.
+usermod --add-subuids 100000-165535 lacsdev 2>/dev/null \
+    || grep -q "^lacsdev:" /etc/subuid \
+    || echo "lacsdev:100000:65536" >> /etc/subuid
+usermod --add-subgids 100000-165535 lacsdev 2>/dev/null \
+    || grep -q "^lacsdev:" /etc/subgid \
+    || echo "lacsdev:100000:65536" >> /etc/subgid
 
 LACSDEV_SSH_DIR="/home/lacsdev/.ssh"
 mkdir -p "$LACSDEV_SSH_DIR"

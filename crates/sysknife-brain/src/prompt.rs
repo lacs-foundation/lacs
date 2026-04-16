@@ -566,7 +566,11 @@ mod tests {
         assert!(prompt.contains("ListToolboxes"));
         assert!(prompt.contains("ListFlatpakRemotes"));
         // Must explicitly teach: complaint framing does not justify get_system_state.
-        assert!(prompt.contains("complaint") || prompt.contains("broke") || prompt.contains("acting weird"));
+        assert!(
+            prompt.contains("complaint")
+                || prompt.contains("broke")
+                || prompt.contains("acting weird")
+        );
         assert!(
             prompt.contains("Example D")
                 || prompt.contains("example D")
@@ -587,7 +591,11 @@ mod tests {
         );
         // Pattern 1: the concrete JSON plan for "is nginx running?"
         assert!(prompt.contains("GetServiceStatus"));
-        assert!(prompt.contains("\"unit\": \"nginx\"") || prompt.contains("unit=nginx") || prompt.contains("unit=\"nginx\""));
+        assert!(
+            prompt.contains("\"unit\": \"nginx\"")
+                || prompt.contains("unit=nginx")
+                || prompt.contains("unit=\"nginx\"")
+        );
         // Must explicitly forbid calling get_system_state for service status queries.
         assert!(prompt.contains("get_system_state") && prompt.contains("nginx"));
         // Pattern 2: GetSystemState vs CollectDiagnostics disambiguation.

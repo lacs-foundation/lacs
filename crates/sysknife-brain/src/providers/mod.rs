@@ -90,8 +90,7 @@ mod tests {
 
     #[test]
     fn sanitize_error_msg_strips_all_occurrences() {
-        let input =
-            "first: https://api1.com?key=secret1 second: https://api2.com?api_key=secret2";
+        let input = "first: https://api1.com?key=secret1 second: https://api2.com?api_key=secret2";
         let result = sanitize_error_msg(input);
         assert_eq!(
             result,

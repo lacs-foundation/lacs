@@ -4,5 +4,7 @@
     "line_length": 80,
     "tables": false,
     "code_blocks": false
-  }
+  },
+  "MD049": false,
+  "MD060": false
 }

@@ -43,7 +43,11 @@ fn reload_service_uses_reload_not_restart() {
         spec.mechanism,
         ActionMechanism::Command {
             program: "sudo",
-            args: vec!["systemctl".to_string(), "reload".to_string(), "nginx.service".to_string()],
+            args: vec![
+                "systemctl".to_string(),
+                "reload".to_string(),
+                "nginx.service".to_string()
+            ],
         }
     );
     // Explicitly guard against the wrong verb.
@@ -102,8 +106,9 @@ fn get_service_status_uses_status_with_no_pager() {
 }
 
 #[test]
-fn list_timers_includes_all_and_no_pager_flags() {
+fn list_timers_includes_all_no_legend_and_no_pager_flags() {
     // --all includes inactive timers (not just running ones).
+    // --no-legend strips the header row so the planner gets raw timer lines.
     // --no-pager prevents blocking when output is long.
     let spec = services::list_timers();
 
@@ -116,6 +121,7 @@ fn list_timers_includes_all_and_no_pager_flags() {
             args: vec![
                 "list-timers".to_string(),
                 "--all".to_string(),
+                "--no-legend".to_string(),
                 "--no-pager".to_string(),
             ],
         }
@@ -124,6 +130,10 @@ fn list_timers_includes_all_and_no_pager_flags() {
         assert!(
             args.contains(&"--all".to_string()),
             "--all is required to show inactive timers"
+        );
+        assert!(
+            args.contains(&"--no-legend".to_string()),
+            "--no-legend is required to strip the header row"
         );
     }
 }
@@ -158,7 +168,11 @@ fn restart_service_uses_sudo_systemctl() {
         spec.mechanism,
         ActionMechanism::Command {
             program: "sudo",
-            args: vec!["systemctl".to_string(), "restart".to_string(), "NetworkManager.service".to_string()],
+            args: vec![
+                "systemctl".to_string(),
+                "restart".to_string(),
+                "NetworkManager.service".to_string()
+            ],
         }
     );
 }
@@ -191,14 +205,22 @@ fn service_enable_and_disable_use_matching_systemctl_commands() {
         enabled.mechanism,
         ActionMechanism::Command {
             program: "sudo",
-            args: vec!["systemctl".to_string(), "enable".to_string(), "sshd.service".to_string()],
+            args: vec![
+                "systemctl".to_string(),
+                "enable".to_string(),
+                "sshd.service".to_string()
+            ],
         }
     );
     assert_eq!(
         disabled.mechanism,
         ActionMechanism::Command {
             program: "sudo",
-            args: vec!["systemctl".to_string(), "disable".to_string(), "sshd.service".to_string()],
+            args: vec![
+                "systemctl".to_string(),
+                "disable".to_string(),
+                "sshd.service".to_string()
+            ],
         }
     );
 }
@@ -223,21 +245,45 @@ fn network_family_covers_wifi_dns_and_firewall() {
 }
 
 #[test]
-fn configure_wifi_uses_nmcli_connect_without_shell() {
-    let spec = network::configure_wifi("CafeHotspot");
+fn configure_wifi_open_network_uses_nmcli_without_password() {
+    // Open networks: nmcli device wifi connect <ssid> (no password arg).
+    // --ask was removed: it prompts interactively, which breaks the daemon.
+    let spec = network::configure_wifi("CafeHotspot", None);
 
     assert_eq!(spec.action_name, "ConfigureWifi");
     assert_eq!(spec.risk_level, RiskLevel::Medium);
     assert_eq!(
         spec.mechanism,
         ActionMechanism::Command {
-            program: "nmcli",
+            program: "sudo",
             args: vec![
+                "nmcli".to_string(),
                 "device".to_string(),
                 "wifi".to_string(),
                 "connect".to_string(),
                 "CafeHotspot".to_string(),
-                "--ask".to_string(),
+            ],
+        }
+    );
+}
+
+#[test]
+fn configure_wifi_wpa_network_appends_password() {
+    let spec = network::configure_wifi("HomeWifi", Some("s3cret"));
+
+    assert_eq!(spec.action_name, "ConfigureWifi");
+    assert_eq!(
+        spec.mechanism,
+        ActionMechanism::Command {
+            program: "sudo",
+            args: vec![
+                "nmcli".to_string(),
+                "device".to_string(),
+                "wifi".to_string(),
+                "connect".to_string(),
+                "HomeWifi".to_string(),
+                "password".to_string(),
+                "s3cret".to_string(),
             ],
         }
     );
@@ -322,28 +368,44 @@ fn identity_changes_use_systemd_tools() {
         hostname.mechanism,
         ActionMechanism::Command {
             program: "sudo",
-            args: vec!["hostnamectl".to_string(), "set-hostname".to_string(), "sysknife-lab".to_string()],
+            args: vec![
+                "hostnamectl".to_string(),
+                "set-hostname".to_string(),
+                "sysknife-lab".to_string()
+            ],
         }
     );
     assert_eq!(
         timezone.mechanism,
         ActionMechanism::Command {
             program: "sudo",
-            args: vec!["timedatectl".to_string(), "set-timezone".to_string(), "America/Chicago".to_string()],
+            args: vec![
+                "timedatectl".to_string(),
+                "set-timezone".to_string(),
+                "America/Chicago".to_string()
+            ],
         }
     );
     assert_eq!(
         locale.mechanism,
         ActionMechanism::Command {
             program: "sudo",
-            args: vec!["localectl".to_string(), "set-locale".to_string(), "en_US.UTF-8".to_string()],
+            args: vec![
+                "localectl".to_string(),
+                "set-locale".to_string(),
+                "en_US.UTF-8".to_string()
+            ],
         }
     );
     assert_eq!(
         ntp.mechanism,
         ActionMechanism::Command {
             program: "sudo",
-            args: vec!["timedatectl".to_string(), "set-ntp".to_string(), "true".to_string()],
+            args: vec![
+                "timedatectl".to_string(),
+                "set-ntp".to_string(),
+                "true".to_string()
+            ],
         }
     );
 }
@@ -367,7 +429,8 @@ fn identity_and_service_write_ops_use_sudo() {
         identity::set_ntp(true),
     ];
     for spec in &specs {
-        if let sysknife_daemon::actions::ActionMechanism::Command { program, .. } = &spec.mechanism {
+        if let sysknife_daemon::actions::ActionMechanism::Command { program, .. } = &spec.mechanism
+        {
             assert_eq!(*program, "sudo", "{} must use sudo", spec.action_name);
         }
     }
@@ -423,29 +486,50 @@ fn user_creation_and_group_changes_use_sudo_prefixed_shadow_tools() {
             args: vec!["userdel".to_string(), "alice".to_string()],
         }
     );
-    assert_eq!(
-        add_group.mechanism,
-        ActionMechanism::Command {
-            program: "sudo",
-            args: vec![
-                "usermod".to_string(),
-                "--append".to_string(),
-                "--groups".to_string(),
-                "wheel".to_string(),
-                "alice".to_string(),
-            ],
-        }
-    );
-    assert_eq!(
-        remove_group.mechanism,
-        ActionMechanism::Command {
-            program: "sudo",
-            args: vec![
-                "gpasswd".to_string(),
-                "--delete".to_string(),
-                "alice".to_string(),
-                "wheel".to_string()
-            ],
-        }
-    );
+    // AddUserToGroup / RemoveUserFromGroup use a getent-guard script to handle
+    // the Fedora Atomic case where system groups (e.g. `wheel`) live in the
+    // read-only /usr/lib/group OSTree layer and are absent from /etc/group.
+    // Without the guard, `usermod`/`gpasswd` would silently succeed or error
+    // without actually modifying group membership.
+    if let ActionMechanism::Command { program, args } = &add_group.mechanism {
+        assert_eq!(*program, "sudo", "AddUserToGroup must use sudo");
+        assert!(
+            args.contains(&"sh".to_string()),
+            "must use sh -c for the guard script"
+        );
+        assert!(
+            args.contains(&"-c".to_string()),
+            "must use sh -c for the guard script"
+        );
+        let cmd = args.last().unwrap();
+        assert!(
+            cmd.contains("getent group"),
+            "must use getent group to resolve OSTree group layer: {cmd}"
+        );
+        assert!(
+            cmd.contains("usermod"),
+            "must call usermod to add group membership: {cmd}"
+        );
+    } else {
+        panic!("AddUserToGroup must use Command mechanism");
+    }
+
+    if let ActionMechanism::Command { program, args } = &remove_group.mechanism {
+        assert_eq!(*program, "sudo", "RemoveUserFromGroup must use sudo");
+        assert!(
+            args.contains(&"sh".to_string()),
+            "must use sh -c for the guard script"
+        );
+        let cmd = args.last().unwrap();
+        assert!(
+            cmd.contains("getent group"),
+            "must use getent group to resolve OSTree group layer: {cmd}"
+        );
+        assert!(
+            cmd.contains("gpasswd"),
+            "must call gpasswd to remove group membership: {cmd}"
+        );
+    } else {
+        panic!("RemoveUserFromGroup must use Command mechanism");
+    }
 }

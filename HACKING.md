@@ -308,7 +308,7 @@ Options we've tested live on this class of hardware:
 **The qwen3 thinking-mode trap — and the fix SysKnife now ships.**
 Qwen3 series defaults to "thinking mode": the model emits a long
 hidden reasoning trace before the real answer. On CPU this
-*dominates* latency. Ollama's `/api/chat` enforces a **~120 s
+_dominates_ latency. Ollama's `/api/chat` enforces a **~120 s
 request timeout** per our live testing; qwen3:8b on 4 vCPUs cannot
 finish its thinking in that budget, so Ollama returns HTTP 500 and
 the plan never arrives.
@@ -372,7 +372,7 @@ SYSKNIFE_LLM_MODEL=qwen3:8b \
   ./tests/e2e/atomic-vm.sh run
 ```
 
-This is *far* faster than GPU passthrough (VFIO) to set up and
+This is _far_ faster than GPU passthrough (VFIO) to set up and
 covers the common case of running against your own dev-box GPU.
 
 **Overriding the provisioner default.** `tests/e2e/provision.sh`
@@ -414,7 +414,7 @@ you pay the 5-10 s load cost on every story.
 This one bit us hard. When you run `./atomic-vm.sh run`, the
 wrapper does:
 
-```
+```text
 ssh lacsdev@localhost  →  sudo -E  →  bash run-stories.sh
 ```
 
@@ -508,7 +508,7 @@ SYSKNIFE_LISTEN_URI=unix:///run/sysknife/daemon.sock \
 
 A clean run:
 
-```
+```text
 sysknife-test-cli doctor
   [ ok ]  config         provider=ollama, model=qwen3:8b
   [ ok ]  daemon         reachable at /run/sysknife/daemon.sock
@@ -528,7 +528,7 @@ What each line actually checks, and what a red line means:
 | `daemon` | Opens `$SYSKNIFE_LISTEN_URI`, sends a `query_state` frame, reads the reply | Socket missing (daemon not started), Permission denied (see gotcha #16), or daemon crashed |
 | `ollama` | `GET {SYSKNIFE_OLLAMA_URL}/api/tags` with a 5 s timeout | URL wrong, Ollama down, firewall blocks 11434, or host's `OLLAMA_HOST=0.0.0.0` not set |
 | `model` | Requested model appears in `/api/tags` | `ollama pull <model>` not yet run, or typo in the tag |
-| `thinking` | Decision that `planner.rs::resolve_ollama_think` will make for this model, plus *why* (env override vs. auto-detected prefix) | Never red — this is informational, but read it to confirm your `ollama_think` override took effect |
+| `thinking` | Decision that `planner.rs::resolve_ollama_think` will make for this model, plus _why_ (env override vs. auto-detected prefix) | Never red — this is informational, but read it to confirm your `ollama_think` override took effect |
 | `num_predict` | The `OLLAMA_NUM_PREDICT` constant baked into this binary | Never red — shown so you can confirm which binary is running |
 
 Exit codes: `0` all green, `1` any red, `2` usage error.
@@ -633,3 +633,275 @@ chained to the previous one.
   10 stories the harness runs and their pass criteria.
 - [`tests/e2e/atomic-vm.sh help`](tests/e2e/atomic-vm.sh) — the
   subcommand reference, kept in sync with the script itself.
+
+## 17. Adding a new action
+
+An "action" is a named operation the daemon can perform — `GetDiskUsage`,
+`AddLayeredPackage`, `CreateUser`, etc. Action names are string literals
+duplicated across several independent match expressions and lists. The
+`action_consistency` test enforces that all registrations stay in sync,
+so CI will fail loudly with a precise error message if you miss one.
+
+Here is every file you must touch, in order:
+
+### 1. Action module — `crates/sysknife-daemon/src/actions/<module>.rs`
+
+Add a builder function that returns an `ActionSpec`:
+
+```rust
+pub fn my_new_action(param: &str) -> ActionSpec {
+    ActionSpec {
+        action_name: "MyNewAction",         // must be unique across all modules
+        mechanism: command_mechanism("sudo", ["some-cmd", param]),
+        risk_level: RiskLevel::High,
+        reboot_required: false,
+        rollback_available: false,
+    }
+}
+```
+
+Also add a minimal `ActionSpec` to the module's `specs()` function so
+the consistency test can discover it:
+
+```rust
+pub fn specs() -> Vec<ActionSpec> {
+    vec![
+        // existing entries …
+        my_new_action("__placeholder__"),
+    ]
+}
+```
+
+The placeholder value just needs to satisfy any validation the function
+performs — it is never executed; it is only read for its `action_name`.
+
+### 2. Module registration — `crates/sysknife-daemon/src/actions/mod.rs`
+
+If you created a new file, add `pub mod my_module;`. If you extended an
+existing module, no change needed here.
+
+### 3. Executor dispatch — `crates/sysknife-daemon/src/executor.rs`
+
+Add a match arm in `build_action_spec`:
+
+```rust
+"MyNewAction" => {
+    let param = validated_safe_arg(require_str(params, "param")?, "param")?;
+    Ok(my_module::my_new_action(&param))
+}
+```
+
+Use the `require_str` / `require_u32` / `str_array_or_empty` helpers for
+param extraction, and `validated_*` helpers from `actions::validate` for
+sanitisation. Never call a privileged action with unvalidated user input.
+
+### 4. Policy — `crates/sysknife-daemon/src/policy.rs`
+
+Add the action name to the correct role tier in `min_role_for_action`:
+
+```rust
+// Read-only → Observer
+"MyNewAction" | … => CallerRole::Observer,
+
+// Mutating → Admin
+"MyNewAction" | … => CallerRole::Admin,
+```
+
+Reads are `Observer`. Writes / destructive ops are `Admin`. When in
+doubt, use `Admin`.
+
+### 5. Brain catalogue — `crates/sysknife-brain/src/planning_tools/propose_plan.rs`
+
+Add the name to `KNOWN_ACTIONS` (alphabetical order within its group):
+
+```rust
+pub const KNOWN_ACTIONS: &[&str] = &[
+    // …
+    "MyNewAction",
+    // …
+];
+```
+
+Also update the `params` description in the `propose_plan` tool schema
+so the LLM knows the expected JSON shape. The LLM uses these examples
+literally — if the key name in the schema differs from what the executor
+calls `require_str(params, "key")`, the plan will fail with
+`MissingParam` before any OS command runs. Keep them in sync.
+
+### 6. Consistency test — `crates/sysknife-daemon/tests/action_consistency.rs`
+
+If you created a new action module, add it to `all_spec_action_names`:
+
+```rust
+use sysknife_daemon::actions::my_module;
+// …
+for spec in my_module::specs() {
+    names.insert(spec.action_name);
+}
+```
+
+If you extended an existing module (e.g. `users`), no change is needed —
+the module is already included.
+
+### 7. Sudoers — `packaging/sysknife-sudoers`
+
+If the action runs a new privileged binary under `sudo`, add a
+`NOPASSWD` rule:
+
+```text
+sysknife ALL=(root) NOPASSWD: /usr/bin/my-new-tool
+```
+
+Specify the full absolute path. Wildcards (`*`) in sudoers are allowed
+but expand greedily — be cautious. Re-provision the VM and confirm
+`sudo my-new-tool` works from the `sysknife` user before filing the PR.
+
+### 8. Verification
+
+```sh
+cargo test --workspace --locked
+```
+
+The `action_consistency` test will fail immediately if you missed step 3,
+4, or 5. Fix the error message's listed name and re-run. No VM needed
+for this gate.
+
+For actions involving real OS side-effects (new command, new file path),
+run the relevant exec story or write a new Tier-2 integration test in
+`crates/sysknife-daemon/tests/`.
+
+---
+
+## 18. Adding a new distro
+
+SysKnife dispatches distro-specific actions (package management,
+deployment lifecycle) based on the runtime distro detected in
+`crates/sysknife-daemon/src/distro.rs`. Adding a new distro is a
+four-file change plus optional provisioner updates.
+
+### 1. Distro enum — `crates/sysknife-daemon/src/distro.rs`
+
+Add a variant and update `as_str`:
+
+```rust
+pub enum Distro {
+    FedoraAtomic,
+    Ubuntu,
+    ArchLinux,    // ← new variant
+    Unknown,
+}
+
+impl Distro {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Distro::FedoraAtomic => "Fedora Atomic",
+            Distro::Ubuntu => "Ubuntu",
+            Distro::ArchLinux => "Arch Linux",
+            Distro::Unknown => "Unknown",
+        }
+    }
+}
+```
+
+Update `detect()` to recognise the new `ID=` value from `/etc/os-release`:
+
+```rust
+"arch" => Distro::ArchLinux,
+```
+
+Some distros set `VARIANT_ID` in addition to `ID` (as Fedora Atomic
+does for Silverblue vs. Kinoite). Parse both fields and add a `matches!`
+guard if you need variant-level discrimination.
+
+Add unit tests in the `#[cfg(test)]` block at the bottom of the file —
+at minimum, one test for the `ID=` value you added and one that confirms
+`Distro::ArchLinux.as_str()` returns the expected string.
+
+### 2. Action module — `crates/sysknife-daemon/src/actions/<distro>.rs`
+
+Create a new file (e.g. `arch.rs`) with distro-specific implementations
+of every action that differs from the Fedora Atomic baseline. Actions
+that are universal (service control, SSH key ops, user management) do
+**not** need distro-specific variants.
+
+Typical distro-specific actions:
+
+| Action name            | Fedora Atomic           | Ubuntu                    | Arch                      |
+|------------------------|-------------------------|---------------------------|---------------------------|
+| `AddLayeredPackage`    | `rpm-ostree install`    | `apt-get install -y`      | `pacman -S --noconfirm`   |
+| `RemoveLayeredPackage` | `rpm-ostree remove`     | `apt-get remove -y`       | `pacman -R --noconfirm`   |
+| `UpdateSystem`         | `rpm-ostree upgrade`    | `apt-get dist-upgrade -y` | `pacman -Syu --noconfirm` |
+| `GetLayeredPackages`   | `rpm-ostree status`     | `dpkg --get-selections`   | `pacman -Qe`              |
+| `GetPendingUpdates`    | `rpm-ostree upgrade -C` | `apt list --upgradable`   | `checkupdates`            |
+
+The `action_name` field on each `ActionSpec` must match the existing
+catalogue name exactly — the same string the executor dispatches on.
+The `reboot_required` flag should reflect reality for the distro
+(Fedora Atomic: true for package changes; Ubuntu/Arch: false).
+
+### 3. Module registration — `crates/sysknife-daemon/src/actions/mod.rs`
+
+```rust
+pub mod arch;
+```
+
+### 4. Executor dispatch — `crates/sysknife-daemon/src/executor.rs`
+
+For every action that has a distro-specific implementation, add a distro
+check inside the existing match arm. The current pattern (pre-Ubuntu
+wiring) is to call the Fedora Atomic function unconditionally; once
+multiple distros are live, the arm becomes a match on `distro::current()`:
+
+```rust
+use crate::distro::{self, Distro};
+
+// In build_action_spec:
+"AddLayeredPackage" => {
+    let package = validated_safe_arg(require_str(params, "package")?, "package")?;
+    match distro::current() {
+        Distro::FedoraAtomic => Ok(layering::add_layered_package(&package)),
+        Distro::Ubuntu       => Ok(layering_ubuntu::install_package(&package)),
+        Distro::ArchLinux    => Ok(arch::install_package(&package)),
+        Distro::Unknown      => Err(ExecutorError::UnsupportedOnDistro {
+            action: "AddLayeredPackage",
+            distro: distro::current().as_str(),
+        }),
+    }
+}
+```
+
+For rpm-ostree-specific actions (`RebaseSystem`, `PinDeployment`, etc.)
+that have no Ubuntu or Arch equivalent, return an `UnsupportedOnDistro`
+error for the non-Fedora variants rather than silently doing nothing.
+
+### 5. Sudoers — `packaging/sysknife-sudoers`
+
+Add `NOPASSWD` rules for every new privileged binary the new distro's
+action module calls under `sudo`. The packaging file is distro-agnostic;
+add the rule unconditionally (it will simply be unused on distros where
+`apt-get` doesn't exist, etc.).
+
+### 6. Provisioner — `tests/e2e/provision.sh`
+
+If the new distro has a different package manager for build tools (gcc,
+cargo, etc.) or different installation paths, add a distro branch to
+the provisioner. The provisioner currently targets Fedora Atomic only
+(`rpm-ostree`). At minimum, gate the `rpm-ostree` phase on `ID=fedora`
+and add an equivalent `apt-get` or `pacman` phase.
+
+### 7. Distro detection test (`distro.rs`)
+
+The new `detect()` arm must be covered by a unit test inside
+`distro.rs` that feeds synthetic `/etc/os-release` content. No VM
+needed — these tests are fast and run in `cargo test --workspace`.
+
+### 8. Distro verification
+
+```sh
+cargo test --workspace --locked
+```
+
+The consistency test does **not** enforce distro dispatch (it calls
+`build_action_spec` with an empty params object on the current distro),
+so manual VM verification on the new distro is required before claiming
+the distro is supported.

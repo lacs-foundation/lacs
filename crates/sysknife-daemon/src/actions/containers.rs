@@ -1,71 +1,109 @@
-use super::{command_mechanism, ActionSpec};
+use super::{command_mechanism, ActionMechanism, ActionSpec};
 use sysknife_types::RiskLevel;
 
 pub fn specs() -> Vec<ActionSpec> {
     vec![
-        list_containers(),
-        create_container("sysknife-dev", "registry.fedoraproject.org/fedora-toolbox:41"),
-        start_container("sysknife-dev"),
-        stop_container("sysknife-dev"),
-        remove_container("sysknife-dev"),
-        get_container_info("sysknife-dev"),
+        list_containers("testuser"),
+        create_container(
+            "testuser",
+            "sysknife-dev",
+            "registry.fedoraproject.org/fedora-toolbox:41",
+        ),
+        start_container("testuser", "sysknife-dev"),
+        stop_container("testuser", "sysknife-dev"),
+        remove_container("testuser", "sysknife-dev"),
+        get_container_info("testuser", "sysknife-dev"),
     ]
 }
 
-pub fn list_containers() -> ActionSpec {
+/// Run a Podman command as the target user via `sudo runuser -l`.
+///
+/// Rootless Podman operates against the user's container storage, not a shared
+/// system store. The daemon runs as the `sysknife` system user whose container
+/// namespace is empty; we must switch to `username` to reach their containers.
+/// `runuser -l` establishes a full login context including XDG_RUNTIME_DIR and
+/// the sub-UID/GID ranges required by the kernel namespace code.
+fn podman_as(username: &str, podman_cmd: &str) -> ActionMechanism {
+    ActionMechanism::Command {
+        program: "sudo",
+        args: vec![
+            "runuser".to_string(),
+            "-l".to_string(),
+            username.to_string(),
+            "-c".to_string(),
+            podman_cmd.to_string(),
+        ],
+    }
+}
+
+pub fn list_containers(username: &str) -> ActionSpec {
     ActionSpec {
         action_name: "ListContainers",
-        mechanism: command_mechanism("podman", ["ps", "--all", "--format", "json"]),
+        mechanism: command_mechanism(
+            "sudo",
+            [
+                "runuser",
+                "-l",
+                username,
+                "-c",
+                "podman ps --all --format json",
+            ],
+        ),
         risk_level: RiskLevel::Low,
         reboot_required: false,
         rollback_available: false,
     }
 }
 
-pub fn create_container(name: &str, image: &str) -> ActionSpec {
+pub fn create_container(username: &str, name: &str, image: &str) -> ActionSpec {
+    let cmd = format!("podman create --name '{}' '{}'", name, image);
     ActionSpec {
         action_name: "CreateContainer",
-        mechanism: command_mechanism("podman", ["create", "--name", name, image]),
+        mechanism: podman_as(username, &cmd),
         risk_level: RiskLevel::Medium,
         reboot_required: false,
         rollback_available: false,
     }
 }
 
-pub fn start_container(name: &str) -> ActionSpec {
+pub fn start_container(username: &str, name: &str) -> ActionSpec {
+    let cmd = format!("podman start '{}'", name);
     ActionSpec {
         action_name: "StartContainer",
-        mechanism: command_mechanism("podman", ["start", name]),
+        mechanism: podman_as(username, &cmd),
         risk_level: RiskLevel::Medium,
         reboot_required: false,
         rollback_available: false,
     }
 }
 
-pub fn stop_container(name: &str) -> ActionSpec {
+pub fn stop_container(username: &str, name: &str) -> ActionSpec {
+    let cmd = format!("podman stop '{}'", name);
     ActionSpec {
         action_name: "StopContainer",
-        mechanism: command_mechanism("podman", ["stop", name]),
+        mechanism: podman_as(username, &cmd),
         risk_level: RiskLevel::Medium,
         reboot_required: false,
         rollback_available: false,
     }
 }
 
-pub fn remove_container(name: &str) -> ActionSpec {
+pub fn remove_container(username: &str, name: &str) -> ActionSpec {
+    let cmd = format!("podman rm '{}'", name);
     ActionSpec {
         action_name: "RemoveContainer",
-        mechanism: command_mechanism("podman", ["rm", name]),
+        mechanism: podman_as(username, &cmd),
         risk_level: RiskLevel::Medium,
         reboot_required: false,
         rollback_available: false,
     }
 }
 
-pub fn get_container_info(name: &str) -> ActionSpec {
+pub fn get_container_info(username: &str, name: &str) -> ActionSpec {
+    let cmd = format!("podman inspect '{}'", name);
     ActionSpec {
         action_name: "GetContainerInfo",
-        mechanism: command_mechanism("podman", ["inspect", name]),
+        mechanism: podman_as(username, &cmd),
         risk_level: RiskLevel::Low,
         reboot_required: false,
         rollback_available: false,

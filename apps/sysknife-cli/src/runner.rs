@@ -20,10 +20,10 @@ use std::io::{self, Write as _};
 use std::path::PathBuf;
 
 use clap::CommandFactory;
+use serde_json::{json, Value};
 use sysknife_brain::config::BrainConfig;
 use sysknife_brain::planner::{LlmPlanner, PlanRiskLevel};
 use sysknife_brain::PlanEvent;
-use serde_json::{json, Value};
 
 use sysknife_brain::state_client::StateClient as _;
 
@@ -37,11 +37,11 @@ use crate::error::CliError;
 // ---------------------------------------------------------------------------
 
 /// Returns the daemon socket path from `$SYSKNIFE_SOCKET`, falling back to the
-/// system-wide default `/run/sysknife/sysknife.sock`.
+/// system-wide default `/run/sysknife/daemon.sock`.
 pub fn resolve_socket() -> PathBuf {
     std::env::var_os("SYSKNIFE_SOCKET")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/run/sysknife/sysknife.sock"))
+        .unwrap_or_else(|| PathBuf::from("/run/sysknife/daemon.sock"))
 }
 
 // ---------------------------------------------------------------------------
@@ -115,11 +115,8 @@ fn rfc3339_to_unix(s: &str) -> Option<i64> {
     }
 
     // Range validation.
-    if !(1..=12).contains(&m)
-        || !(1..=31).contains(&d)
-        || h > 23
-        || mn > 59
-        || sec > 60 // allow leap second
+    if !(1..=12).contains(&m) || !(1..=31).contains(&d) || h > 23 || mn > 59 || sec > 60
+    // allow leap second
     {
         return None;
     }
@@ -207,7 +204,9 @@ impl Logger {
                     .map_err(|e| CliError::ConfigOrDaemon(format!("open log file: {e}")))?,
             ),
         };
-        Ok(Self { file: std::sync::Mutex::new(file) })
+        Ok(Self {
+            file: std::sync::Mutex::new(file),
+        })
     }
 
     /// Print `line` to stdout and, if a log file is configured, also append it
@@ -249,13 +248,8 @@ pub fn run_completions(shell: clap_complete::Shell) {
 // ---------------------------------------------------------------------------
 
 /// Check daemon connectivity and print configuration summary.
-pub async fn run_doctor(
-    socket: PathBuf,
-    json_out: bool,
-    log: &Logger,
-) -> Result<(), CliError> {
-    let config = BrainConfig::from_env()
-        .map_err(|e| CliError::ConfigOrDaemon(e.to_string()))?;
+pub async fn run_doctor(socket: PathBuf, json_out: bool, log: &Logger) -> Result<(), CliError> {
+    let config = BrainConfig::from_env().map_err(|e| CliError::ConfigOrDaemon(e.to_string()))?;
 
     let client = DaemonClient::new(socket.clone());
 
@@ -304,11 +298,7 @@ pub async fn run_doctor(
 // ---------------------------------------------------------------------------
 
 /// Query past LACS execution history via `ListJobHistory`.
-pub async fn run_history(
-    args: HistoryArgs,
-    socket: PathBuf,
-    log: &Logger,
-) -> Result<(), CliError> {
+pub async fn run_history(args: HistoryArgs, socket: PathBuf, log: &Logger) -> Result<(), CliError> {
     let since_hours = match args.since.as_deref() {
         None => None,
         Some(s) => {
@@ -330,14 +320,19 @@ pub async fn run_history(
         }
     };
 
-    let params =
-        build_history_params(args.limit, args.status.as_deref(), args.action.as_deref(), since_hours);
+    let params = build_history_params(
+        args.limit,
+        args.status.as_deref(),
+        args.action.as_deref(),
+        since_hours,
+    );
 
     let client = DaemonClient::new(socket);
-    let output = tokio::task::spawn_blocking(move || client.query_action("ListJobHistory", &params))
-        .await
-        .map_err(|e| CliError::ConfigOrDaemon(format!("join: {e}")))?
-        .map_err(|e| CliError::ConfigOrDaemon(e.to_string()))?;
+    let output =
+        tokio::task::spawn_blocking(move || client.query_action("ListJobHistory", &params))
+            .await
+            .map_err(|e| CliError::ConfigOrDaemon(format!("join: {e}")))?
+            .map_err(|e| CliError::ConfigOrDaemon(e.to_string()))?;
 
     log.println(&output);
     Ok(())
@@ -372,8 +367,7 @@ impl RunOpts {
 
 /// Plan and (optionally) execute a single natural-language intent.
 pub async fn run_intent(intent: String, opts: &RunOpts, log: &Logger) -> Result<(), CliError> {
-    let config = BrainConfig::from_env()
-        .map_err(|e| CliError::ConfigOrDaemon(e.to_string()))?;
+    let config = BrainConfig::from_env().map_err(|e| CliError::ConfigOrDaemon(e.to_string()))?;
 
     let plan_client = DaemonClient::new(opts.socket.clone());
 
@@ -388,7 +382,9 @@ pub async fn run_intent(intent: String, opts: &RunOpts, log: &Logger) -> Result<
 
     // Layer 1: spinner — auto-hidden by indicatif when stderr is not a TTY.
     let spinner = if !opts.json {
-        Some(crate::render::make_spinner(format!("Planning \"{intent}\"…")))
+        Some(crate::render::make_spinner(format!(
+            "Planning \"{intent}\"…"
+        )))
     } else {
         None
     };
@@ -488,10 +484,13 @@ pub async fn run_intent(intent: String, opts: &RunOpts, log: &Logger) -> Result<
             }
             ApprovalDecision::RequiresInteraction => return Err(CliError::NonInteractive),
             ApprovalDecision::ExceedsCeiling => {
-                let highest = highest_risk(&plan).expect("ExceedsCeiling implies at least one step");
+                let highest =
+                    highest_risk(&plan).expect("ExceedsCeiling implies at least one step");
                 return Err(CliError::RiskCeilingExceeded {
                     highest: highest.clone(),
-                    ceiling: opts.max_risk.expect("ExceedsCeiling implies --max-risk was set"),
+                    ceiling: opts
+                        .max_risk
+                        .expect("ExceedsCeiling implies --max-risk was set"),
                 });
             }
         }
@@ -525,19 +524,21 @@ pub async fn run_intent(intent: String, opts: &RunOpts, log: &Logger) -> Result<
                 ApprovalDecision::ExceedsCeiling => {
                     return Err(CliError::RiskCeilingExceeded {
                         highest: step.risk_level().clone(),
-                        ceiling: opts.max_risk.expect("ExceedsCeiling implies --max-risk was set"),
+                        ceiling: opts
+                            .max_risk
+                            .expect("ExceedsCeiling implies --max-risk was set"),
                     });
                 }
             }
         }
 
         // Preview the step.
-        let preview = exec_client.preview(step.action_name(), step.params()).await?;
+        let preview = exec_client
+            .preview(step.action_name(), step.params())
+            .await?;
 
         if opts.json {
-            log.println(
-                &serde_json::to_string(&preview).expect("PreviewEnvelope is Serialize"),
-            );
+            log.println(&serde_json::to_string(&preview).expect("PreviewEnvelope is Serialize"));
         } else {
             crate::render::print_step_header(step.action_name(), &preview);
         }
@@ -556,19 +557,24 @@ pub async fn run_intent(intent: String, opts: &RunOpts, log: &Logger) -> Result<
         let mut first_line = true;
 
         let exec_result = exec_client
-            .execute(step.action_name(), step.params(), &preview.request_hash, |line| {
-                if first_line {
-                    if let Some(ref pb) = exec_spinner_ref {
-                        pb.finish_and_clear();
+            .execute(
+                step.action_name(),
+                step.params(),
+                &preview.request_hash,
+                |line| {
+                    if first_line {
+                        if let Some(ref pb) = exec_spinner_ref {
+                            pb.finish_and_clear();
+                        }
+                        first_line = false;
                     }
-                    first_line = false;
-                }
-                if opts.json {
-                    log.println(line);
-                } else {
-                    crate::render::print_output_line(line, log);
-                }
-            })
+                    if opts.json {
+                        log.println(line);
+                    } else {
+                        crate::render::print_output_line(line, log);
+                    }
+                },
+            )
             .await;
 
         // Always clear the exec spinner regardless of success or error.
@@ -581,9 +587,7 @@ pub async fn run_intent(intent: String, opts: &RunOpts, log: &Logger) -> Result<
 
         exec_result.map(|result| {
             if opts.json {
-                log.println(
-                    &serde_json::to_string(&result).expect("ResultEnvelope is Serialize"),
-                );
+                log.println(&serde_json::to_string(&result).expect("ResultEnvelope is Serialize"));
             } else {
                 crate::render::print_step_done(&result, log);
             }
@@ -612,8 +616,8 @@ pub async fn run_intent(intent: String, opts: &RunOpts, log: &Logger) -> Result<
 pub async fn run_repl(opts: &RunOpts, log: &Logger) -> Result<(), CliError> {
     use rustyline::{error::ReadlineError, DefaultEditor};
 
-    let history_path = std::env::var_os("HOME")
-        .map(|h| PathBuf::from(h).join(".local/share/sysknife/history"));
+    let history_path =
+        std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share/sysknife/history"));
 
     let mut rl = DefaultEditor::new()
         .map_err(|e| CliError::ExecutionFailed(format!("readline init: {e}")))?;
@@ -622,7 +626,10 @@ pub async fn run_repl(opts: &RunOpts, log: &Logger) -> Result<(), CliError> {
         // Ensure the parent directory exists before the first load/save.
         if let Some(parent) = p.parent() {
             if let Err(e) = std::fs::create_dir_all(parent) {
-                eprintln!("sysknife: failed to create history directory {}: {e}", parent.display());
+                eprintln!(
+                    "sysknife: failed to create history directory {}: {e}",
+                    parent.display()
+                );
             }
         }
         // Absence of the history file is not an error; any other failure is.
@@ -883,7 +890,11 @@ mod tests {
 
     #[test]
     fn highest_risk_mixed_picks_highest() {
-        let plan = make_plan(&[PlanRiskLevel::Low, PlanRiskLevel::High, PlanRiskLevel::Medium]);
+        let plan = make_plan(&[
+            PlanRiskLevel::Low,
+            PlanRiskLevel::High,
+            PlanRiskLevel::Medium,
+        ]);
         assert_eq!(highest_risk(&plan), Some(&PlanRiskLevel::High));
     }
 
@@ -942,7 +953,10 @@ mod tests {
         let result = run_history(args, PathBuf::from("/nonexistent.sock"), &log).await;
         match result {
             Err(CliError::ConfigOrDaemon(msg)) => {
-                assert!(msg.contains("--since"), "error message must reference --since");
+                assert!(
+                    msg.contains("--since"),
+                    "error message must reference --since"
+                );
             }
             other => panic!("expected ConfigOrDaemon, got {other:?}"),
         }
@@ -972,7 +986,7 @@ mod tests {
 
     #[test]
     fn resolve_socket_uses_env_var() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // SAFETY: we hold ENV_LOCK so no other test mutates SYSKNIFE_SOCKET concurrently.
         unsafe { std::env::set_var("SYSKNIFE_SOCKET", "/tmp/test.sock") };
         let p = resolve_socket();
@@ -982,9 +996,9 @@ mod tests {
 
     #[test]
     fn resolve_socket_default_without_env_var() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { std::env::remove_var("SYSKNIFE_SOCKET") };
         let p = resolve_socket();
-        assert_eq!(p, PathBuf::from("/run/sysknife/sysknife.sock"));
+        assert_eq!(p, PathBuf::from("/run/sysknife/daemon.sock"));
     }
 }

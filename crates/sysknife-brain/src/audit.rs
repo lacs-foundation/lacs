@@ -86,7 +86,9 @@ impl SafetyAuditLog {
     pub fn default_path() -> PathBuf {
         if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
             if !xdg.is_empty() {
-                return PathBuf::from(xdg).join("sysknife").join("safety-audit.jsonl");
+                return PathBuf::from(xdg)
+                    .join("sysknife")
+                    .join("safety-audit.jsonl");
             }
         }
         // Fall back to ~/.local/share
@@ -245,7 +247,9 @@ mod tests {
         // the fallback branch directly.
         let path = SafetyAuditLog::default_path();
         assert!(
-            path.to_str().unwrap().ends_with("sysknife/safety-audit.jsonl"),
+            path.to_str()
+                .unwrap()
+                .ends_with("sysknife/safety-audit.jsonl"),
             "default path should end with sysknife/safety-audit.jsonl, got: {}",
             path.display()
         );

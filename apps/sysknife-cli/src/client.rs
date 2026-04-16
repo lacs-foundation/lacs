@@ -27,10 +27,10 @@ use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use serde_json::Value;
 use sysknife_brain::planner::PlanningError;
 use sysknife_brain::state_client::{CuratedState, StateClient};
 use sysknife_types::{PreviewEnvelope, ResultEnvelope};
-use serde_json::Value;
 
 use crate::error::CliError;
 
@@ -123,9 +123,7 @@ fn string_array(field: &str, v: &Value) -> Result<Vec<String>, PlanningError> {
         .enumerate()
         .map(|(i, x)| {
             x.as_str().map(String::from).ok_or_else(|| {
-                PlanningError::StateUnavailable(format!(
-                    "field '{field}[{i}]' is not a string"
-                ))
+                PlanningError::StateUnavailable(format!("field '{field}[{i}]' is not a string"))
             })
         })
         .collect()
@@ -143,7 +141,9 @@ pub struct DaemonClient {
 impl DaemonClient {
     /// Construct with the resolved socket path (caller handles config/env lookup).
     pub fn new(socket_path: impl Into<PathBuf>) -> Self {
-        Self { socket_path: socket_path.into() }
+        Self {
+            socket_path: socket_path.into(),
+        }
     }
 
     // ------------------------------------------------------------------
@@ -300,8 +300,8 @@ impl DaemonClient {
 
         match resp["type"].as_str() {
             Some("preview_response") => {
-                let envelope: PreviewEnvelope =
-                    serde_json::from_value(resp["preview"].clone()).map_err(|e| {
+                let envelope: PreviewEnvelope = serde_json::from_value(resp["preview"].clone())
+                    .map_err(|e| {
                         CliError::ConfigOrDaemon(format!("parse preview envelope: {e}"))
                     })?;
                 Ok(envelope)
@@ -371,9 +371,8 @@ impl DaemonClient {
                 }
                 Some("job_completed") => {
                     let envelope: ResultEnvelope =
-                        serde_json::from_value(resp["result"].clone()).map_err(|e| {
-                            CliError::ExecutionFailed(format!("parse result: {e}"))
-                        })?;
+                        serde_json::from_value(resp["result"].clone())
+                            .map_err(|e| CliError::ExecutionFailed(format!("parse result: {e}")))?;
                     return Ok(envelope);
                 }
                 Some("error_response") => {
@@ -411,16 +410,15 @@ impl StateClient for DaemonClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sysknife_types::{JobState, RiskLevel};
     use std::sync::atomic::{AtomicU64, Ordering};
+    use sysknife_types::{JobState, RiskLevel};
 
     static SOCKET_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     /// Returns a unique temp socket path per test invocation.
     fn temp_socket_path() -> std::path::PathBuf {
         let n = SOCKET_COUNTER.fetch_add(1, Ordering::SeqCst);
-        std::env::temp_dir()
-            .join(format!("sysknife-cli-test-{}-{n}.sock", std::process::id()))
+        std::env::temp_dir().join(format!("sysknife-cli-test-{}-{n}.sock", std::process::id()))
     }
 
     /// Spawn a background thread that accepts one sync connection and runs
@@ -446,7 +444,11 @@ mod tests {
         let handle = serve_sync(&socket_path, |mut stream| {
             let raw = read_framed(&mut stream).unwrap();
             let req: Value = serde_json::from_slice(&raw).unwrap();
-            assert_eq!(req["type"].as_str(), Some("query_state"), "wrong request type");
+            assert_eq!(
+                req["type"].as_str(),
+                Some("query_state"),
+                "wrong request type"
+            );
 
             let resp = serde_json::json!({
                 "type": "state_response",
@@ -513,7 +515,10 @@ mod tests {
         assert_eq!(state.deployment(), ""); // null → empty string
         assert!(state.flatpaks().is_empty(), "null flatpaks → empty");
         assert!(state.toolboxes().is_empty(), "null toolboxes → empty");
-        assert!(state.layered_packages().is_empty(), "null layered_packages → empty");
+        assert!(
+            state.layered_packages().is_empty(),
+            "null layered_packages → empty"
+        );
         assert!(state.containers().is_empty(), "null containers → empty");
     }
 

@@ -28,11 +28,11 @@ use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
 #[cfg(any(test, not(feature = "demo")))]
+use serde_json::Value;
+#[cfg(any(test, not(feature = "demo")))]
 use sysknife_brain::planner::PlanningError;
 #[cfg(any(test, not(feature = "demo")))]
 use sysknife_brain::state_client::{CuratedState, StateClient};
-#[cfg(any(test, not(feature = "demo")))]
-use serde_json::Value;
 
 /// Maximum response size accepted from the daemon (4 MiB — mirrors daemon limit).
 const MAX_RESPONSE_BYTES: u32 = 4 * 1024 * 1024;
@@ -435,9 +435,9 @@ async fn async_read_framed(stream: &mut tokio::net::UnixStream) -> io::Result<Ve
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sysknife_brain::planner::PlanningError;
     use std::io::{Read, Write};
     use std::os::unix::net::UnixListener;
+    use sysknife_brain::planner::PlanningError;
     use tempfile::tempdir;
 
     /// Spawn a mock daemon that accepts one connection, discards the request,

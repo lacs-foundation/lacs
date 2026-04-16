@@ -3,7 +3,7 @@ use sysknife_types::RiskLevel;
 
 pub fn specs() -> Vec<ActionSpec> {
     vec![
-        configure_wifi("CafeHotspot"),
+        configure_wifi("CafeHotspot", None),
         set_dns_servers("wlp1s0", &["1.1.1.1", "8.8.8.8"]),
         configure_firewall("public", "ssh", true),
         get_firewall_state(),
@@ -11,10 +11,26 @@ pub fn specs() -> Vec<ActionSpec> {
     ]
 }
 
-pub fn configure_wifi(ssid: &str) -> ActionSpec {
+pub fn configure_wifi(ssid: &str, password: Option<&str>) -> ActionSpec {
+    // Build: nmcli device wifi connect <ssid> [password <pw>]
+    // Without a password, nmcli connects to open networks.
+    let mut args = vec![
+        "nmcli".to_string(),
+        "device".to_string(),
+        "wifi".to_string(),
+        "connect".to_string(),
+        ssid.to_string(),
+    ];
+    if let Some(pw) = password {
+        args.push("password".to_string());
+        args.push(pw.to_string());
+    }
     ActionSpec {
         action_name: "ConfigureWifi",
-        mechanism: command_mechanism("nmcli", ["device", "wifi", "connect", ssid, "--ask"]),
+        mechanism: super::ActionMechanism::Command {
+            program: "sudo",
+            args,
+        },
         risk_level: RiskLevel::Medium,
         reboot_required: false,
         rollback_available: false,
@@ -37,7 +53,11 @@ pub fn set_dns_servers(interface: &str, servers: &[&str]) -> ActionSpec {
 }
 
 pub fn configure_firewall(zone: &str, service: &str, enabled: bool) -> ActionSpec {
-    let verb = if enabled { "add-service" } else { "remove-service" };
+    let verb = if enabled {
+        "add-service"
+    } else {
+        "remove-service"
+    };
     let script = format!(
         "firewall-cmd --permanent --zone='{}' --{}='{}' && firewall-cmd --reload",
         zone, verb, service

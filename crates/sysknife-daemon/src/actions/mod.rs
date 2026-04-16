@@ -6,6 +6,7 @@ pub mod filesystem;
 pub mod flatpak;
 pub mod identity;
 pub mod layering;
+pub mod layering_ubuntu;
 pub mod network;
 pub mod package_repos;
 pub mod processes;

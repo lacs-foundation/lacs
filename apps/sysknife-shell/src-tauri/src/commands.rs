@@ -1,4 +1,5 @@
 use crate::events::DaemonJobOutcome;
+use serde::{Deserialize, Serialize};
 use sysknife_brain::config::BrainConfig;
 #[cfg(any(test, feature = "demo"))]
 use sysknife_brain::planner::PlanningError;
@@ -6,7 +7,6 @@ use sysknife_brain::planner::{LlmPlanner, Plan};
 use sysknife_brain::state_client::CuratedState;
 #[cfg(any(test, feature = "demo"))]
 use sysknife_brain::state_client::StateClient;
-use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
 // ---------------------------------------------------------------------------
@@ -682,12 +682,12 @@ fn provider_is_configured() -> bool {
 mod tests {
     use super::*;
     use async_trait::async_trait;
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
     use sysknife_brain::planner::PlanRiskLevel;
     use sysknife_brain::provider::{
         Completion, ContentBlock, LlmProvider, Message, ProviderError, StopReason, ToolDefinition,
     };
-    use std::collections::VecDeque;
-    use std::sync::Mutex;
 
     struct MockProvider {
         turns: Mutex<VecDeque<Result<Completion, ProviderError>>>,

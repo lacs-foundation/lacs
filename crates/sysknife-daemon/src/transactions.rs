@@ -1,7 +1,7 @@
-use sysknife_types::{JobState, PreviewEnvelope, RiskLevel, TransactionRecord};
 use rusqlite::{params, Connection};
 use serde::{de::DeserializeOwned, Serialize};
 use std::path::{Path, PathBuf};
+use sysknife_types::{JobState, PreviewEnvelope, RiskLevel, TransactionRecord};
 use uuid::Uuid;
 
 /// Data provided by the caller when recording a new transaction.

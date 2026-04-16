@@ -75,20 +75,24 @@ fn flatpak_family_covers_install_remove_and_query_actions() {
 }
 
 #[test]
-fn flatpak_install_uses_flatpak_cli_without_shell() {
-    let spec = flatpak::install_flatpak("org.mozilla.firefox", "flathub");
+fn flatpak_install_routes_through_runuser() {
+    // InstallFlatpak must run as the target user (user-scoped Flatpak store).
+    // The daemon runs as `sysknife`; `sudo runuser -l <username>` switches to
+    // the correct user environment so `--user` operations reach the right store.
+    let spec = flatpak::install_flatpak("testuser", "org.mozilla.firefox", "flathub");
 
     assert_eq!(spec.action_name, "InstallFlatpak");
     assert_eq!(spec.risk_level, RiskLevel::Medium);
     assert_eq!(
         spec.mechanism,
         ActionMechanism::Command {
-            program: "flatpak",
+            program: "sudo",
             args: vec![
-                "install".to_string(),
-                "-y".to_string(),
-                "flathub".to_string(),
-                "org.mozilla.firefox".to_string(),
+                "runuser".to_string(),
+                "-l".to_string(),
+                "testuser".to_string(),
+                "-c".to_string(),
+                "flatpak install --user -y 'flathub' 'org.mozilla.firefox'".to_string(),
             ],
         }
     );
@@ -108,21 +112,24 @@ fn toolbox_family_covers_create_enter_list_and_remove() {
 }
 
 #[test]
-fn toolbox_create_uses_toolbox_cli() {
-    let spec = toolbox::create_toolbox("sysknife-dev", Some("41"), None);
+fn toolbox_create_routes_through_runuser_with_xdg_runtime_dir() {
+    // CreateToolbox must run as the target user (rootless Podman per-user).
+    // XDG_RUNTIME_DIR must be set explicitly because `runuser -l` does not
+    // trigger pam_systemd — without it toolbox fails to locate its Podman socket.
+    let spec = toolbox::create_toolbox("testuser", "sysknife-dev", Some("41"), None);
 
     assert_eq!(spec.action_name, "CreateToolbox");
     assert_eq!(spec.risk_level, RiskLevel::Medium);
     assert_eq!(
         spec.mechanism,
         ActionMechanism::Command {
-            program: "toolbox",
+            program: "sudo",
             args: vec![
-                "create".to_string(),
-                "--container".to_string(),
-                "sysknife-dev".to_string(),
-                "--release".to_string(),
-                "41".to_string()
+                "runuser".to_string(),
+                "-l".to_string(),
+                "testuser".to_string(),
+                "-c".to_string(),
+                "XDG_RUNTIME_DIR=/run/user/$(id -u) toolbox create --container 'sysknife-dev' --release '41'".to_string(),
             ],
         }
     );
@@ -291,20 +298,20 @@ fn reset_layered_package_override_uses_all_flag() {
 
 #[test]
 fn update_flatpak_with_app_id_appends_it() {
-    use sysknife_daemon::actions::flatpak;
-
-    let spec = flatpak::update_flatpak(Some("org.mozilla.Firefox"));
+    let spec = flatpak::update_flatpak("testuser", Some("org.mozilla.Firefox"));
 
     assert_eq!(spec.action_name, "UpdateFlatpak");
     assert_eq!(spec.risk_level, RiskLevel::Medium);
     assert_eq!(
         spec.mechanism,
         ActionMechanism::Command {
-            program: "flatpak",
+            program: "sudo",
             args: vec![
-                "update".to_string(),
-                "-y".to_string(),
-                "org.mozilla.Firefox".to_string(),
+                "runuser".to_string(),
+                "-l".to_string(),
+                "testuser".to_string(),
+                "-c".to_string(),
+                "flatpak update --user -y 'org.mozilla.Firefox'".to_string(),
             ],
         }
     );
@@ -312,22 +319,30 @@ fn update_flatpak_with_app_id_appends_it() {
 
 #[test]
 fn update_flatpak_without_app_id_omits_it() {
-    use sysknife_daemon::actions::flatpak;
-
-    // None means "update all" — flatpak update -y with no trailing argument.
-    let spec = flatpak::update_flatpak(None);
+    // None means "update all" — flatpak update --user -y with no trailing argument.
+    let spec = flatpak::update_flatpak("testuser", None);
 
     assert_eq!(spec.action_name, "UpdateFlatpak");
     assert_eq!(
         spec.mechanism,
         ActionMechanism::Command {
-            program: "flatpak",
-            args: vec!["update".to_string(), "-y".to_string()],
+            program: "sudo",
+            args: vec![
+                "runuser".to_string(),
+                "-l".to_string(),
+                "testuser".to_string(),
+                "-c".to_string(),
+                "flatpak update --user -y".to_string(),
+            ],
         }
     );
-    // Explicitly assert no trailing argument was appended.
+    // Explicitly assert no trailing app_id was appended inside the shell command.
     if let ActionMechanism::Command { args, .. } = &spec.mechanism {
-        assert_eq!(args.len(), 2, "update-all must have exactly 'update -y', no app_id");
+        let cmd = args.last().unwrap();
+        assert!(
+            !cmd.contains("org.mozilla"),
+            "update-all command must not contain an app_id: {cmd}"
+        );
     }
 }
 
@@ -415,20 +430,26 @@ fn container_family_covers_runtime_lifecycle() {
 }
 
 #[test]
-fn container_create_uses_podman_without_shell() {
-    let spec =
-        containers::create_container("sysknife-dev", "registry.fedoraproject.org/fedora-toolbox:41");
+fn container_create_routes_through_runuser() {
+    // CreateContainer must run in the user's rootless Podman context.
+    // Direct podman invocation as `sysknife` would use an empty, unrelated store.
+    let spec = containers::create_container(
+        "testuser",
+        "sysknife-dev",
+        "registry.fedoraproject.org/fedora-toolbox:41",
+    );
 
     assert_eq!(spec.action_name, "CreateContainer");
     assert_eq!(
         spec.mechanism,
         ActionMechanism::Command {
-            program: "podman",
+            program: "sudo",
             args: vec![
-                "create".to_string(),
-                "--name".to_string(),
-                "sysknife-dev".to_string(),
-                "registry.fedoraproject.org/fedora-toolbox:41".to_string(),
+                "runuser".to_string(),
+                "-l".to_string(),
+                "testuser".to_string(),
+                "-c".to_string(),
+                "podman create --name 'sysknife-dev' 'registry.fedoraproject.org/fedora-toolbox:41'".to_string(),
             ],
         }
     );
@@ -440,9 +461,15 @@ fn collect_diagnostics_is_bounded_to_500_lines() {
     // On an active system this can be 100K+ lines. -n 500 caps the output.
     let spec = deployment::collect_diagnostics();
     if let ActionMechanism::Command { args, .. } = &spec.mechanism {
-        assert!(args.contains(&"-n".to_string()), "-n flag required to bound output");
+        assert!(
+            args.contains(&"-n".to_string()),
+            "-n flag required to bound output"
+        );
         assert!(args.contains(&"500".to_string()), "limit must be 500 lines");
-        assert!(args.contains(&"--no-pager".to_string()), "--no-pager required");
+        assert!(
+            args.contains(&"--no-pager".to_string()),
+            "--no-pager required"
+        );
     }
 }
 

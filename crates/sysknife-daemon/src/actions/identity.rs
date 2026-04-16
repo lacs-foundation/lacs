@@ -45,7 +45,11 @@ pub fn set_ntp(enabled: bool) -> ActionSpec {
         action_name: "SetNtp",
         mechanism: command_mechanism(
             "sudo",
-            ["timedatectl", "set-ntp", if enabled { "true" } else { "false" }],
+            [
+                "timedatectl",
+                "set-ntp",
+                if enabled { "true" } else { "false" },
+            ],
         ),
         risk_level: RiskLevel::Medium,
         reboot_required: false,

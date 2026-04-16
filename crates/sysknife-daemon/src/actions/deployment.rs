@@ -74,7 +74,12 @@ pub fn pin_deployment(index: u32) -> ActionSpec {
         action_name: "PinDeployment",
         mechanism: super::ActionMechanism::Command {
             program: "sudo",
-            args: vec!["ostree".to_string(), "admin".to_string(), "pin".to_string(), index.to_string()],
+            args: vec![
+                "ostree".to_string(),
+                "admin".to_string(),
+                "pin".to_string(),
+                index.to_string(),
+            ],
         },
         risk_level: RiskLevel::High,
         reboot_required: false,

@@ -228,7 +228,12 @@ mod tests {
     #[test]
     fn json_and_timeout_and_step_by_step_parsed() {
         let cli = Cli::try_parse_from([
-            "sysknife", "--json", "--timeout", "30", "--step-by-step", "intent",
+            "sysknife",
+            "--json",
+            "--timeout",
+            "30",
+            "--step-by-step",
+            "intent",
         ])
         .unwrap();
         assert!(cli.json);
@@ -238,8 +243,12 @@ mod tests {
 
     #[test]
     fn log_to_path_parsed() {
-        let cli = Cli::try_parse_from(["sysknife", "--log-to", "/tmp/sysknife.log", "intent"]).unwrap();
-        assert_eq!(cli.log_to.as_deref(), Some(std::path::Path::new("/tmp/sysknife.log")));
+        let cli =
+            Cli::try_parse_from(["sysknife", "--log-to", "/tmp/sysknife.log", "intent"]).unwrap();
+        assert_eq!(
+            cli.log_to.as_deref(),
+            Some(std::path::Path::new("/tmp/sysknife.log"))
+        );
     }
 
     #[test]
@@ -307,7 +316,9 @@ mod tests {
         let cli = Cli::try_parse_from(["sysknife", "completions", "bash"]).unwrap();
         assert!(matches!(
             cli.command,
-            Some(Command::Completions { shell: clap_complete::Shell::Bash })
+            Some(Command::Completions {
+                shell: clap_complete::Shell::Bash
+            })
         ));
     }
 
@@ -318,10 +329,9 @@ mod tests {
 
     #[test]
     fn history_with_partial_flags() {
-        let cli = Cli::try_parse_from([
-            "sysknife", "history", "--status", "failed", "--limit", "10",
-        ])
-        .unwrap();
+        let cli =
+            Cli::try_parse_from(["sysknife", "history", "--status", "failed", "--limit", "10"])
+                .unwrap();
         match cli.command {
             Some(Command::History(args)) => {
                 assert_eq!(args.status.as_deref(), Some("failed"));

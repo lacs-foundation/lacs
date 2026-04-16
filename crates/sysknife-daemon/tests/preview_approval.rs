@@ -1,9 +1,9 @@
+use serde_json::json;
 use sysknife_daemon::jobs::JobStateMachine;
 use sysknife_daemon::policy::{approval_matches_request, require_fresh_approval, ApprovalError};
 use sysknife_daemon::preview::preview_action;
 use sysknife_daemon::transactions::{NewTransaction, TransactionStore};
 use sysknife_types::{JobState, PreviewEnvelope, RequestEnvelope, RiskLevel};
-use serde_json::json;
 use tempfile::tempdir;
 
 fn request(action_name: &str, request_id: &str, request_hash: &str) -> RequestEnvelope {

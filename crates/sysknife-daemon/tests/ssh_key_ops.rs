@@ -33,15 +33,26 @@ const USERNAME: &str = "testuser";
 /// Build an ActionSpec for `add_authorized_key` or `remove_authorized_key` that
 /// operates on `temp_path` instead of the real `/home/{USERNAME}/.ssh/authorized_keys`.
 ///
-/// The production functions embed the home path in a single shell script string
-/// (the single `args[1]` of `sh -c`). Replacing that substring redirects all
-/// file operations to the temp path without changing any other part of the script.
+/// The production functions use `sudo sh -c` so the daemon (running as the sysknife
+/// system user) can write to files owned by the target user. In tests, we strip the
+/// `sudo` prefix and run as the current user against a tempfile — no elevated privileges
+/// needed, and the script logic is still fully exercised.
 fn redirect_spec_path(
     mut spec: sysknife_daemon::actions::ActionSpec,
     temp_path: &str,
 ) -> sysknife_daemon::actions::ActionSpec {
     let real_path = format!("/home/{USERNAME}/.ssh/authorized_keys");
-    if let ActionMechanism::Command { ref mut args, .. } = spec.mechanism {
+    if let ActionMechanism::Command {
+        ref mut program,
+        ref mut args,
+        ..
+    } = spec.mechanism
+    {
+        // Strip 'sudo sh' → 'sh' so tests don't require elevated privileges.
+        if *program == "sudo" && args.first().map(String::as_str) == Some("sh") {
+            *program = "sh";
+            args.remove(0);
+        }
         for arg in args.iter_mut() {
             if arg.contains(&real_path) {
                 *arg = arg.replace(&real_path, temp_path);
@@ -56,7 +67,11 @@ fn redirect_spec_path(
 #[tokio::test]
 async fn add_authorized_key_appends_key_to_existing_empty_file() {
     let dir = tempdir().unwrap();
-    let keys_path = dir.path().join("authorized_keys").to_string_lossy().into_owned();
+    let keys_path = dir
+        .path()
+        .join("authorized_keys")
+        .to_string_lossy()
+        .into_owned();
     std::fs::write(&keys_path, "").unwrap();
 
     let spec = redirect_spec_path(ssh::add_authorized_key(USERNAME, TEST_KEY), &keys_path);
@@ -76,7 +91,11 @@ async fn add_authorized_key_creates_file_when_absent() {
     // grep returns 1 on missing file (stderr suppressed by 2>/dev/null),
     // so the append branch always runs when the file doesn't exist.
     let dir = tempdir().unwrap();
-    let keys_path = dir.path().join("authorized_keys").to_string_lossy().into_owned();
+    let keys_path = dir
+        .path()
+        .join("authorized_keys")
+        .to_string_lossy()
+        .into_owned();
     // Do NOT create the file — verify the script creates it.
 
     let spec = redirect_spec_path(ssh::add_authorized_key(USERNAME, TEST_KEY), &keys_path);
@@ -100,7 +119,11 @@ async fn add_authorized_key_is_idempotent() {
     // The `grep -Fxq key path 2>/dev/null || echo key >> path` idiom
     // only appends when the exact line is absent.
     let dir = tempdir().unwrap();
-    let keys_path = dir.path().join("authorized_keys").to_string_lossy().into_owned();
+    let keys_path = dir
+        .path()
+        .join("authorized_keys")
+        .to_string_lossy()
+        .into_owned();
     std::fs::write(&keys_path, format!("{TEST_KEY}\n")).unwrap();
 
     let spec = redirect_spec_path(ssh::add_authorized_key(USERNAME, TEST_KEY), &keys_path);
@@ -117,7 +140,11 @@ async fn add_authorized_key_is_idempotent() {
 #[tokio::test]
 async fn add_authorized_key_preserves_other_keys() {
     let dir = tempdir().unwrap();
-    let keys_path = dir.path().join("authorized_keys").to_string_lossy().into_owned();
+    let keys_path = dir
+        .path()
+        .join("authorized_keys")
+        .to_string_lossy()
+        .into_owned();
     std::fs::write(&keys_path, format!("{OTHER_KEY}\n")).unwrap();
 
     let spec = redirect_spec_path(ssh::add_authorized_key(USERNAME, TEST_KEY), &keys_path);
@@ -139,13 +166,14 @@ async fn add_authorized_key_preserves_other_keys() {
 #[tokio::test]
 async fn remove_authorized_key_deletes_exact_matching_line() {
     let dir = tempdir().unwrap();
-    let keys_path = dir.path().join("authorized_keys").to_string_lossy().into_owned();
+    let keys_path = dir
+        .path()
+        .join("authorized_keys")
+        .to_string_lossy()
+        .into_owned();
     std::fs::write(&keys_path, format!("{TEST_KEY}\n")).unwrap();
 
-    let spec = redirect_spec_path(
-        ssh::remove_authorized_key(USERNAME, TEST_KEY),
-        &keys_path,
-    );
+    let spec = redirect_spec_path(ssh::remove_authorized_key(USERNAME, TEST_KEY), &keys_path);
     let out = execute_spec(&spec).await.unwrap();
 
     assert_eq!(out.exit_code, 0);
@@ -159,13 +187,14 @@ async fn remove_authorized_key_deletes_exact_matching_line() {
 #[tokio::test]
 async fn remove_authorized_key_preserves_other_keys() {
     let dir = tempdir().unwrap();
-    let keys_path = dir.path().join("authorized_keys").to_string_lossy().into_owned();
+    let keys_path = dir
+        .path()
+        .join("authorized_keys")
+        .to_string_lossy()
+        .into_owned();
     std::fs::write(&keys_path, format!("{TEST_KEY}\n{OTHER_KEY}\n")).unwrap();
 
-    let spec = redirect_spec_path(
-        ssh::remove_authorized_key(USERNAME, TEST_KEY),
-        &keys_path,
-    );
+    let spec = redirect_spec_path(ssh::remove_authorized_key(USERNAME, TEST_KEY), &keys_path);
     execute_spec(&spec).await.unwrap();
 
     let content = std::fs::read_to_string(&keys_path).unwrap();
@@ -184,7 +213,11 @@ async fn remove_authorized_key_is_noop_when_key_absent() {
     // `sed -i '\|^key$|d' path` is silent when the pattern doesn't match —
     // exit code 0, file unchanged.
     let dir = tempdir().unwrap();
-    let keys_path = dir.path().join("authorized_keys").to_string_lossy().into_owned();
+    let keys_path = dir
+        .path()
+        .join("authorized_keys")
+        .to_string_lossy()
+        .into_owned();
     std::fs::write(&keys_path, format!("{OTHER_KEY}\n")).unwrap();
 
     let spec = redirect_spec_path(
