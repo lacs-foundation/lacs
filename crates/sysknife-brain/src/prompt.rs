@@ -370,9 +370,9 @@ GetKernelArguments, GetPendingUpdates,
 SearchFlatpakApps, ListFlatpakRemotes, ListInstalledFlatpaks, GetFlatpakAppInfo,
 ListToolboxes, GetLayeredPackages,
 ListServices, GetServiceLogs, GetServiceStatus, ListTimers, GetFirewallState,
-GetNetworkStatus, GetDiskUsage, ListProcesses, GetMemoryInfo, GetAuthorizedKeys,
-ListPackageRepositories, ListContainers, GetContainerInfo, ListUsers, ListGroups,
-ListJobHistory
+GetNetworkStatus, GetDiskUsage, GetDateTime, ListProcesses, GetMemoryInfo,
+GetAuthorizedKeys, ListPackageRepositories, ListContainers, GetContainerInfo,
+ListUsers, ListGroups, ListJobHistory
 
 ### Medium risk — approval required before execution
 
@@ -381,7 +381,7 @@ CreateToolbox, RemoveToolbox,
 StartService, StopService, RestartService, ReloadService, ReloadDaemon,
 SetServiceEnabled, MaskService, UnmaskService,
 ConfigureWifi, SetDnsServers, ConfigureFirewall,
-GetDateTime, SetHostname, SetTimezone, SetLocale, SetNtp,
+SetHostname, SetTimezone, SetLocale, SetNtp,
 AddPackageRepository, RemovePackageRepository, EnablePackageRepository, DisablePackageRepository,
 CreateContainer, StartContainer, StopContainer, RemoveContainer,
 CreateUser
