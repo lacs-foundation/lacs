@@ -52,7 +52,7 @@ the product's `BrainConfig::from_env`):
 | Variable set | Provider used | Model |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | `anthropic` | `claude-sonnet-4-6` |
-| `OPENAI_API_KEY` | `openai` | `gpt-4o` |
+| `OPENAI_API_KEY` | `openai` | `gpt-4.1` |
 | `GEMINI_API_KEY` | `gemini` | `gemini-2.0-flash` |
 | neither | `ollama` | `qwen3:8b` (must be pulled; CPU-only is impractical — use `SYSKNIFE_LLM_MODEL=llama3.2:3b` on CPU) |
 
@@ -79,11 +79,13 @@ SYSKNIFE_ALLOW_DESTRUCTIVE=1 OPENAI_API_KEY=sk-... tests/e2e/dev-stories.sh
 ```
 
 **When to use this tier:**
+
 - After any change to `crates/sysknife-brain/src/prompt.rs`
 - After adding or changing a `query_*` tool or `Get*`/`List*` action
 - As a quick sanity check for brain/planner changes before pushing
 
 **Expected results on a dev machine:**
+
 - Stories 1-7: all pass
 - Story 8 (install vim): fails — model calls `query_packages`, daemon
   can't run `rpm-ostree`, model escalates to `get_system_state` →
@@ -217,7 +219,7 @@ sudo chmod +r /boot/vmlinuz-*
 > sidesteps the GUI entirely by configuring the VM offline via
 > `libguestfs`. The `enable-ssh` subcommand is still there as a fallback
 > if your Anaconda install did create a usable user.
-
+>
 > What `bootstrap` does, in one shot: create user `lacsdev`, set the
 > password (`lacsdev`), set root password (`sysknife`), install your VM
 > SSH key, NOPASSWD-sudoers `lacsdev`, enable `sshd`, set SELinux to

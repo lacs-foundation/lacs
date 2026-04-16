@@ -191,7 +191,7 @@ to override.
 | `SYSKNIFE_LLM_PROVIDER` | Force a provider: `anthropic`, `openai`, `gemini`, `ollama`, `groq`, `deepseek`, `mistral`, `xai` |
 | `SYSKNIFE_LLM_MODEL` | Override the model name for the selected provider |
 | `ANTHROPIC_API_KEY` | Use the Anthropic provider (default model: `claude-sonnet-4-6`) |
-| `OPENAI_API_KEY` | Use the OpenAI provider (default model: `gpt-4o-2024-11-20`) |
+| `OPENAI_API_KEY` | Use the OpenAI provider (default model: `gpt-4.1`) |
 | `GEMINI_API_KEY` | Use the Gemini provider (default model: `gemini-2.0-flash`) |
 | `SYSKNIFE_ANTHROPIC_URL` | Override the Anthropic base URL (default: `https://api.anthropic.com`) |
 | `SYSKNIFE_OLLAMA_URL` | Override the Ollama base URL (default: `http://localhost:11434`) |

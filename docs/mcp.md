@@ -121,7 +121,7 @@ Edit `.mcp.json`:
         "SYSKNIFE_SOCKET": "/path/to/daemon.sock",
         "SYSKNIFE_LLM_PROVIDER": "openai",
         "OPENAI_API_KEY": "sk-...",
-        "SYSKNIFE_LLM_MODEL": "gpt-4o-2024-11-20"
+        "SYSKNIFE_LLM_MODEL": "gpt-4.1"
       }
     }
   }
