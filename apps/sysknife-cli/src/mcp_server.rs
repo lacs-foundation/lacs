@@ -22,7 +22,7 @@ use rmcp::{
     transport::stdio,
     ErrorData, ServiceExt,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use sysknife_brain::config::BrainConfig;
 use sysknife_brain::planner::LlmPlanner;
@@ -39,6 +39,40 @@ use crate::runner::resolve_socket;
 pub struct PlanInput {
     /// Natural-language intent, e.g. "show disk usage" or "add vim to my system".
     pub intent: String,
+}
+
+// ---------------------------------------------------------------------------
+// Output schema
+//
+// Concrete structs are required by rmcp: `serde_json::Value` alone produces
+// a root schema of `{}` (no `type` field), which violates the MCP spec.
+// A named struct always generates `{"type": "object", "properties": {...}}`.
+// ---------------------------------------------------------------------------
+
+/// One action step in the proposed plan.
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PlanStepOutput {
+    /// Canonical action name from the SysKnife catalogue.
+    pub action_name: String,
+    /// Human-readable description of what this step does.
+    pub summary: String,
+    /// Risk level: `"low"`, `"medium"`, or `"high"`.
+    pub risk_level: String,
+    /// Action-specific parameters.
+    pub params: serde_json::Value,
+}
+
+/// The full plan returned by `lacs_plan`.
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PlanOutput {
+    /// The original natural-language intent.
+    pub intent: String,
+    /// One-line summary of the plan.
+    pub summary: String,
+    /// Longer explanation of why this plan was chosen.
+    pub explanation: String,
+    /// Ordered list of steps to execute.
+    pub steps: Vec<PlanStepOutput>,
 }
 
 // ---------------------------------------------------------------------------
@@ -61,11 +95,14 @@ impl LacsMcpServer {
     async fn lacs_plan(
         &self,
         Parameters(PlanInput { intent }): Parameters<PlanInput>,
-    ) -> Result<Json<serde_json::Value>, ErrorData> {
-        plan_intent_inner(&intent)
+    ) -> Result<Json<PlanOutput>, ErrorData> {
+        let value = plan_intent_inner(&intent)
             .await
-            .map(Json)
-            .map_err(|e| ErrorData::internal_error(e, None))
+            .map_err(|e| ErrorData::internal_error(e, None))?;
+        let output: PlanOutput = serde_json::from_value(value).map_err(|e| {
+            ErrorData::internal_error(format!("output deserialization error: {e}"), None)
+        })?;
+        Ok(Json(output))
     }
 }
 
