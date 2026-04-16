@@ -124,7 +124,7 @@ fn every_spec_action_is_recognised_by_executor() {
 /// `KNOWN_ACTIONS` list.
 #[test]
 fn every_spec_action_exists_in_brain_known_actions() {
-    let known: BTreeSet<&str> = KNOWN_ACTIONS.iter().copied().collect();
+    let known: BTreeSet<&str> = KNOWN_ACTIONS.iter().map(|(n, _)| *n).collect();
     let mut missing = Vec::new();
     for name in all_spec_action_names() {
         if !known.contains(name) {
@@ -143,7 +143,7 @@ fn every_spec_action_exists_in_brain_known_actions() {
 fn brain_known_actions_has_no_stale_entries() {
     let spec_names = all_spec_action_names();
     let mut stale = Vec::new();
-    for &name in KNOWN_ACTIONS {
+    for &(name, _) in KNOWN_ACTIONS {
         if !spec_names.contains(name) {
             stale.push(name);
         }
