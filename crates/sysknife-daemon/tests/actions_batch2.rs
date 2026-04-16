@@ -345,7 +345,7 @@ fn configure_firewall_disable_uses_remove_service_with_reload() {
 }
 
 #[test]
-fn identity_family_covers_hostname_timezone_locale_and_ntp() {
+fn identity_family_covers_all_identity_actions() {
     let names = identity::specs()
         .into_iter()
         .map(|spec| spec.action_name)
@@ -353,7 +353,13 @@ fn identity_family_covers_hostname_timezone_locale_and_ntp() {
 
     assert_eq!(
         names,
-        vec!["SetHostname", "SetTimezone", "SetLocale", "SetNtp"]
+        vec![
+            "GetDateTime",
+            "SetHostname",
+            "SetTimezone",
+            "SetLocale",
+            "SetNtp"
+        ]
     );
 }
 

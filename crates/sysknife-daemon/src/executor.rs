@@ -320,6 +320,7 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
         }
 
         // ── Identity ─────────────────────────────────────────────────────
+        "GetDateTime" => Ok(identity::get_datetime()),
         "SetHostname" => {
             let hostname = validated_hostname(require_str(params, "hostname")?, "hostname")?;
             Ok(identity::set_hostname(&hostname))
@@ -721,6 +722,14 @@ mod tests {
         let spec = build_action_spec("GetSystemState", &json!({})).unwrap();
         assert_eq!(spec.action_name, "GetSystemState");
         assert_eq!(spec.risk_level, RiskLevel::Low);
+    }
+
+    #[test]
+    fn build_spec_get_datetime_is_low_risk() {
+        let spec = build_action_spec("GetDateTime", &json!({})).unwrap();
+        assert_eq!(spec.action_name, "GetDateTime");
+        assert_eq!(spec.risk_level, RiskLevel::Low);
+        assert!(!spec.reboot_required);
     }
 
     #[test]

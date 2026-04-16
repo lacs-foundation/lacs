@@ -277,7 +277,7 @@ async fn execute_steps_inner(
             action_name: step.action_name,
             status,
             summary: result.summary,
-            output: output_lines,
+            output: truncate_output(output_lines),
             warnings: result.warnings,
             needs_reboot,
             transaction_id: result.transaction_id,
@@ -298,6 +298,26 @@ async fn execute_steps_inner(
 // ---------------------------------------------------------------------------
 // Pure helpers (also tested below)
 // ---------------------------------------------------------------------------
+
+/// Maximum number of output lines returned per step in the MCP response.
+///
+/// Large-output actions (e.g. `GetSystemState`, `CollectDiagnostics`) can
+/// produce tens of thousands of lines which exceed MCP context windows.
+/// Lines beyond this limit are dropped and a single summary line is appended.
+const OUTPUT_LINE_LIMIT: usize = 500;
+
+/// Truncate `lines` to at most `OUTPUT_LINE_LIMIT` entries.
+///
+/// If truncation occurs, a marker line is appended so the caller knows
+/// output was cut.
+fn truncate_output(mut lines: Vec<String>) -> Vec<String> {
+    if lines.len() > OUTPUT_LINE_LIMIT {
+        let dropped = lines.len() - OUTPUT_LINE_LIMIT;
+        lines.truncate(OUTPUT_LINE_LIMIT);
+        lines.push(format!("[truncated: {dropped} more lines omitted]"));
+    }
+    lines
+}
 
 /// Parse a `max_risk` string into an ordinal `u8` (0=low, 1=medium, 2=high).
 /// `None` defaults to medium (1).
@@ -421,5 +441,36 @@ mod tests {
         assert!(check_risk_ceiling(&RiskLevel::High, 0).is_err());
         // high step, ceiling=medium
         assert!(check_risk_ceiling(&RiskLevel::High, 1).is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // truncate_output
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn truncate_output_short_output_unchanged() {
+        let lines: Vec<String> = (0..10).map(|i| format!("line {i}")).collect();
+        let result = truncate_output(lines.clone());
+        assert_eq!(result, lines);
+    }
+
+    #[test]
+    fn truncate_output_at_limit_unchanged() {
+        let lines: Vec<String> = (0..OUTPUT_LINE_LIMIT)
+            .map(|i| format!("line {i}"))
+            .collect();
+        let result = truncate_output(lines.clone());
+        assert_eq!(result, lines);
+    }
+
+    #[test]
+    fn truncate_output_over_limit_adds_marker() {
+        let lines: Vec<String> = (0..OUTPUT_LINE_LIMIT + 50)
+            .map(|i| format!("line {i}"))
+            .collect();
+        let result = truncate_output(lines);
+        assert_eq!(result.len(), OUTPUT_LINE_LIMIT + 1);
+        assert!(result.last().unwrap().contains("truncated"));
+        assert!(result.last().unwrap().contains("50"));
     }
 }
