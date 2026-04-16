@@ -1,10 +1,14 @@
-use super::{command_mechanism, ActionSpec, ActionMechanism};
+use super::{command_mechanism, ActionMechanism, ActionSpec};
 use sysknife_types::RiskLevel;
 
 pub fn specs() -> Vec<ActionSpec> {
     vec![
         list_containers("testuser"),
-        create_container("testuser", "sysknife-dev", "registry.fedoraproject.org/fedora-toolbox:41"),
+        create_container(
+            "testuser",
+            "sysknife-dev",
+            "registry.fedoraproject.org/fedora-toolbox:41",
+        ),
         start_container("testuser", "sysknife-dev"),
         stop_container("testuser", "sysknife-dev"),
         remove_container("testuser", "sysknife-dev"),
@@ -37,7 +41,13 @@ pub fn list_containers(username: &str) -> ActionSpec {
         action_name: "ListContainers",
         mechanism: command_mechanism(
             "sudo",
-            ["runuser", "-l", username, "-c", "podman ps --all --format json"],
+            [
+                "runuser",
+                "-l",
+                username,
+                "-c",
+                "podman ps --all --format json",
+            ],
         ),
         risk_level: RiskLevel::Low,
         reboot_required: false,

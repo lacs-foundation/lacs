@@ -14,7 +14,13 @@ pub fn specs() -> Vec<ActionSpec> {
 pub fn configure_wifi(ssid: &str, password: Option<&str>) -> ActionSpec {
     // Build: nmcli device wifi connect <ssid> [password <pw>]
     // Without a password, nmcli connects to open networks.
-    let mut args = vec!["nmcli".to_string(), "device".to_string(), "wifi".to_string(), "connect".to_string(), ssid.to_string()];
+    let mut args = vec![
+        "nmcli".to_string(),
+        "device".to_string(),
+        "wifi".to_string(),
+        "connect".to_string(),
+        ssid.to_string(),
+    ];
     if let Some(pw) = password {
         args.push("password".to_string());
         args.push(pw.to_string());
@@ -47,7 +53,11 @@ pub fn set_dns_servers(interface: &str, servers: &[&str]) -> ActionSpec {
 }
 
 pub fn configure_firewall(zone: &str, service: &str, enabled: bool) -> ActionSpec {
-    let verb = if enabled { "add-service" } else { "remove-service" };
+    let verb = if enabled {
+        "add-service"
+    } else {
+        "remove-service"
+    };
     let script = format!(
         "firewall-cmd --permanent --zone='{}' --{}='{}' && firewall-cmd --reload",
         zone, verb, service

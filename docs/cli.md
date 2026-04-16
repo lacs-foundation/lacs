@@ -26,7 +26,7 @@ sysknife
 
 ## Synopsis
 
-```
+```text
 sysknife [GLOBAL FLAGS] [SUBCOMMAND | INTENT WORDS...]
 ```
 
@@ -75,9 +75,9 @@ Exit code `0` on success, non-zero if the daemon is unreachable.
 
 Sample output:
 
-```
+```text
 ✓  daemon ok
-  socket    /run/sysknife/sysknife.sock
+  socket    /run/sysknife/daemon.sock
   host      my-silverblue
   provider  anthropic
   model     claude-sonnet-4-6
@@ -209,7 +209,7 @@ to override.
 
 | Variable | Description |
 |---|---|
-| `SYSKNIFE_SOCKET` | Path to the daemon Unix socket (default: `/run/sysknife/sysknife.sock`) |
+| `SYSKNIFE_SOCKET` | Path to the daemon Unix socket (default: `/run/sysknife/daemon.sock`) |
 
 ---
 
@@ -300,6 +300,7 @@ sysknife completions fish | source
 
 ## Related
 
-- [Architecture overview](architecture.md) — trust boundary between CLI, shell, and daemon
+- [Architecture overview](architecture.md) — trust boundary between CLI, shell,
+  and daemon
 - [Developer guide](developer-guide.md) — building and testing locally
 - [User stories](user-stories.md) — end-to-end scenario descriptions

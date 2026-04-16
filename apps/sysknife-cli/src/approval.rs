@@ -77,13 +77,13 @@ pub enum ApprovalDecision {
 
 impl ApprovalPolicy {
     /// Construct from parsed CLI flags.
-    pub fn new(
-        yes: bool,
-        max_risk: Option<MaxRisk>,
-        non_interactive: bool,
-        dry_run: bool,
-    ) -> Self {
-        Self { yes, max_risk, non_interactive, dry_run }
+    pub fn new(yes: bool, max_risk: Option<MaxRisk>, non_interactive: bool, dry_run: bool) -> Self {
+        Self {
+            yes,
+            max_risk,
+            non_interactive,
+            dry_run,
+        }
     }
 
     /// Effective auto-approve ceiling, clamped by the hardcoded HIGH block.
@@ -182,7 +182,12 @@ mod tests {
         .unwrap()
     }
 
-    fn policy(yes: bool, max_risk: Option<MaxRisk>, non_interactive: bool, dry_run: bool) -> ApprovalPolicy {
+    fn policy(
+        yes: bool,
+        max_risk: Option<MaxRisk>,
+        non_interactive: bool,
+        dry_run: bool,
+    ) -> ApprovalPolicy {
         ApprovalPolicy::new(yes, max_risk, non_interactive, dry_run)
     }
 
@@ -192,56 +197,80 @@ mod tests {
     #[test]
     fn yes_alone_requires_prompt_for_medium() {
         let p = policy(true, None, false, false);
-        assert_eq!(p.decide_step(&PlanRiskLevel::Medium), ApprovalDecision::RequiresPrompt);
+        assert_eq!(
+            p.decide_step(&PlanRiskLevel::Medium),
+            ApprovalDecision::RequiresPrompt
+        );
     }
 
     // --yes alone never approves High
     #[test]
     fn yes_alone_requires_prompt_for_high() {
         let p = policy(true, None, false, false);
-        assert_eq!(p.decide_step(&PlanRiskLevel::High), ApprovalDecision::RequiresPrompt);
+        assert_eq!(
+            p.decide_step(&PlanRiskLevel::High),
+            ApprovalDecision::RequiresPrompt
+        );
     }
 
     // --yes alone auto-approves Low
     #[test]
     fn yes_alone_auto_approves_low() {
         let p = policy(true, None, false, false);
-        assert_eq!(p.decide_step(&PlanRiskLevel::Low), ApprovalDecision::AutoApproved);
+        assert_eq!(
+            p.decide_step(&PlanRiskLevel::Low),
+            ApprovalDecision::AutoApproved
+        );
     }
 
     // --yes --max-risk medium approves Medium
     #[test]
     fn yes_max_risk_medium_auto_approves_medium() {
         let p = policy(true, Some(MaxRisk::Medium), false, false);
-        assert_eq!(p.decide_step(&PlanRiskLevel::Medium), ApprovalDecision::AutoApproved);
+        assert_eq!(
+            p.decide_step(&PlanRiskLevel::Medium),
+            ApprovalDecision::AutoApproved
+        );
     }
 
     // --yes --max-risk high does NOT auto-approve High (hardcoded ceiling)
     #[test]
     fn yes_max_risk_high_does_not_auto_approve_high() {
         let p = policy(true, Some(MaxRisk::High), false, false);
-        assert_eq!(p.decide_step(&PlanRiskLevel::High), ApprovalDecision::RequiresPrompt);
+        assert_eq!(
+            p.decide_step(&PlanRiskLevel::High),
+            ApprovalDecision::RequiresPrompt
+        );
     }
 
     // --yes --max-risk high auto-approves Medium (ceiling clamps to Medium)
     #[test]
     fn yes_max_risk_high_auto_approves_medium() {
         let p = policy(true, Some(MaxRisk::High), false, false);
-        assert_eq!(p.decide_step(&PlanRiskLevel::Medium), ApprovalDecision::AutoApproved);
+        assert_eq!(
+            p.decide_step(&PlanRiskLevel::Medium),
+            ApprovalDecision::AutoApproved
+        );
     }
 
     // --max-risk medium with High step → ExceedsCeiling
     #[test]
     fn max_risk_ceiling_exceeds_for_high_step() {
         let p = policy(false, Some(MaxRisk::Medium), false, false);
-        assert_eq!(p.decide_step(&PlanRiskLevel::High), ApprovalDecision::ExceedsCeiling);
+        assert_eq!(
+            p.decide_step(&PlanRiskLevel::High),
+            ApprovalDecision::ExceedsCeiling
+        );
     }
 
     // --max-risk low with Medium step → ExceedsCeiling
     #[test]
     fn max_risk_low_ceiling_exceeds_for_medium_step() {
         let p = policy(false, Some(MaxRisk::Low), false, false);
-        assert_eq!(p.decide_step(&PlanRiskLevel::Medium), ApprovalDecision::ExceedsCeiling);
+        assert_eq!(
+            p.decide_step(&PlanRiskLevel::Medium),
+            ApprovalDecision::ExceedsCeiling
+        );
     }
 
     // --max-risk high with High step and no --yes:
@@ -251,28 +280,40 @@ mod tests {
     #[test]
     fn max_risk_high_no_yes_high_step_requires_prompt() {
         let p = policy(false, Some(MaxRisk::High), false, false);
-        assert_eq!(p.decide_step(&PlanRiskLevel::High), ApprovalDecision::RequiresPrompt);
+        assert_eq!(
+            p.decide_step(&PlanRiskLevel::High),
+            ApprovalDecision::RequiresPrompt
+        );
     }
 
     // --non-interactive with Medium step → RequiresInteraction
     #[test]
     fn non_interactive_no_yes_requires_interaction_for_medium() {
         let p = policy(false, None, true, false);
-        assert_eq!(p.decide_step(&PlanRiskLevel::Medium), ApprovalDecision::RequiresInteraction);
+        assert_eq!(
+            p.decide_step(&PlanRiskLevel::Medium),
+            ApprovalDecision::RequiresInteraction
+        );
     }
 
     // --non-interactive --yes with Low → AutoApproved
     #[test]
     fn non_interactive_yes_auto_approves_low() {
         let p = policy(true, None, true, false);
-        assert_eq!(p.decide_step(&PlanRiskLevel::Low), ApprovalDecision::AutoApproved);
+        assert_eq!(
+            p.decide_step(&PlanRiskLevel::Low),
+            ApprovalDecision::AutoApproved
+        );
     }
 
     // --non-interactive --yes with Medium → RequiresInteraction (auto-ceiling is Low)
     #[test]
     fn non_interactive_yes_requires_interaction_for_medium() {
         let p = policy(true, None, true, false);
-        assert_eq!(p.decide_step(&PlanRiskLevel::Medium), ApprovalDecision::RequiresInteraction);
+        assert_eq!(
+            p.decide_step(&PlanRiskLevel::Medium),
+            ApprovalDecision::RequiresInteraction
+        );
     }
 
     // --non-interactive --yes --max-risk high with High step:
@@ -282,26 +323,38 @@ mod tests {
     #[test]
     fn non_interactive_yes_max_risk_high_high_step_requires_interaction() {
         let p = policy(true, Some(MaxRisk::High), true, false);
-        assert_eq!(p.decide_step(&PlanRiskLevel::High), ApprovalDecision::RequiresInteraction);
+        assert_eq!(
+            p.decide_step(&PlanRiskLevel::High),
+            ApprovalDecision::RequiresInteraction
+        );
     }
 
     // --dry-run with any risk → AutoApproved
     #[test]
     fn dry_run_auto_approves_low() {
         let p = policy(false, None, false, true);
-        assert_eq!(p.decide_step(&PlanRiskLevel::Low), ApprovalDecision::AutoApproved);
+        assert_eq!(
+            p.decide_step(&PlanRiskLevel::Low),
+            ApprovalDecision::AutoApproved
+        );
     }
 
     #[test]
     fn dry_run_auto_approves_medium() {
         let p = policy(false, None, false, true);
-        assert_eq!(p.decide_step(&PlanRiskLevel::Medium), ApprovalDecision::AutoApproved);
+        assert_eq!(
+            p.decide_step(&PlanRiskLevel::Medium),
+            ApprovalDecision::AutoApproved
+        );
     }
 
     #[test]
     fn dry_run_auto_approves_high() {
         let p = policy(false, None, false, true);
-        assert_eq!(p.decide_step(&PlanRiskLevel::High), ApprovalDecision::AutoApproved);
+        assert_eq!(
+            p.decide_step(&PlanRiskLevel::High),
+            ApprovalDecision::AutoApproved
+        );
     }
 
     // --dry-run overrides --yes --max-risk high even for a High step.
@@ -309,14 +362,20 @@ mod tests {
     #[test]
     fn dry_run_overrides_yes_max_risk_high_with_high_step() {
         let p = policy(true, Some(MaxRisk::High), false, true);
-        assert_eq!(p.decide_step(&PlanRiskLevel::High), ApprovalDecision::AutoApproved);
+        assert_eq!(
+            p.decide_step(&PlanRiskLevel::High),
+            ApprovalDecision::AutoApproved
+        );
     }
 
     // No flags at all — Low step still RequiresPrompt (no --yes)
     #[test]
     fn no_flags_low_step_requires_prompt() {
         let p = policy(false, None, false, false);
-        assert_eq!(p.decide_step(&PlanRiskLevel::Low), ApprovalDecision::RequiresPrompt);
+        assert_eq!(
+            p.decide_step(&PlanRiskLevel::Low),
+            ApprovalDecision::RequiresPrompt
+        );
     }
 
     // --- Plan-level decisions ---
@@ -416,7 +475,11 @@ mod tests {
     #[test]
     fn plan_dry_run_multi_step_auto_approved() {
         let p = policy(false, None, false, true);
-        let pl = plan(&[PlanRiskLevel::Low, PlanRiskLevel::Medium, PlanRiskLevel::High]);
+        let pl = plan(&[
+            PlanRiskLevel::Low,
+            PlanRiskLevel::Medium,
+            PlanRiskLevel::High,
+        ]);
         assert_eq!(p.decide_plan(&pl), ApprovalDecision::AutoApproved);
     }
 

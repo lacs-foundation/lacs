@@ -23,9 +23,9 @@
 use std::time::Duration;
 
 use indicatif::{ProgressBar, ProgressStyle};
-use sysknife_brain::planner::{Plan, PlanRiskLevel};
-use sysknife_types::{JobState, ResultEnvelope, PreviewEnvelope};
 use owo_colors::{OwoColorize, Stream};
+use sysknife_brain::planner::{Plan, PlanRiskLevel};
+use sysknife_types::{JobState, PreviewEnvelope, ResultEnvelope};
 
 use crate::runner::Logger;
 
@@ -89,7 +89,8 @@ pub fn print_plan(plan: &Plan, log: &Logger) {
     ));
     log.println(&format!(
         "  {}",
-        "─".repeat(50)
+        "─"
+            .repeat(50)
             .if_supports_color(Stream::Stdout, |t| t.dimmed())
     ));
     for (i, step) in plan.steps().iter().enumerate() {
@@ -132,7 +133,9 @@ pub fn print_step_header(action: &str, preview: &PreviewEnvelope) {
         "\n  {} {}  {}",
         "▶".if_supports_color(Stream::Stderr, |t| t.cyan()),
         action.if_supports_color(Stream::Stderr, |t| t.bold()),
-        preview.summary.if_supports_color(Stream::Stderr, |t| t.dimmed()),
+        preview
+            .summary
+            .if_supports_color(Stream::Stderr, |t| t.dimmed()),
     );
     if preview.reboot_required {
         eprintln!(
@@ -157,19 +160,27 @@ pub fn print_output_line(line: &str, log: &Logger) {
 pub fn print_step_done(result: &ResultEnvelope, log: &Logger) {
     let (icon, label) = match result.status {
         JobState::Succeeded => (
-            "✓".if_supports_color(Stream::Stdout, |t| t.green()).to_string(),
+            "✓"
+                .if_supports_color(Stream::Stdout, |t| t.green())
+                .to_string(),
             "succeeded",
         ),
         JobState::Failed => (
-            "✗".if_supports_color(Stream::Stdout, |t| t.red()).to_string(),
+            "✗"
+                .if_supports_color(Stream::Stdout, |t| t.red())
+                .to_string(),
             "failed",
         ),
         JobState::NeedsReboot => (
-            "↺".if_supports_color(Stream::Stdout, |t| t.yellow()).to_string(),
+            "↺"
+                .if_supports_color(Stream::Stdout, |t| t.yellow())
+                .to_string(),
             "needs reboot",
         ),
         _ => (
-            "⚠".if_supports_color(Stream::Stdout, |t| t.yellow()).to_string(),
+            "⚠"
+                .if_supports_color(Stream::Stdout, |t| t.yellow())
+                .to_string(),
             "unknown",
         ),
     };

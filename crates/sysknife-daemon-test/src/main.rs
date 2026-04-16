@@ -205,8 +205,7 @@ async fn run_query_action_tests(framed: &mut FramedStream<UnixStream>, tap: &mut
     }
 
     // T5: GetAuthorizedKeys for the test user
-    let test_user =
-        std::env::var("SYSKNIFE_TEST_USER").unwrap_or_else(|_| "lacsdev".to_string());
+    let test_user = std::env::var("SYSKNIFE_TEST_USER").unwrap_or_else(|_| "lacsdev".to_string());
     let r = send_recv(
         framed,
         json!({
@@ -242,7 +241,10 @@ async fn run_preview_test(framed: &mut FramedStream<UnixStream>, tap: &mut Tap) 
         }),
     )
     .await;
-    let hash = r["preview"]["request_hash"].as_str().unwrap_or("").to_string();
+    let hash = r["preview"]["request_hash"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
     if r["type"] == "preview_response" && !hash.is_empty() {
         tap.ok("preview GetDiskUsage returns preview_response with non-empty request_hash");
     } else {
@@ -261,11 +263,7 @@ async fn run_preview_test(framed: &mut FramedStream<UnixStream>, tap: &mut Tap) 
 /// Requires the caller to be in the sysknife-admin group (RemoveAuthorizedKey
 /// is an Admin-level action). The test key is removed at the end — the cycle
 /// is self-cleaning.
-async fn run_ssh_key_cycle(
-    framed: &mut FramedStream<UnixStream>,
-    tap: &mut Tap,
-    test_user: &str,
-) {
+async fn run_ssh_key_cycle(framed: &mut FramedStream<UnixStream>, tap: &mut Tap, test_user: &str) {
     let keys_path = format!("/home/{test_user}/.ssh/authorized_keys");
 
     // T7: preview AddAuthorizedKey
@@ -279,7 +277,10 @@ async fn run_ssh_key_cycle(
         }),
     )
     .await;
-    let add_hash = r["preview"]["request_hash"].as_str().unwrap_or("").to_string();
+    let add_hash = r["preview"]["request_hash"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
     if r["type"] == "preview_response" && !add_hash.is_empty() {
         tap.ok("preview AddAuthorizedKey returns preview_response");
     } else {
@@ -360,7 +361,10 @@ async fn run_ssh_key_cycle(
         }),
     )
     .await;
-    let remove_hash = r["preview"]["request_hash"].as_str().unwrap_or("").to_string();
+    let remove_hash = r["preview"]["request_hash"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
     if r["type"] == "preview_response" && !remove_hash.is_empty() {
         tap.ok("preview RemoveAuthorizedKey returns preview_response");
     } else {
@@ -903,7 +907,10 @@ async fn run_service_mutation_tests(framed: &mut FramedStream<UnixStream>, tap: 
                 "no hash returned",
             );
             for _ in 0..2 {
-                tap.fail("service mutation cycle skipped", "preview RestartService failed");
+                tap.fail(
+                    "service mutation cycle skipped",
+                    "preview RestartService failed",
+                );
             }
             return;
         }
@@ -1143,7 +1150,10 @@ async fn run_group_membership_cycle(
                 "no hash — check sysknife-admin group membership",
             );
             for _ in 0..7 {
-                tap.fail("group membership cycle skipped", "preview AddUserToGroup failed");
+                tap.fail(
+                    "group membership cycle skipped",
+                    "preview AddUserToGroup failed",
+                );
             }
             return;
         }
@@ -1211,7 +1221,10 @@ async fn run_group_membership_cycle(
                 "no hash — user left in audio group; restore with: gpasswd -d <user> audio",
             );
             for _ in 0..3 {
-                tap.fail("group membership cycle skipped", "preview RemoveUserFromGroup failed");
+                tap.fail(
+                    "group membership cycle skipped",
+                    "preview RemoveUserFromGroup failed",
+                );
             }
             return;
         }
@@ -1284,8 +1297,7 @@ async fn main() {
 
     let mut framed = FramedStream::new(stream);
     let mut tap = Tap::new();
-    let test_user =
-        std::env::var("SYSKNIFE_TEST_USER").unwrap_or_else(|_| "lacsdev".to_string());
+    let test_user = std::env::var("SYSKNIFE_TEST_USER").unwrap_or_else(|_| "lacsdev".to_string());
 
     run_query_action_tests(&mut framed, &mut tap).await;
     run_preview_test(&mut framed, &mut tap).await;

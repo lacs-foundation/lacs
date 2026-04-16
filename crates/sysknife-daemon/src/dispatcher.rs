@@ -370,7 +370,9 @@ pub async fn connection_handler_with_executor(
                 )
                 .await
                 {
-                    eprintln!("[sysknife-daemon] failed to send validation error response: {send_err}");
+                    eprintln!(
+                        "[sysknife-daemon] failed to send validation error response: {send_err}"
+                    );
                 }
                 continue;
             }
@@ -643,10 +645,8 @@ async fn handle_query_action(
     //
     // - systemctl status <unit>: exits 1 when inactive, 3 when dead/failed, 4 when not
     //   found.  All produce informative output the planner needs for diagnosis.
-    let is_informational_exit = matches!(
-        (action_name, output.exit_code),
-        ("GetServiceStatus", 1..=4)
-    );
+    let is_informational_exit =
+        matches!((action_name, output.exit_code), ("GetServiceStatus", 1..=4));
 
     if output.exit_code != 0 && !is_informational_exit {
         return send_error(
@@ -738,9 +738,9 @@ async fn handle_preview(
                 Ok(v) => v,
                 Err(e) => {
                     eprintln!(
-                        "[sysknife-daemon] handle_preview: failed to serialize collected state ({e}); \
+                    "[sysknife-daemon] handle_preview: failed to serialize collected state ({e}); \
                      using empty state"
-                    );
+                );
                     Value::Null
                 }
             },

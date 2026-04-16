@@ -43,7 +43,11 @@ fn reload_service_uses_reload_not_restart() {
         spec.mechanism,
         ActionMechanism::Command {
             program: "sudo",
-            args: vec!["systemctl".to_string(), "reload".to_string(), "nginx.service".to_string()],
+            args: vec![
+                "systemctl".to_string(),
+                "reload".to_string(),
+                "nginx.service".to_string()
+            ],
         }
     );
     // Explicitly guard against the wrong verb.
@@ -164,7 +168,11 @@ fn restart_service_uses_sudo_systemctl() {
         spec.mechanism,
         ActionMechanism::Command {
             program: "sudo",
-            args: vec!["systemctl".to_string(), "restart".to_string(), "NetworkManager.service".to_string()],
+            args: vec![
+                "systemctl".to_string(),
+                "restart".to_string(),
+                "NetworkManager.service".to_string()
+            ],
         }
     );
 }
@@ -197,14 +205,22 @@ fn service_enable_and_disable_use_matching_systemctl_commands() {
         enabled.mechanism,
         ActionMechanism::Command {
             program: "sudo",
-            args: vec!["systemctl".to_string(), "enable".to_string(), "sshd.service".to_string()],
+            args: vec![
+                "systemctl".to_string(),
+                "enable".to_string(),
+                "sshd.service".to_string()
+            ],
         }
     );
     assert_eq!(
         disabled.mechanism,
         ActionMechanism::Command {
             program: "sudo",
-            args: vec!["systemctl".to_string(), "disable".to_string(), "sshd.service".to_string()],
+            args: vec![
+                "systemctl".to_string(),
+                "disable".to_string(),
+                "sshd.service".to_string()
+            ],
         }
     );
 }
@@ -352,28 +368,44 @@ fn identity_changes_use_systemd_tools() {
         hostname.mechanism,
         ActionMechanism::Command {
             program: "sudo",
-            args: vec!["hostnamectl".to_string(), "set-hostname".to_string(), "sysknife-lab".to_string()],
+            args: vec![
+                "hostnamectl".to_string(),
+                "set-hostname".to_string(),
+                "sysknife-lab".to_string()
+            ],
         }
     );
     assert_eq!(
         timezone.mechanism,
         ActionMechanism::Command {
             program: "sudo",
-            args: vec!["timedatectl".to_string(), "set-timezone".to_string(), "America/Chicago".to_string()],
+            args: vec![
+                "timedatectl".to_string(),
+                "set-timezone".to_string(),
+                "America/Chicago".to_string()
+            ],
         }
     );
     assert_eq!(
         locale.mechanism,
         ActionMechanism::Command {
             program: "sudo",
-            args: vec!["localectl".to_string(), "set-locale".to_string(), "en_US.UTF-8".to_string()],
+            args: vec![
+                "localectl".to_string(),
+                "set-locale".to_string(),
+                "en_US.UTF-8".to_string()
+            ],
         }
     );
     assert_eq!(
         ntp.mechanism,
         ActionMechanism::Command {
             program: "sudo",
-            args: vec!["timedatectl".to_string(), "set-ntp".to_string(), "true".to_string()],
+            args: vec![
+                "timedatectl".to_string(),
+                "set-ntp".to_string(),
+                "true".to_string()
+            ],
         }
     );
 }
@@ -397,7 +429,8 @@ fn identity_and_service_write_ops_use_sudo() {
         identity::set_ntp(true),
     ];
     for spec in &specs {
-        if let sysknife_daemon::actions::ActionMechanism::Command { program, .. } = &spec.mechanism {
+        if let sysknife_daemon::actions::ActionMechanism::Command { program, .. } = &spec.mechanism
+        {
             assert_eq!(*program, "sudo", "{} must use sudo", spec.action_name);
         }
     }
@@ -460,8 +493,14 @@ fn user_creation_and_group_changes_use_sudo_prefixed_shadow_tools() {
     // without actually modifying group membership.
     if let ActionMechanism::Command { program, args } = &add_group.mechanism {
         assert_eq!(*program, "sudo", "AddUserToGroup must use sudo");
-        assert!(args.contains(&"sh".to_string()), "must use sh -c for the guard script");
-        assert!(args.contains(&"-c".to_string()), "must use sh -c for the guard script");
+        assert!(
+            args.contains(&"sh".to_string()),
+            "must use sh -c for the guard script"
+        );
+        assert!(
+            args.contains(&"-c".to_string()),
+            "must use sh -c for the guard script"
+        );
         let cmd = args.last().unwrap();
         assert!(
             cmd.contains("getent group"),
@@ -477,7 +516,10 @@ fn user_creation_and_group_changes_use_sudo_prefixed_shadow_tools() {
 
     if let ActionMechanism::Command { program, args } = &remove_group.mechanism {
         assert_eq!(*program, "sudo", "RemoveUserFromGroup must use sudo");
-        assert!(args.contains(&"sh".to_string()), "must use sh -c for the guard script");
+        assert!(
+            args.contains(&"sh".to_string()),
+            "must use sh -c for the guard script"
+        );
         let cmd = args.last().unwrap();
         assert!(
             cmd.contains("getent group"),

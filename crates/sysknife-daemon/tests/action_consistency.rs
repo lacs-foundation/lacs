@@ -9,6 +9,7 @@
 
 use std::collections::BTreeSet;
 
+use serde_json::json;
 use sysknife_brain::planning_tools::propose_plan::KNOWN_ACTIONS;
 use sysknife_daemon::actions::{
     containers, deployment, filesystem, flatpak, identity, layering, network, package_repos,
@@ -16,7 +17,6 @@ use sysknife_daemon::actions::{
 };
 use sysknife_daemon::executor::build_action_spec;
 use sysknife_daemon::policy::min_role_for_action;
-use serde_json::json;
 
 /// Actions that are intercepted by the dispatcher before reaching the executor.
 /// They have policy entries and KNOWN_ACTIONS entries but no ActionSpec.

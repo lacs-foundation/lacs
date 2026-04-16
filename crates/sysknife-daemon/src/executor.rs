@@ -710,8 +710,8 @@ pub fn rollback_spec_for(action_name: &str) -> Option<ActionSpec> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sysknife_types::RiskLevel;
     use serde_json::json;
+    use sysknife_types::RiskLevel;
     use tempfile::tempdir;
 
     // ── build_action_spec ─────────────────────────────────────────────────
@@ -776,7 +776,12 @@ mod tests {
             spec.mechanism,
             ActionMechanism::Command {
                 program: "sudo",
-                args: vec!["ostree".to_string(), "admin".to_string(), "pin".to_string(), "1".to_string()],
+                args: vec![
+                    "ostree".to_string(),
+                    "admin".to_string(),
+                    "pin".to_string(),
+                    "1".to_string()
+                ],
             }
         );
     }

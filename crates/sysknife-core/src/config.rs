@@ -168,7 +168,10 @@ impl LacsConfig {
                 // `sysknife-brain::planner::resolve_ollama_think` parses
                 // case-insensitive "true"/"false"; emit the canonical
                 // form for clarity in ps/systemctl output.
-                set_if_absent("SYSKNIFE_OLLAMA_THINK", if think { "true" } else { "false" });
+                set_if_absent(
+                    "SYSKNIFE_OLLAMA_THINK",
+                    if think { "true" } else { "false" },
+                );
             }
         }
     }
@@ -254,7 +257,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         // Temporarily override XDG_CONFIG_HOME in this process.
         // Tests that mutate env vars must not run in parallel — use a mutex.
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             std::env::set_var("XDG_CONFIG_HOME", dir.path());
         }
@@ -287,7 +290,7 @@ max_turns    = 7
         )
         .unwrap();
 
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             std::env::set_var("XDG_CONFIG_HOME", dir.path());
         }
@@ -323,7 +326,7 @@ provider = "anthropic"
         )
         .unwrap();
 
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             std::env::set_var("XDG_CONFIG_HOME", dir.path());
             // Pre-set the env var — config file must NOT override it.
@@ -353,7 +356,7 @@ socket = "/tmp/test.sock"
         )
         .unwrap();
 
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             std::env::set_var("XDG_CONFIG_HOME", dir.path());
             std::env::remove_var("SYSKNIFE_LISTEN_URI");
@@ -382,7 +385,7 @@ ollama_think = false
         )
         .unwrap();
 
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             std::env::set_var("XDG_CONFIG_HOME", dir.path());
             std::env::remove_var("SYSKNIFE_OLLAMA_THINK");
@@ -411,7 +414,7 @@ ollama_think = true
         )
         .unwrap();
 
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             std::env::set_var("XDG_CONFIG_HOME", dir.path());
             std::env::remove_var("SYSKNIFE_OLLAMA_THINK");
@@ -440,7 +443,7 @@ model = "qwen3:8b"
         )
         .unwrap();
 
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             std::env::set_var("XDG_CONFIG_HOME", dir.path());
             std::env::remove_var("SYSKNIFE_OLLAMA_THINK");
@@ -456,6 +459,7 @@ model = "qwen3:8b"
 
     #[test]
     fn prefs_path_lives_alongside_config() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let prefs = prefs_path();
         let config = config_path();
         assert_eq!(prefs.parent(), config.parent());

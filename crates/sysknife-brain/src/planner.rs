@@ -718,7 +718,12 @@ impl LlmPlanner {
             self.emit(PlanEvent::Thinking);
             let completion = self
                 .provider
-                .complete(&effective_prompt, &messages, &self.tools, PLANNING_MAX_TOKENS)
+                .complete(
+                    &effective_prompt,
+                    &messages,
+                    &self.tools,
+                    PLANNING_MAX_TOKENS,
+                )
                 .await
                 .map_err(PlanningError::from)?;
 
@@ -787,9 +792,9 @@ impl LlmPlanner {
                     for (id, call_id, name, input) in &tool_calls {
                         // Emit a progress event before dispatching each tool.
                         self.emit(match name.as_str() {
-                            "propose_plan"     => PlanEvent::ProposingPlan,
+                            "propose_plan" => PlanEvent::ProposingPlan,
                             "get_system_state" => PlanEvent::QueryingTool("system state".into()),
-                            other              => PlanEvent::QueryingTool(other.replace('_', " ")),
+                            other => PlanEvent::QueryingTool(other.replace('_', " ")),
                         });
 
                         match name.as_str() {

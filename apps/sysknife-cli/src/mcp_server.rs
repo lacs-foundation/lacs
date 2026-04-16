@@ -17,11 +17,10 @@
 //! ```
 
 use rmcp::{
-    ErrorData,
     handler::server::wrapper::{Json, Parameters},
     schemars, tool, tool_router,
     transport::stdio,
-    ServiceExt,
+    ErrorData, ServiceExt,
 };
 use serde::Deserialize;
 
@@ -56,7 +55,9 @@ impl LacsMcpServer {
     /// Returns a JSON object with the proposed steps, each carrying an
     /// `action_name`, `summary`, `risk_level` ("low" | "medium" | "high"),
     /// and `params`. No action is executed — this is plan-only.
-    #[tool(description = "Plan a Linux system administration intent. Returns typed steps with risk levels (low/medium/high). No action is executed — LACS always requires explicit approval before touching the system.")]
+    #[tool(
+        description = "Plan a Linux system administration intent. Returns typed steps with risk levels (low/medium/high). No action is executed — LACS always requires explicit approval before touching the system."
+    )]
     async fn lacs_plan(
         &self,
         Parameters(PlanInput { intent }): Parameters<PlanInput>,
@@ -73,15 +74,13 @@ impl LacsMcpServer {
 // ---------------------------------------------------------------------------
 
 async fn plan_intent_inner(intent: &str) -> Result<serde_json::Value, String> {
-    let config =
-        BrainConfig::from_env().map_err(|e| format!("config error: {e}"))?;
+    let config = BrainConfig::from_env().map_err(|e| format!("config error: {e}"))?;
 
     let socket = resolve_socket();
     let state_client = DaemonClient::new(socket);
 
-    let planner =
-        LlmPlanner::from_config(config, Box::new(state_client))
-            .map_err(|e| format!("planner init error: {e}"))?;
+    let planner = LlmPlanner::from_config(config, Box::new(state_client))
+        .map_err(|e| format!("planner init error: {e}"))?;
 
     // `plan_intent` may call `StateClient::curated_state()` (a blocking sync
     // Unix socket call) on the current async thread.  This is tolerable on

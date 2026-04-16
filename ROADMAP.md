@@ -116,15 +116,17 @@ Tracked in the v0.4.0 milestone.
 ## Phase 9: Launch
 
 - record demo video on real Silverblue hardware (#32)
-- MCP server (`sysknife mcp-server`) — expose action families as MCP tools for
-  Claude Desktop, Cursor, and any MCP-capable agent
+- ~~`lacs_plan` MCP tool (`sysknife mcp-server`)~~ — done; stdio transport via
+  `rmcp`, returns typed plan JSON, plan-only (no execution through MCP)
+- extend MCP server with direct read-only tools — expose all ~25 Observer-level
+  actions (`get_disk_usage`, `list_services`, `get_authorized_keys`, …) as
+  individual MCP tools so Claude Desktop can read live system state in-context;
+  mutating actions remain plan-only to preserve the approval gate
 - publish `sysknife-brain` and `sysknife-types` to crates.io
 - Telegram interface (`sysknife-bot`) — approve plans from your phone via
   inline buttons; the viral mechanic
 
 ## Phase 10: Ecosystem
 
-- apt action family (Debian / Ubuntu / Mint)
-- pacman action family (Arch / Manjaro)
 - `sysknife audit export --json` — shareable execution history
 - web dashboard for teams and fleet management

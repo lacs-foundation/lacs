@@ -9,7 +9,8 @@ use tempfile::tempdir;
 
 #[test]
 fn unix_socket_startup_rejects_tcp_uris() {
-    let unix = ListenTarget::try_from_uri("unix:///tmp/sysknife.sock").expect("unix uri should parse");
+    let unix =
+        ListenTarget::try_from_uri("unix:///tmp/sysknife.sock").expect("unix uri should parse");
 
     assert!(matches!(unix, ListenTarget::Unix(_)));
     assert!(ListenTarget::try_from_uri("unix://relative.sock").is_err());

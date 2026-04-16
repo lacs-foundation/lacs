@@ -77,7 +77,11 @@ async fn file_write_creates_parent_directories() {
 #[tokio::test]
 async fn file_write_overwrites_existing_content() {
     let dir = tempdir().unwrap();
-    let path = dir.path().join("overwrite.txt").to_string_lossy().into_owned();
+    let path = dir
+        .path()
+        .join("overwrite.txt")
+        .to_string_lossy()
+        .into_owned();
     std::fs::write(&path, "old content").unwrap();
 
     execute_spec(&spec(ActionMechanism::FileWrite {
@@ -147,7 +151,11 @@ async fn file_patch_returns_exit_code_one_when_search_not_found() {
     // `enabled=0` → `enabled=1`. If the repo is already enabled (no `enabled=0`),
     // silently succeeding would hide the mismatch. exit_code=1 surfaces it.
     let dir = tempdir().unwrap();
-    let path = dir.path().join("already-enabled.conf").to_string_lossy().into_owned();
+    let path = dir
+        .path()
+        .join("already-enabled.conf")
+        .to_string_lossy()
+        .into_owned();
     std::fs::write(&path, "[example]\nenabled=1\n").unwrap();
 
     let out = execute_spec(&spec(ActionMechanism::FilePatch {
@@ -174,7 +182,11 @@ async fn file_patch_does_not_write_file_when_search_not_found() {
     // The guard condition short-circuits before `tokio::fs::write`, so the file
     // must be identical after a failed patch attempt.
     let dir = tempdir().unwrap();
-    let path = dir.path().join("unchanged.conf").to_string_lossy().into_owned();
+    let path = dir
+        .path()
+        .join("unchanged.conf")
+        .to_string_lossy()
+        .into_owned();
     let original = "[example]\nenabled=1\n";
     std::fs::write(&path, original).unwrap();
 
@@ -270,7 +282,10 @@ async fn file_scan_empty_directory_returns_empty_stdout() {
     .unwrap();
 
     assert_eq!(out.exit_code, 0);
-    assert_eq!(out.stdout, "", "empty dir must produce empty stdout, not a newline or error");
+    assert_eq!(
+        out.stdout, "",
+        "empty dir must produce empty stdout, not a newline or error"
+    );
 }
 
 #[tokio::test]

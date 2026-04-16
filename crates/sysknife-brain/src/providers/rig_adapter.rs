@@ -8,9 +8,9 @@
 //! This gives us all Rig providers (Anthropic, Ollama/OpenAI-compatible, Gemini,
 //! Groq, DeepSeek, Mistral, xAI, etc.) for free without hand-rolling HTTP clients.
 
+use super::sanitize_error_msg;
 use async_trait::async_trait;
 use futures::StreamExt;
-use super::sanitize_error_msg;
 use rig::completion::{CompletionModel, CompletionRequest, ToolDefinition as RigToolDefinition};
 use rig::message::{
     AssistantContent, Message as RigMessage, Text, ToolCall, ToolFunction, ToolResult,
@@ -375,7 +375,6 @@ fn from_rig_response(choice: OneOrMany<AssistantContent>) -> Result<Completion, 
 // ---------------------------------------------------------------------------
 // Error mapping
 // ---------------------------------------------------------------------------
-
 
 fn map_rig_error(err: rig::completion::CompletionError) -> ProviderError {
     let msg = sanitize_error_msg(&err.to_string());

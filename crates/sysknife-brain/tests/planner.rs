@@ -6,17 +6,17 @@
 //! do not require a runtime.
 
 use async_trait::async_trait;
+use std::collections::VecDeque;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc, Mutex,
+};
 use sysknife_brain::audit::SafetyAuditLog;
 use sysknife_brain::planner::{LlmPlanner, PlanningError};
 use sysknife_brain::provider::{
     Completion, ContentBlock, LlmProvider, Message, ProviderError, StopReason, ToolDefinition,
 };
 use sysknife_brain::state_client::{CuratedState, StateClient};
-use std::collections::VecDeque;
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc, Mutex,
-};
 
 // ---------------------------------------------------------------------------
 // Test doubles
@@ -252,7 +252,10 @@ async fn intent_without_sensitive_data_is_not_rejected() {
         "disk check",
         &[("GetDiskUsage", "Check disk", "low")],
     )]));
-    assert!(planner.plan_intent("check how much disk space is left").await.is_ok());
+    assert!(planner
+        .plan_intent("check how much disk space is left")
+        .await
+        .is_ok());
 }
 
 // ---------------------------------------------------------------------------
@@ -1195,9 +1198,7 @@ async fn summarize_at_max_bytes_is_accepted() {
     let exact = "a".repeat(INTENT_MAX_BYTES);
     let planner = make_planner(MockProvider::new([Ok(
         sysknife_brain::provider::Completion {
-            content: vec![sysknife_brain::provider::ContentBlock::Text {
-                text: "ok".into(),
-            }],
+            content: vec![sysknife_brain::provider::ContentBlock::Text { text: "ok".into() }],
             stop_reason: sysknife_brain::provider::StopReason::EndTurn,
         },
     )]));
@@ -1320,7 +1321,10 @@ fn rate_limiter_file_persistence_across_instances() {
     // Third instance: window still has 2 calls (both within the last second).
     let rl3 = RateLimiter::new(path.clone(), limit);
     let err = rl3.check_and_consume().unwrap_err();
-    assert!(err >= 1 && err <= 60, "retry_after must be 1..=60, got {err}");
+    assert!(
+        err >= 1 && err <= 60,
+        "retry_after must be 1..=60, got {err}"
+    );
 }
 
 #[test]
@@ -1328,10 +1332,7 @@ fn rate_limiter_io_fail_open_on_unreadable_parent() {
     use sysknife_brain::rate_limit::RateLimiter;
     // Point the rate limiter at a path with a non-existent parent
     // that tempdir doesn't own — should fail open (allow the call).
-    let rl = RateLimiter::new(
-        std::path::PathBuf::from("/nonexistent/dir/rate.log"),
-        5,
-    );
+    let rl = RateLimiter::new(std::path::PathBuf::from("/nonexistent/dir/rate.log"), 5);
     // Must return Ok (fail-open), not panic.
     assert!(
         rl.check_and_consume().is_ok(),
@@ -1354,5 +1355,8 @@ fn rate_limiter_file_is_compacted_after_calls() {
     // File should have exactly 3 lines (no expired entries accumulated).
     let content = std::fs::read_to_string(&path).unwrap();
     let line_count = content.lines().count();
-    assert_eq!(line_count, 3, "file should have 3 timestamp lines, got {line_count}");
+    assert_eq!(
+        line_count, 3,
+        "file should have 3 timestamp lines, got {line_count}"
+    );
 }

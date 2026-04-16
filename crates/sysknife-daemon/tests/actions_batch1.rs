@@ -461,9 +461,15 @@ fn collect_diagnostics_is_bounded_to_500_lines() {
     // On an active system this can be 100K+ lines. -n 500 caps the output.
     let spec = deployment::collect_diagnostics();
     if let ActionMechanism::Command { args, .. } = &spec.mechanism {
-        assert!(args.contains(&"-n".to_string()), "-n flag required to bound output");
+        assert!(
+            args.contains(&"-n".to_string()),
+            "-n flag required to bound output"
+        );
         assert!(args.contains(&"500".to_string()), "limit must be 500 lines");
-        assert!(args.contains(&"--no-pager".to_string()), "--no-pager required");
+        assert!(
+            args.contains(&"--no-pager".to_string()),
+            "--no-pager required"
+        );
     }
 }
 

@@ -32,8 +32,7 @@ use async_trait::async_trait;
 
 use super::sanitize_error_msg;
 use crate::provider::{
-    Completion, ContentBlock, LlmProvider, Message, ProviderError, Role, StopReason,
-    ToolDefinition,
+    Completion, ContentBlock, LlmProvider, Message, ProviderError, Role, StopReason, ToolDefinition,
 };
 
 // ---------------------------------------------------------------------------
@@ -65,8 +64,7 @@ impl LlmProvider for AsyncOpenAiAdapter {
         tools: &[ToolDefinition],
         max_tokens: u32,
     ) -> Result<Completion, ProviderError> {
-        let oai_messages =
-            to_openai_messages(system, messages).map_err(ProviderError::Request)?;
+        let oai_messages = to_openai_messages(system, messages).map_err(ProviderError::Request)?;
         let oai_tools = to_openai_tools(tools);
 
         let mut req_builder = CreateChatCompletionRequestArgs::default();
@@ -179,12 +177,11 @@ fn to_openai_messages(
                 for block in &msg.content {
                     match block {
                         ContentBlock::Text { text } => text_parts.push(text.clone()),
-                        ContentBlock::ToolUse { id, name, input, .. } => {
+                        ContentBlock::ToolUse {
+                            id, name, input, ..
+                        } => {
                             let arguments = serde_json::to_string(input).map_err(|e| {
-                                format!(
-                                    "failed to serialize tool arguments for '{}': {}",
-                                    name, e
-                                )
+                                format!("failed to serialize tool arguments for '{}': {}", name, e)
                             })?;
                             tool_calls.push(ChatCompletionMessageToolCalls::Function(
                                 ChatCompletionMessageToolCall {
@@ -251,7 +248,9 @@ fn to_openai_tools(tools: &[ToolDefinition]) -> Vec<ChatCompletionTools> {
 // Response conversion: async-openai response → our types
 // ---------------------------------------------------------------------------
 
-fn from_openai_response(response: CreateChatCompletionResponse) -> Result<Completion, ProviderError> {
+fn from_openai_response(
+    response: CreateChatCompletionResponse,
+) -> Result<Completion, ProviderError> {
     let choice = response
         .choices
         .into_iter()
@@ -404,11 +403,11 @@ fn map_openai_error(err: async_openai::error::OpenAIError) -> ProviderError {
 #[allow(deprecated)]
 mod tests {
     use super::*;
+    use crate::provider::{Message, ToolDefinition, ToolResultBlock};
     use async_openai::types::chat::{
         ChatChoice, ChatCompletionRequestSystemMessageContent,
         ChatCompletionRequestToolMessageContent, ChatCompletionResponseMessage, Role as OaiRole,
     };
-    use crate::provider::{Message, ToolDefinition, ToolResultBlock};
 
     // --- to_openai_messages ---------------------------------------------------
 
@@ -495,7 +494,10 @@ mod tests {
         }])];
         let msgs = to_openai_messages("sys", &messages).unwrap();
         assert_eq!(msgs.len(), 2);
-        assert!(matches!(msgs[1], ChatCompletionRequestMessage::Assistant(_)));
+        assert!(matches!(
+            msgs[1],
+            ChatCompletionRequestMessage::Assistant(_)
+        ));
         if let ChatCompletionRequestMessage::Assistant(a) = &msgs[1] {
             let tool_calls = a.tool_calls.as_ref().expect("tool_calls must be present");
             assert_eq!(tool_calls.len(), 1);
@@ -516,9 +518,15 @@ mod tests {
         }])];
         let msgs = to_openai_messages("sys", &messages).unwrap();
         assert_eq!(msgs.len(), 2);
-        assert!(matches!(msgs[1], ChatCompletionRequestMessage::Assistant(_)));
+        assert!(matches!(
+            msgs[1],
+            ChatCompletionRequestMessage::Assistant(_)
+        ));
         if let ChatCompletionRequestMessage::Assistant(a) = &msgs[1] {
-            assert!(a.content.is_some(), "content must be present for text-only assistant");
+            assert!(
+                a.content.is_some(),
+                "content must be present for text-only assistant"
+            );
             assert!(a.tool_calls.is_none());
         }
     }
@@ -528,7 +536,9 @@ mod tests {
         // An assistant turn with both text and a tool call must produce an
         // assistant message that has both `content` and `tool_calls` set.
         let messages = vec![Message::assistant(vec![
-            ContentBlock::Text { text: "thinking...".into() },
+            ContentBlock::Text {
+                text: "thinking...".into(),
+            },
             ContentBlock::ToolUse {
                 id: "call_mix".into(),
                 call_id: None,
@@ -539,7 +549,10 @@ mod tests {
         let msgs = to_openai_messages("sys", &messages).unwrap();
         assert_eq!(msgs.len(), 2);
         if let ChatCompletionRequestMessage::Assistant(a) = &msgs[1] {
-            assert!(a.content.is_some(), "content must be set when text is present");
+            assert!(
+                a.content.is_some(),
+                "content must be set when text is present"
+            );
             let tool_calls = a.tool_calls.as_ref().expect("tool_calls must be set");
             assert_eq!(tool_calls.len(), 1);
         } else {
@@ -553,7 +566,10 @@ mod tests {
         // It must return an error rather than silently producing a malformed request.
         let messages = vec![Message::assistant(vec![])];
         let result = to_openai_messages("sys", &messages);
-        assert!(result.is_err(), "expected error for empty assistant message");
+        assert!(
+            result.is_err(),
+            "expected error for empty assistant message"
+        );
         let err = result.unwrap_err();
         assert!(
             err.contains("no text and no tool calls"),
@@ -687,9 +703,15 @@ mod tests {
         let completion = from_openai_response(response).unwrap();
         assert_eq!(completion.stop_reason, StopReason::ToolUse);
         assert_eq!(completion.content.len(), 1);
-        if let ContentBlock::ToolUse { id, call_id, name, .. } = &completion.content[0] {
+        if let ContentBlock::ToolUse {
+            id, call_id, name, ..
+        } = &completion.content[0]
+        {
             assert_eq!(id, "call_1");
-            assert!(call_id.is_none(), "call_id must be None for Chat Completions");
+            assert!(
+                call_id.is_none(),
+                "call_id must be None for Chat Completions"
+            );
             assert_eq!(name, "propose_plan");
         } else {
             panic!("expected ToolUse block");

@@ -150,12 +150,11 @@ impl RateLimiter {
         // Write via a temp file + rename for crash safety, falling back to
         // direct write if the parent directory's temp file creation fails.
         let write_result = if let Some(parent) = self.path.parent() {
-            tempfile::NamedTempFile::new_in(parent)
-                .and_then(|mut tmp| {
-                    tmp.write_all(new_content.as_bytes())?;
-                    tmp.persist(&self.path).map_err(|e| e.error)?;
-                    Ok(())
-                })
+            tempfile::NamedTempFile::new_in(parent).and_then(|mut tmp| {
+                tmp.write_all(new_content.as_bytes())?;
+                tmp.persist(&self.path).map_err(|e| e.error)?;
+                Ok(())
+            })
         } else {
             std::fs::write(&self.path, &new_content).map_err(Into::into)
         };

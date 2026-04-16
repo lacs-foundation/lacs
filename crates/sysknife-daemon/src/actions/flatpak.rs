@@ -1,4 +1,4 @@
-use super::{command_mechanism, ActionSpec, ActionMechanism};
+use super::{command_mechanism, ActionMechanism, ActionSpec};
 use sysknife_types::RiskLevel;
 
 pub fn specs() -> Vec<ActionSpec> {
@@ -71,10 +71,7 @@ pub fn search_flatpak_apps(term: &str) -> ActionSpec {
 pub fn list_flatpak_remotes(username: &str) -> ActionSpec {
     ActionSpec {
         action_name: "ListFlatpakRemotes",
-        mechanism: flatpak_as(
-            username,
-            "flatpak remotes --user --columns=name,url",
-        ),
+        mechanism: flatpak_as(username, "flatpak remotes --user --columns=name,url"),
         risk_level: RiskLevel::Low,
         reboot_required: false,
         rollback_available: false,

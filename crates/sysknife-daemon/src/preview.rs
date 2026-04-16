@@ -1,5 +1,5 @@
-use sysknife_types::{PreviewEnvelope, RequestEnvelope, RiskLevel};
 use serde_json::Value;
+use sysknife_types::{PreviewEnvelope, RequestEnvelope, RiskLevel};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct PreviewProfile {
