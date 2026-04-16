@@ -19,109 +19,208 @@ use crate::provider::ToolDefinition;
 /// Must be kept in sync with the action catalogue in `sysknife-daemon`. The
 /// cross-module consistency test in `sysknife-daemon/tests/action_consistency.rs`
 /// verifies this at test time.
-pub const KNOWN_ACTIONS: &[&str] = &[
+/// Each entry is `(action_name, one-line description)`.
+///
+/// The description is surfaced in the `action_name` field of the `propose_plan`
+/// tool schema so the model can reason about which action to pick from its
+/// *purpose* rather than just its name.
+pub const KNOWN_ACTIONS: &[(&str, &str)] = &[
     // Deployment and boot
-    "GetSystemState",
-    "CollectDiagnostics",
-    "GetDeploymentHistory",
-    "ListDeployments",
-    "PinDeployment",
-    "UnpinDeployment",
-    "UpdateSystem",
-    "RebaseSystem",
-    "CleanupDeployments",
-    "RebootSystem",
-    "RollbackDeployment",
-    "GetKernelArguments",
-    "SetKernelArguments",
+    ("GetSystemState",
+     "full rpm-ostree deployment snapshot: layered packages, pinned/staged deployments, booted/pending OSTree refs"),
+    ("CollectDiagnostics",
+     "recent system journal log (last 500 lines) for error diagnosis and troubleshooting"),
+    ("GetDeploymentHistory",
+     "rpm-ostree deployment history: past and current OSTree commits with timestamps"),
+    ("ListDeployments",
+     "list all currently staged, pending, and booted deployments"),
+    ("PinDeployment",
+     "pin a specific deployment so it is not garbage-collected during cleanup"),
+    ("UnpinDeployment",
+     "unpin a previously pinned deployment, allowing it to be removed"),
+    ("UpdateSystem",
+     "download and stage the latest OSTree update (does not reboot)"),
+    ("RebaseSystem",
+     "switch the system to a different OSTree ref/remote (rebase)"),
+    ("CleanupDeployments",
+     "remove old staged deployments to free disk space"),
+    ("RebootSystem",
+     "reboot the machine into the current or staged deployment"),
+    ("RollbackDeployment",
+     "roll back to the previous booted deployment"),
+    ("GetKernelArguments",
+     "list current kernel command-line arguments (kargs)"),
+    ("SetKernelArguments",
+     "add, remove, or replace kernel command-line arguments"),
     // Flatpak
-    "InstallFlatpak",
-    "RemoveFlatpak",
-    "UpdateFlatpak",
-    "SearchFlatpakApps",
-    "ListFlatpakRemotes",
-    "ListInstalledFlatpaks",
-    "AddFlatpakRemote",
-    "RemoveFlatpakRemote",
-    "GetFlatpakAppInfo",
+    ("InstallFlatpak",
+     "install a Flatpak application from a configured remote"),
+    ("RemoveFlatpak",
+     "uninstall an installed Flatpak application"),
+    ("UpdateFlatpak",
+     "update one or all installed Flatpak applications"),
+    ("SearchFlatpakApps",
+     "search Flatpak remotes for applications matching a query"),
+    ("ListFlatpakRemotes",
+     "list configured Flatpak remotes (e.g. flathub)"),
+    ("ListInstalledFlatpaks",
+     "list all Flatpak applications currently installed on the system"),
+    ("AddFlatpakRemote",
+     "add a new Flatpak remote repository"),
+    ("RemoveFlatpakRemote",
+     "remove a configured Flatpak remote repository"),
+    ("GetFlatpakAppInfo",
+     "show metadata and runtime info for a specific installed Flatpak"),
     // Toolbox
-    "ListToolboxes",
-    "CreateToolbox",
-    "RemoveToolbox",
+    ("ListToolboxes",
+     "list all toolbox containers (distrobox/podman toolbox)"),
+    ("CreateToolbox",
+     "create a new toolbox container with a specified image"),
+    ("RemoveToolbox",
+     "remove an existing toolbox container"),
     // Layering
-    "InstallPackages",
-    "RemovePackages",
-    "GetLayeredPackages",
-    "AddLayeredPackage",
-    "RemoveLayeredPackage",
-    "ReplaceLayeredPackage",
-    "ResetLayeredPackageOverride",
-    "RemoveBasePackage",
-    "GetPendingUpdates",
+    ("InstallPackages",
+     "layer one or more RPM packages onto the immutable OS via rpm-ostree"),
+    ("RemovePackages",
+     "remove previously layered RPM packages from the OS"),
+    ("GetLayeredPackages",
+     "list all RPM packages currently layered on top of the base OS image"),
+    ("AddLayeredPackage",
+     "layer a single RPM package onto the OS (requires reboot to take effect)"),
+    ("RemoveLayeredPackage",
+     "remove a single layered RPM package (requires reboot)"),
+    ("ReplaceLayeredPackage",
+     "replace a base OS package with a different version via rpm-ostree override"),
+    ("ResetLayeredPackageOverride",
+     "reset a package override, restoring the base OS version"),
+    ("RemoveBasePackage",
+     "exclude a base OS package from the deployment"),
+    ("GetPendingUpdates",
+     "check whether a staged update is pending and show its diff"),
     // Services
-    "ListServices",
-    "StartService",
-    "StopService",
-    "RestartService",
-    "ReloadService",
-    "ReloadDaemon",
-    "SetServiceEnabled",
-    "MaskService",
-    "UnmaskService",
-    "GetServiceLogs",
-    "GetServiceStatus",
-    "ListTimers",
+    ("ListServices",
+     "list all systemd units and their current active/enabled state"),
+    ("StartService",
+     "start a stopped systemd service unit"),
+    ("StopService",
+     "stop a running systemd service unit"),
+    ("RestartService",
+     "restart a systemd service unit (stop then start)"),
+    ("ReloadService",
+     "send SIGHUP to a service to reload its configuration without restarting"),
+    ("ReloadDaemon",
+     "run systemctl daemon-reload to pick up new or changed unit files"),
+    ("SetServiceEnabled",
+     "enable or disable a systemd service unit at boot"),
+    ("MaskService",
+     "mask a systemd unit so it cannot be started manually or automatically"),
+    ("UnmaskService",
+     "unmask a previously masked systemd unit"),
+    ("GetServiceLogs",
+     "fetch recent journald log lines for a specific systemd service"),
+    ("GetServiceStatus",
+     "show detailed status of a specific systemd service unit"),
+    ("ListTimers",
+     "list all active and loaded systemd timer units with their next trigger time"),
     // Network
-    "ConfigureWifi",
-    "SetDnsServers",
-    "ConfigureFirewall",
-    "GetFirewallState",
-    "GetNetworkStatus",
+    ("ConfigureWifi",
+     "connect to a Wi-Fi network using an SSID and password via NetworkManager"),
+    ("SetDnsServers",
+     "set DNS resolver addresses for a network interface via NetworkManager"),
+    ("ConfigureFirewall",
+     "add or remove a service or port in a firewalld zone"),
+    ("GetFirewallState",
+     "show current firewalld zones, open services, and port rules"),
+    ("GetNetworkStatus",
+     "show network interfaces, IP addresses, and connection state (ip addr / nmcli)"),
     // Filesystem
-    "GetDiskUsage",
+    ("GetDiskUsage",
+     "show disk space usage for all mounted filesystems (df -h)"),
     // Processes
-    "ListProcesses",
+    ("ListProcesses",
+     "list running processes with CPU and memory usage (ps / top snapshot)"),
     // System info
-    "GetMemoryInfo",
+    ("GetMemoryInfo",
+     "show RAM and swap usage totals and availability (free -h)"),
     // Identity / time / locale
-    "GetDateTime",
-    "SetHostname",
-    "SetTimezone",
-    "SetLocale",
-    "SetNtp",
+    ("GetDateTime",
+     "current date, time, timezone, and NTP synchronisation status (timedatectl)"),
+    ("SetHostname",
+     "change the system hostname permanently via hostnamectl"),
+    ("SetTimezone",
+     "change the system timezone via timedatectl"),
+    ("SetLocale",
+     "change the system locale (language/region) via localectl"),
+    ("SetNtp",
+     "enable or disable NTP time synchronisation via timedatectl"),
     // Package repositories
-    "ListPackageRepositories",
-    "AddPackageRepository",
-    "RemovePackageRepository",
-    "EnablePackageRepository",
-    "DisablePackageRepository",
+    ("ListPackageRepositories",
+     "list configured DNF/rpm-ostree package repositories and their enabled state"),
+    ("AddPackageRepository",
+     "add a new DNF package repository (repo file)"),
+    ("RemovePackageRepository",
+     "remove a configured DNF package repository"),
+    ("EnablePackageRepository",
+     "enable a disabled DNF package repository"),
+    ("DisablePackageRepository",
+     "disable an enabled DNF package repository without removing it"),
     // Containers
-    "ListContainers",
-    "CreateContainer",
-    "StartContainer",
-    "StopContainer",
-    "RemoveContainer",
-    "GetContainerInfo",
+    ("ListContainers",
+     "list all Podman containers (running and stopped) with their status"),
+    ("CreateContainer",
+     "create a new Podman container from an image"),
+    ("StartContainer",
+     "start a stopped Podman container"),
+    ("StopContainer",
+     "stop a running Podman container"),
+    ("RemoveContainer",
+     "remove a Podman container (must be stopped first)"),
+    ("GetContainerInfo",
+     "inspect a specific Podman container and show its detailed configuration"),
     // Users and groups
-    "ListUsers",
-    "ListGroups",
-    "CreateUser",
-    "DeleteUser",
-    "AddUserToGroup",
-    "RemoveUserFromGroup",
+    ("ListUsers",
+     "list all local user accounts on the system"),
+    ("ListGroups",
+     "list all local groups on the system"),
+    ("CreateUser",
+     "create a new local user account with optional shell and home directory"),
+    ("DeleteUser",
+     "delete a local user account (optionally remove home directory)"),
+    ("AddUserToGroup",
+     "add an existing user to a supplementary group"),
+    ("RemoveUserFromGroup",
+     "remove a user from a supplementary group"),
     // SSH
-    "GetAuthorizedKeys",
-    "AddAuthorizedKey",
-    "RemoveAuthorizedKey",
+    ("GetAuthorizedKeys",
+     "list SSH authorized_keys entries for a user"),
+    ("AddAuthorizedKey",
+     "append an SSH public key to a user's authorized_keys file"),
+    ("RemoveAuthorizedKey",
+     "remove a specific SSH public key from a user's authorized_keys file"),
     // Job history
-    "ListJobHistory",
+    ("ListJobHistory",
+     "show SysKnife's own past job execution log: what actions ran, when, and whether they succeeded"),
 ];
 
 pub fn propose_plan_tool_def() -> ToolDefinition {
     let action_enum: Vec<serde_json::Value> = KNOWN_ACTIONS
         .iter()
-        .map(|&s| serde_json::Value::String(s.into()))
+        .map(|(name, _)| serde_json::Value::String((*name).into()))
         .collect();
+
+    // Build a compact catalogue so the model can match intent to action by
+    // purpose.  Format: "Name — description" on its own line.
+    let action_catalogue: String = KNOWN_ACTIONS
+        .iter()
+        .map(|(name, desc)| format!("{name} — {desc}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let action_name_description = format!(
+        "SysKnife action name from the approved list. \
+         Choose by PURPOSE, not by name similarity. \
+         Catalogue (name — what it does):\n{action_catalogue}"
+    );
 
     ToolDefinition {
         name: "propose_plan".into(),
@@ -151,7 +250,7 @@ pub fn propose_plan_tool_def() -> ToolDefinition {
                             "action_name": {
                                 "type": "string",
                                 "enum": action_enum,
-                                "description": "SysKnife action name from the approved list."
+                                "description": action_name_description
                             },
                             "summary": {
                                 "type": "string",
@@ -444,7 +543,7 @@ mod tests {
 
     #[test]
     fn all_known_actions_are_accepted() {
-        for action in KNOWN_ACTIONS {
+        for &(action, _) in KNOWN_ACTIONS {
             let input = serde_json::json!({
                 "summary": "test",
                 "explanation": "test",

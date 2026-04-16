@@ -24,7 +24,7 @@ impl ActionName {
     /// Returns `Err` if `name` is not in the approved action catalogue.
     pub fn parse(name: impl Into<String>) -> Result<Self, UnknownActionName> {
         let name = name.into();
-        if KNOWN_ACTIONS.contains(&name.as_str()) {
+        if KNOWN_ACTIONS.iter().any(|(n, _)| *n == name.as_str()) {
             Ok(Self(name))
         } else {
             Err(UnknownActionName(name))
@@ -80,7 +80,7 @@ mod tests {
 
     #[test]
     fn all_known_actions_parse() {
-        for &action in KNOWN_ACTIONS {
+        for &(action, _) in KNOWN_ACTIONS {
             ActionName::parse(action)
                 .unwrap_or_else(|_| panic!("KNOWN_ACTION '{action}' should parse"));
         }
