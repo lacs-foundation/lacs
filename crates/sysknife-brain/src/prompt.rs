@@ -6,7 +6,7 @@
 //!
 //! # Worked examples — do not remove
 //!
-//! The prompt contains four worked examples (A, B, C, and D). They are load-bearing.
+//! The prompt contains five worked examples (A, B, C, D, and E). They are load-bearing.
 //! Without examples the model defaults to querying state first for every intent, which
 //! either crashes the planner (when `get_system_state` is called and the daemon is
 //! unavailable) or produces incorrect fallback plans.
@@ -18,9 +18,9 @@
 //! | With examples (A+B) | 7 / 7                    |
 //! | Without examples    | 3 / 7                    |
 //!
-//! Examples C and D were added after this measurement. No re-measurement has been
-//! recorded for the current A+B+C+D configuration, but the requirement to keep
-//! all four examples is unchanged.
+//! Examples C, D, and E were added after this measurement. No re-measurement has been
+//! recorded for the current A+B+C+D+E configuration, but the requirement to keep
+//! all five examples is unchanged.
 //!
 //! Example A ("check disk usage") was removed — it is a strict subset of the
 //! general rule stated in prose and adds no coverage beyond Example B.
@@ -31,6 +31,20 @@
 //! > Do NOT call `get_system_state` or `query_*` tools first.
 //! > Use query tools ONLY when you genuinely need information to DECIDE
 //! > between two or more possible plans.
+//!
+//! Example E specifically covers two patterns where GPT-4o's reasoning instinct
+//! conflicts with the rule:
+//!
+//! 1. **"is X running?"** — GPT-4o reasons that it needs live system knowledge
+//!    to answer this, and calls `get_system_state` before planning. The correct
+//!    move is `GetServiceStatus(unit=X)` immediately — the action itself is the
+//!    live check. Calling `get_system_state` first crashes the planner in dry-run
+//!    mode and is redundant in all other modes.
+//!
+//! 2. **"what OS/hardware am I running?"** — GPT-4o picks `CollectDiagnostics`
+//!    because the name sounds like "gathering system information". The correct
+//!    action is `GetSystemState`. `CollectDiagnostics` is for support bundles
+//!    when something is broken, not for general state questions.
 //!
 //! Validate any prompt change against the full E2E story suite before merging.
 
@@ -277,6 +291,76 @@ options?" → `ListDeployments` + `GetDeploymentHistory`. "Show kernel args and
 layered packages" → `GetKernelArguments` + `GetLayeredPackages`. Always straight
 to `propose_plan`.
 
+### Example E — specific-item status and system overview queries
+
+Two patterns where reasoning models call `get_system_state` or pick the wrong
+action when a direct `propose_plan` is correct:
+
+**Pattern 1 — "is X running?"**
+
+User: "is nginx running?"
+
+This looks like it requires querying live system state before you can answer,
+but it does NOT. The user names a specific service (`nginx`). That name goes
+directly into `params`. `GetServiceStatus` IS the live check — the daemon runs
+it at execution time. Calling `get_system_state` first crashes the planner in
+dry-run mode and is redundant in all other modes.
+
+**WRONG:**
+- call `get_system_state` → scan result for nginx → end without `propose_plan` ← FORBIDDEN
+- call `query_services` → check if nginx is listed → then `propose_plan` ← FORBIDDEN (unnecessary)
+
+**RIGHT:**
+
+```json
+{
+  "summary": "Check whether nginx is running",
+  "explanation": "The user named a specific service. GetServiceStatus runs the live status check at execution time — no planning-time state query is needed.",
+  "steps": [
+    {
+      "action_name": "GetServiceStatus",
+      "summary": "Get current status of the nginx service",
+      "risk_level": "low",
+      "params": { "unit": "nginx" }
+    }
+  ]
+}
+```
+
+The same rule applies to any named unit: "is sshd up?", "is docker running?",
+"check the status of firewalld" → always `GetServiceStatus(unit=<name>)`
+immediately, never a state query first.
+
+**Pattern 2 — OS and hardware overview**
+
+User: "what operating system and hardware am I running on?"
+
+This maps directly to `GetSystemState` — it returns an OS/hardware snapshot.
+Do NOT use `CollectDiagnostics`. That action gathers a support-level diagnostic
+bundle for when something is broken. It is the wrong tool for a general "show
+me my system" question.
+
+**WRONG:**
+- call `get_system_state` (planning tool) → describe result in prose → end without `propose_plan` ← FORBIDDEN
+- use `CollectDiagnostics` as the plan action ← WRONG ACTION for this intent
+
+**RIGHT:**
+
+```json
+{
+  "summary": "Show operating system and hardware information",
+  "explanation": "The user asked for an OS and hardware overview. GetSystemState returns exactly this. CollectDiagnostics is for support-level diagnostic bundles when something is broken — it is not the right action here.",
+  "steps": [
+    {
+      "action_name": "GetSystemState",
+      "summary": "Get a snapshot of OS version, hardware, and overall system state",
+      "risk_level": "low",
+      "params": {}
+    }
+  ]
+}
+```
+
 ## Available SysKnife actions
 
 ### Low risk — no approval required, always audited
@@ -322,6 +406,24 @@ When in doubt, assign the higher risk level. Do not infer risk from whether an a
 
 **Counterintuitive classifications — these override your intuition:**
 - `ReloadDaemon` is MEDIUM, not LOW — it runs `systemctl daemon-reload` which changes system-wide unit file resolution.
+
+## State and diagnostic action disambiguation
+
+- `GetSystemState` — returns a high-level snapshot of OS version, kernel,
+  hardware, running service count, and overall health. Use for "what OS am I
+  running?", "what hardware do I have?", "show me a system overview", "what
+  version of Fedora is this?", "what is my system configuration?". This is the
+  correct default for any general state question that does not describe a
+  specific problem.
+- `CollectDiagnostics` — gathers a support-level diagnostic bundle: logs,
+  service errors, hardware info, recent failures. Use ONLY when the user
+  describes something broken ("something is wrong", "nothing is working",
+  "generate a diagnostic report for support"). Do NOT use for general state
+  questions — `GetSystemState` is almost always the right choice there.
+
+**Decision rule:** if the user is asking *what their system is*, use
+`GetSystemState`. If the user is asking *why something broke*, use
+`CollectDiagnostics`.
 
 ## Service action disambiguation
 
@@ -470,5 +572,28 @@ mod tests {
                 || prompt.contains("example D")
                 || prompt.contains("### D")
         );
+    }
+
+    #[test]
+    fn system_prompt_contains_example_e() {
+        let prompt = build_system_prompt(None);
+        // Example E covers two GPT-4o failure modes:
+        //   1. "is X running?" must map to GetServiceStatus, never get_system_state first.
+        //   2. "what OS/hardware?" must map to GetSystemState, never CollectDiagnostics.
+        assert!(
+            prompt.contains("Example E")
+                || prompt.contains("example E")
+                || prompt.contains("### E")
+        );
+        // Pattern 1: the concrete JSON plan for "is nginx running?"
+        assert!(prompt.contains("GetServiceStatus"));
+        assert!(prompt.contains("\"unit\": \"nginx\"") || prompt.contains("unit=nginx") || prompt.contains("unit=\"nginx\""));
+        // Must explicitly forbid calling get_system_state for service status queries.
+        assert!(prompt.contains("get_system_state") && prompt.contains("nginx"));
+        // Pattern 2: GetSystemState vs CollectDiagnostics disambiguation.
+        assert!(prompt.contains("CollectDiagnostics"));
+        assert!(prompt.contains("GetSystemState"));
+        // Must teach the decision rule in the disambiguation section.
+        assert!(prompt.contains("State and diagnostic action disambiguation"));
     }
 }
