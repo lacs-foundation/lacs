@@ -3,12 +3,11 @@
 //! Some system commands use non-zero exit codes as semantic signals, not error
 //! indicators:
 //!
-//!   GetPendingUpdates   exit 77 → updates ARE available (0 = up-to-date)
 //!   GetServiceStatus    exit 1–4 → inactive / dead / failed / not-found
 //!
-//! Both cases produce informative stdout that the planner needs. Treating them
-//! as execution failures would either crash planning or give the LLM an error
-//! message instead of actual system state — causing wrong plans.
+//! These cases produce informative stdout that the planner needs. Treating them
+//! as execution failures would give the LLM an error message instead of actual
+//! system state — causing wrong plans.
 //!
 //! The whitelist lives at dispatcher.rs `is_informational_exit`. These tests
 //! pin the exact (action_name, exit_code) pairs that are allowed through, and
@@ -118,38 +117,13 @@ async fn query_action(
 }
 
 // ---------------------------------------------------------------------------
-// GetPendingUpdates: exit 77 is "updates available" (informational)
+// GetPendingUpdates: exit 0 only (exit 77 is not whitelisted)
 // ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn get_pending_updates_exit_77_is_passed_through_as_success() {
-    // rpm-ostree upgrade --check exits 77 when updates are available.
-    // This is the *only* time a user asks "are there updates?" — treating it
-    // as an error would always fail the most useful case.
-    let dir = tempdir().unwrap();
-    let state = test_state(&dir);
-    let executor: Arc<dyn ActionExecutor> = Arc::new(FixedExitExecutor {
-        target_action: "GetPendingUpdates",
-        target_stdout: "1 upgrade available",
-        target_exit_code: 77,
-    });
-    let mut framed = spawn_handler(state, executor).await;
-
-    let resp = query_action(&mut framed, "GetPendingUpdates", json!({}), "req-77").await;
-
-    assert_eq!(
-        resp["type"], "query_action_response",
-        "exit 77 from GetPendingUpdates must be informational, not an error: {resp}"
-    );
-    assert!(
-        resp["output"].as_str().unwrap_or("").contains("upgrade available"),
-        "stdout must be passed through: {resp}"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn get_pending_updates_exit_0_is_success() {
-    // Exit 0 = system is up-to-date.
+    // `rpm-ostree upgrade --check` exits 0 regardless of whether updates are
+    // available on current Fedora Atomic. Exit 77 is not whitelisted.
     let dir = tempdir().unwrap();
     let state = test_state(&dir);
     let executor: Arc<dyn ActionExecutor> = Arc::new(FixedExitExecutor {
@@ -164,6 +138,32 @@ async fn get_pending_updates_exit_0_is_success() {
     assert_eq!(
         resp["type"], "query_action_response",
         "exit 0 from GetPendingUpdates must be success: {resp}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_pending_updates_exit_77_is_an_error() {
+    // Exit 77 from GetPendingUpdates is not whitelisted: `rpm-ostree upgrade
+    // --check` does not produce exit 77 on current Fedora Atomic. If it somehow
+    // occurs, it must surface as an execution_failure, not silent success.
+    let dir = tempdir().unwrap();
+    let state = test_state(&dir);
+    let executor: Arc<dyn ActionExecutor> = Arc::new(FixedExitExecutor {
+        target_action: "GetPendingUpdates",
+        target_stdout: "unexpected",
+        target_exit_code: 77,
+    });
+    let mut framed = spawn_handler(state, executor).await;
+
+    let resp = query_action(&mut framed, "GetPendingUpdates", json!({}), "req-77").await;
+
+    assert_eq!(
+        resp["type"], "error_response",
+        "exit 77 from GetPendingUpdates must be execution_failure (not whitelisted): {resp}"
+    );
+    assert_eq!(
+        resp["category"], "execution_failure",
+        "error category must be execution_failure: {resp}"
     );
 }
 

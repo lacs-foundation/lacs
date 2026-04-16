@@ -641,14 +641,11 @@ async fn handle_query_action(
     // error indicators.  These are whitelisted here so the informative stdout
     // is passed through to the caller instead of being discarded.
     //
-    // - rpm-ostree upgrade --check: exits 77 when updates ARE available (0 = up-to-date).
-    //   Treating 77 as an error would fail the "updates available" case — the only
-    //   time a user would ever ask this question.
     // - systemctl status <unit>: exits 1 when inactive, 3 when dead/failed, 4 when not
     //   found.  All produce informative output the planner needs for diagnosis.
     let is_informational_exit = matches!(
         (action_name, output.exit_code),
-        ("GetPendingUpdates", 77) | ("GetServiceStatus", 1..=4)
+        ("GetServiceStatus", 1..=4)
     );
 
     if output.exit_code != 0 && !is_informational_exit {
@@ -1416,7 +1413,7 @@ mod tests {
                 "type": "preview",
                 "request_id": "r1",
                 "action_name": "InstallFlatpak",
-                "params": {"app_id": "org.gnome.Builder", "remote": "flathub"}
+                "params": {"username": "alice", "app_id": "org.gnome.Builder", "remote": "flathub"}
             })],
             1,
         )

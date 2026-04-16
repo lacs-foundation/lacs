@@ -25,9 +25,11 @@
 #   install-key — alias for `bootstrap` (kept for older docs)
 #   start       — boot the installed VM headlessly with SSH forwarding
 #   ssh        — open an SSH shell into the VM (or run a command)
+#   sync       — rsync the repo to the VM (no build, no provision)
 #   provision  — rsync the repo, run tests/e2e/provision.sh inside the VM
 #   run        — run the story harness (reads SYSKNIFE_ALLOW_DESTRUCTIVE)
 #   test-daemon — run sysknife-daemon-test inside the VM (Tier 2+3 integration)
+#   test-exec  — run Tier 4 execution E2E stories (LLM→approval→daemon→state)
 #   snapshot   — create a named qcow2 snapshot before destructive tests
 #   restore    — restore the VM to the named snapshot
 #   stop       — shut down the VM
@@ -270,6 +272,20 @@ cmd_ssh() {
     exec ssh $(ssh_opts) -p "$port" "${VM_USER}@127.0.0.1" "$@"
 }
 
+cmd_sync() {
+    require_tools rsync
+    [ -f "$SSH_KEY" ] || die "SSH key $SSH_KEY not found. Run '$0 keygen' then provision first."
+    local port repo_root
+    port="$(vm_ssh_port)"
+    repo_root="$(git rev-parse --show-toplevel)"
+    log "Syncing repo to VM (no build, no provision)..."
+    rsync -az --exclude=target --exclude=node_modules --exclude=.git \
+        --exclude="$VM_DIR" \
+        -e "ssh $(ssh_opts) -p $port" \
+        "$repo_root/" "${VM_USER}@127.0.0.1:/home/${VM_USER}/sysknife/"
+    log "Sync complete. Run '$0 test-exec' or '$0 test-daemon' to exercise the new scripts."
+}
+
 cmd_provision() {
     require_tools rsync
     [ -f "$SSH_KEY" ] || die "SSH key $SSH_KEY not found. Run '$0 keygen' then '$0 install-key' first."
@@ -462,6 +478,35 @@ cmd_test_daemon() {
         ./target/release/sysknife-daemon-test"
 }
 
+cmd_test_exec() {
+    [ -f "$SSH_KEY" ] || die "SSH key $SSH_KEY not found. Run '$0 keygen' then provision first."
+    if [ "${SYSKNIFE_ALLOW_DESTRUCTIVE:-}" = "1" ]; then
+        log "Running ALL 11 exec stories (including destructive). Make sure you have a VM snapshot."
+    else
+        log "Running safe exec stories only (1 2 3 6). Set SYSKNIFE_ALLOW_DESTRUCTIVE=1 for all 11."
+    fi
+
+    # Run as VM_USER (not root) so sysknife connects to the daemon socket with
+    # the user's group membership (sysknife/sysknife-dev/sysknife-admin) and
+    # gets the correct CallerRole. Root has no sysknife groups and gets Observer.
+    local env_prefix=""
+    for var in SYSKNIFE_ALLOW_DESTRUCTIVE SYSKNIFE_LLM_PROVIDER SYSKNIFE_LLM_MODEL \
+               SYSKNIFE_TEST_MODEL SYSKNIFE_OLLAMA_URL SYSKNIFE_SOCKET SYSKNIFE_LISTEN_URI \
+               SYSKNIFE_STORY_TIMEOUT \
+               OPENAI_API_KEY ANTHROPIC_API_KEY GEMINI_API_KEY; do
+        eval "val=\${$var:-}"
+        if [ -n "$val" ]; then
+            env_prefix+=" $var='$val'"
+        fi
+    done
+
+    local story_args=""
+    if [ $# -gt 0 ]; then
+        story_args=" $*"
+    fi
+    cmd_ssh "cd /home/${VM_USER}/sysknife &&${env_prefix} bash tests/e2e/exec/run-exec-stories.sh${story_args}"
+}
+
 cmd_snapshot() {
     require_tools qemu-img
     local name="${1:-pre-destructive}"
@@ -535,9 +580,11 @@ case "$cmd" in
     install-key)    cmd_install_key "$@" ;;
     start)          cmd_start "$@" ;;
     ssh)            cmd_ssh "$@" ;;
+    sync)           cmd_sync "$@" ;;
     provision)      cmd_provision "$@" ;;
     run)            cmd_run "$@" ;;
     test-daemon)    cmd_test_daemon "$@" ;;
+    test-exec)      cmd_test_exec "$@" ;;
     snapshot)       cmd_snapshot "$@" ;;
     restore)        cmd_restore "$@" ;;
     stop)           cmd_stop "$@" ;;

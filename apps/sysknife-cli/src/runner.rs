@@ -37,11 +37,11 @@ use crate::error::CliError;
 // ---------------------------------------------------------------------------
 
 /// Returns the daemon socket path from `$SYSKNIFE_SOCKET`, falling back to the
-/// system-wide default `/run/sysknife/sysknife.sock`.
+/// system-wide default `/run/sysknife/daemon.sock`.
 pub fn resolve_socket() -> PathBuf {
     std::env::var_os("SYSKNIFE_SOCKET")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/run/sysknife/sysknife.sock"))
+        .unwrap_or_else(|| PathBuf::from("/run/sysknife/daemon.sock"))
 }
 
 // ---------------------------------------------------------------------------

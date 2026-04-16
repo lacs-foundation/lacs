@@ -133,7 +133,7 @@ pub fn list_timers() -> ActionSpec {
     // scheduled tasks.
     ActionSpec {
         action_name: "ListTimers",
-        mechanism: command_mechanism("systemctl", ["list-timers", "--all", "--no-pager"]),
+        mechanism: command_mechanism("systemctl", ["list-timers", "--all", "--no-legend", "--no-pager"]),
         risk_level: RiskLevel::Low,
         reboot_required: false,
         rollback_available: false,

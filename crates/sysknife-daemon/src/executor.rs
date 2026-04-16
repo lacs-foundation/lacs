@@ -94,35 +94,51 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
         }
 
         // ── Flatpak ───────────────────────────────────────────────────────
-        "ListFlatpakRemotes" => Ok(flatpak::list_flatpak_remotes()),
+        // All user-scoped Flatpak operations require a `username` param so the
+        // daemon can switch to that user's environment via `runuser -l`. This
+        // ensures operations target the user's Flatpak installation
+        // (~/.local/share/flatpak/) rather than the system store.
+        "ListFlatpakRemotes" => {
+            let username = validated_username(require_str(params, "username")?, "username")?;
+            Ok(flatpak::list_flatpak_remotes(&username))
+        }
         "InstallFlatpak" => {
+            let username = validated_username(require_str(params, "username")?, "username")?;
             let app_id = validated_safe_arg(require_str(params, "app_id")?, "app_id")?;
             let remote = validated_safe_arg(require_str(params, "remote")?, "remote")?;
-            Ok(flatpak::install_flatpak(&app_id, &remote))
+            Ok(flatpak::install_flatpak(&username, &app_id, &remote))
         }
         "RemoveFlatpak" => {
+            let username = validated_username(require_str(params, "username")?, "username")?;
             let app_id = validated_safe_arg(require_str(params, "app_id")?, "app_id")?;
-            Ok(flatpak::remove_flatpak(&app_id))
+            Ok(flatpak::remove_flatpak(&username, &app_id))
         }
         "SearchFlatpakApps" => {
             let term = validated_safe_arg(require_str(params, "term")?, "term")?;
             Ok(flatpak::search_flatpak_apps(&term))
         }
         "AddFlatpakRemote" => {
+            let username = validated_username(require_str(params, "username")?, "username")?;
             let remote = validated_safe_arg(require_str(params, "remote")?, "remote")?;
             let url = validated_safe_arg(require_str(params, "url")?, "url")?;
-            Ok(flatpak::add_flatpak_remote(&remote, &url))
+            Ok(flatpak::add_flatpak_remote(&username, &remote, &url))
         }
         "RemoveFlatpakRemote" => {
+            let username = validated_username(require_str(params, "username")?, "username")?;
             let remote = validated_safe_arg(require_str(params, "remote")?, "remote")?;
-            Ok(flatpak::remove_flatpak_remote(&remote))
+            Ok(flatpak::remove_flatpak_remote(&username, &remote))
         }
         "GetFlatpakAppInfo" => {
+            let username = validated_username(require_str(params, "username")?, "username")?;
             let app_id = validated_safe_arg(require_str(params, "app_id")?, "app_id")?;
-            Ok(flatpak::get_flatpak_app_info(&app_id))
+            Ok(flatpak::get_flatpak_app_info(&username, &app_id))
         }
-        "ListInstalledFlatpaks" => Ok(flatpak::list_installed_flatpaks()),
+        "ListInstalledFlatpaks" => {
+            let username = validated_username(require_str(params, "username")?, "username")?;
+            Ok(flatpak::list_installed_flatpaks(&username))
+        }
         "UpdateFlatpak" => {
+            let username = validated_username(require_str(params, "username")?, "username")?;
             // app_id is optional — omitting it updates all installed Flatpaks.
             // Empty string is treated as absent (no app specified → update all).
             let app_id = params
@@ -131,31 +147,43 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
                 .filter(|id| !id.is_empty())
                 .map(|id| validated_safe_arg(id, "app_id"))
                 .transpose()?;
-            Ok(flatpak::update_flatpak(app_id.as_deref()))
+            Ok(flatpak::update_flatpak(&username, app_id.as_deref()))
         }
 
         // ── Containers ────────────────────────────────────────────────────
-        "ListContainers" => Ok(containers::list_containers()),
+        // All container operations require a `username` param so the daemon can
+        // switch to that user's rootless Podman environment via `runuser -l`.
+        // Podman storage is per-user; running as the `sysknife` system user
+        // would see an empty, unrelated container store.
+        "ListContainers" => {
+            let username = validated_username(require_str(params, "username")?, "username")?;
+            Ok(containers::list_containers(&username))
+        }
         "CreateContainer" => {
+            let username = validated_username(require_str(params, "username")?, "username")?;
             let name = validated_safe_arg(require_str(params, "name")?, "name")?;
             let image = validated_safe_arg(require_str(params, "image")?, "image")?;
-            Ok(containers::create_container(&name, &image))
+            Ok(containers::create_container(&username, &name, &image))
         }
         "StartContainer" => {
+            let username = validated_username(require_str(params, "username")?, "username")?;
             let name = validated_safe_arg(require_str(params, "name")?, "name")?;
-            Ok(containers::start_container(&name))
+            Ok(containers::start_container(&username, &name))
         }
         "StopContainer" => {
+            let username = validated_username(require_str(params, "username")?, "username")?;
             let name = validated_safe_arg(require_str(params, "name")?, "name")?;
-            Ok(containers::stop_container(&name))
+            Ok(containers::stop_container(&username, &name))
         }
         "RemoveContainer" => {
+            let username = validated_username(require_str(params, "username")?, "username")?;
             let name = validated_safe_arg(require_str(params, "name")?, "name")?;
-            Ok(containers::remove_container(&name))
+            Ok(containers::remove_container(&username, &name))
         }
         "GetContainerInfo" => {
+            let username = validated_username(require_str(params, "username")?, "username")?;
             let name = validated_safe_arg(require_str(params, "name")?, "name")?;
-            Ok(containers::get_container_info(&name))
+            Ok(containers::get_container_info(&username, &name))
         }
 
         // ── Layering ──────────────────────────────────────────────────────
@@ -259,8 +287,14 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
         "ReloadDaemon" => Ok(services::reload_daemon()),
 
         // ── Toolbox ───────────────────────────────────────────────────────
-        "ListToolboxes" => Ok(toolbox::list_toolboxes()),
+        // Toolbox operations require a `username` param — toolbox containers are
+        // per-user (rootless Podman) and must be managed in the user's context.
+        "ListToolboxes" => {
+            let username = validated_username(require_str(params, "username")?, "username")?;
+            Ok(toolbox::list_toolboxes(&username))
+        }
         "CreateToolbox" => {
+            let username = validated_username(require_str(params, "username")?, "username")?;
             let name = validated_safe_arg(require_str(params, "name")?, "name")?;
             let image = params
                 .get("image")
@@ -273,14 +307,16 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
                 .map(|r| validated_safe_arg(r, "release"))
                 .transpose()?;
             Ok(toolbox::create_toolbox(
+                &username,
                 &name,
                 release.as_deref(),
                 image.as_deref(),
             ))
         }
         "RemoveToolbox" => {
+            let username = validated_username(require_str(params, "username")?, "username")?;
             let name = validated_safe_arg(require_str(params, "name")?, "name")?;
-            Ok(toolbox::remove_toolbox(&name))
+            Ok(toolbox::remove_toolbox(&username, &name))
         }
 
         // ── Identity ─────────────────────────────────────────────────────
@@ -312,7 +348,14 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
         "GetNetworkStatus" => Ok(network::get_network_status()),
         "ConfigureWifi" => {
             let ssid = validated_safe_arg(require_str(params, "ssid")?, "ssid")?;
-            Ok(network::configure_wifi(&ssid))
+            // password is optional — open networks connect without one.
+            let password = params
+                .get("password")
+                .and_then(|v| v.as_str())
+                .filter(|p| !p.is_empty())
+                .map(|p| validated_safe_arg(p, "password"))
+                .transpose()?;
+            Ok(network::configure_wifi(&ssid, password.as_deref()))
         }
         "SetDnsServers" => {
             let interface = validated_safe_arg(require_str(params, "interface")?, "interface")?;
@@ -691,10 +734,11 @@ mod tests {
 
     #[test]
     fn build_spec_missing_param_for_install_flatpak() {
+        // username is the first required param; its absence is reported first.
         let err = build_action_spec("InstallFlatpak", &json!({})).unwrap_err();
         assert!(
-            matches!(err, ExecutorError::MissingParam("app_id")),
-            "expected MissingParam(app_id), got: {err}"
+            matches!(err, ExecutorError::MissingParam("username")),
+            "expected MissingParam(username), got: {err}"
         );
     }
 
@@ -702,19 +746,24 @@ mod tests {
     fn build_spec_install_flatpak_injects_app_and_remote() {
         let spec = build_action_spec(
             "InstallFlatpak",
-            &json!({ "app_id": "org.mozilla.firefox", "remote": "flathub" }),
+            &json!({
+                "username": "alice",
+                "app_id": "org.mozilla.firefox",
+                "remote": "flathub"
+            }),
         )
         .unwrap();
         assert_eq!(spec.action_name, "InstallFlatpak");
         assert_eq!(
             spec.mechanism,
             ActionMechanism::Command {
-                program: "flatpak",
+                program: "sudo",
                 args: vec![
-                    "install".to_string(),
-                    "-y".to_string(),
-                    "flathub".to_string(),
-                    "org.mozilla.firefox".to_string(),
+                    "runuser".to_string(),
+                    "-l".to_string(),
+                    "alice".to_string(),
+                    "-c".to_string(),
+                    "flatpak install --user -y 'flathub' 'org.mozilla.firefox'".to_string(),
                 ],
             }
         );

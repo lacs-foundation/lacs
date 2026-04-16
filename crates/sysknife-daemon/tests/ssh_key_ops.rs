@@ -33,15 +33,21 @@ const USERNAME: &str = "testuser";
 /// Build an ActionSpec for `add_authorized_key` or `remove_authorized_key` that
 /// operates on `temp_path` instead of the real `/home/{USERNAME}/.ssh/authorized_keys`.
 ///
-/// The production functions embed the home path in a single shell script string
-/// (the single `args[1]` of `sh -c`). Replacing that substring redirects all
-/// file operations to the temp path without changing any other part of the script.
+/// The production functions use `sudo sh -c` so the daemon (running as the sysknife
+/// system user) can write to files owned by the target user. In tests, we strip the
+/// `sudo` prefix and run as the current user against a tempfile — no elevated privileges
+/// needed, and the script logic is still fully exercised.
 fn redirect_spec_path(
     mut spec: sysknife_daemon::actions::ActionSpec,
     temp_path: &str,
 ) -> sysknife_daemon::actions::ActionSpec {
     let real_path = format!("/home/{USERNAME}/.ssh/authorized_keys");
-    if let ActionMechanism::Command { ref mut args, .. } = spec.mechanism {
+    if let ActionMechanism::Command { ref mut program, ref mut args, .. } = spec.mechanism {
+        // Strip 'sudo sh' → 'sh' so tests don't require elevated privileges.
+        if *program == "sudo" && args.first().map(String::as_str) == Some("sh") {
+            *program = "sh";
+            args.remove(0);
+        }
         for arg in args.iter_mut() {
             if arg.contains(&real_path) {
                 *arg = arg.replace(&real_path, temp_path);

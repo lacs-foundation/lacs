@@ -34,7 +34,11 @@ polkit.addRule(function(action, subject) {
         "org.freedesktop.systemd1.manage-unit-files",
         "org.freedesktop.systemd1.reload-daemon",
         // ── hostname ─────────────────────────────────────────────────────
+        // set-hostname: transient hostname (DHCP/network-provided, non-persistent)
+        // set-static-hostname: persistent hostname written to /etc/hostname
+        // set-pretty-hostname: UTF-8 display name in /etc/machine-info
         "org.freedesktop.hostname1.set-hostname",
+        "org.freedesktop.hostname1.set-static-hostname",
         "org.freedesktop.hostname1.set-pretty-hostname",
         // ── date/time ────────────────────────────────────────────────────
         "org.freedesktop.timedate1.set-time",
