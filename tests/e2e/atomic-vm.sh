@@ -27,6 +27,7 @@
 #   ssh        — open an SSH shell into the VM (or run a command)
 #   provision  — rsync the repo, run tests/e2e/provision.sh inside the VM
 #   run        — run the story harness (reads SYSKNIFE_ALLOW_DESTRUCTIVE)
+#   test-daemon — run sysknife-daemon-test inside the VM (Tier 2+3 integration)
 #   snapshot   — create a named qcow2 snapshot before destructive tests
 #   restore    — restore the VM to the named snapshot
 #   stop       — shut down the VM
@@ -447,6 +448,20 @@ cmd_run() {
     cmd_ssh "cd /home/${VM_USER}/sysknife && sudo${sudo_env} bash tests/e2e/run-stories.sh${story_args}"
 }
 
+cmd_test_daemon() {
+    [ -f "$SSH_KEY" ] || die "SSH key $SSH_KEY not found. Run '$0 keygen' then provision first."
+    log "Running sysknife-daemon-test inside VM as ${VM_USER}..."
+    log "(Requires ${VM_USER} in sysknife + sysknife-dev groups — provisioned by provision.sh)"
+
+    # Run the test binary directly as VM_USER (SSH connects as VM_USER).
+    # The daemon socket group check uses SO_PEERCRED, so the binary must run
+    # as a user already in the sysknife group — not via sudo.
+    cmd_ssh "cd /home/${VM_USER}/sysknife && \
+        SYSKNIFE_LISTEN_URI=unix:///run/sysknife/daemon.sock \
+        SYSKNIFE_TEST_USER=${VM_USER} \
+        ./target/release/sysknife-daemon-test"
+}
+
 cmd_snapshot() {
     require_tools qemu-img
     local name="${1:-pre-destructive}"
@@ -522,6 +537,7 @@ case "$cmd" in
     ssh)            cmd_ssh "$@" ;;
     provision)      cmd_provision "$@" ;;
     run)            cmd_run "$@" ;;
+    test-daemon)    cmd_test_daemon "$@" ;;
     snapshot)       cmd_snapshot "$@" ;;
     restore)        cmd_restore "$@" ;;
     stop)           cmd_stop "$@" ;;

@@ -4780,6 +4780,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sysknife-daemon-test"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "sysknife-daemon",
+ "tokio",
+]
+
+[[package]]
 name = "sysknife-proto"
 version = "0.1.0"
 dependencies = [

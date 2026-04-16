@@ -4,6 +4,7 @@ members = [
   "crates/sysknife-core",
   "crates/sysknife-brain",
   "crates/sysknife-daemon",
+  "crates/sysknife-daemon-test",
   "crates/sysknife-proto",
   "crates/sysknife-types",
   "apps/sysknife-shell/src-tauri",

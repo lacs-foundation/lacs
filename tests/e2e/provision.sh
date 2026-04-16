@@ -192,10 +192,11 @@ step "Build SysKnife from $REPO_DIR"
 [ -d "$REPO_DIR" ] || fail "Repo directory $REPO_DIR not found. Did you run 'atomic-vm.sh provision'?"
 cd "$REPO_DIR"
 
-cargo build --release -p sysknife-daemon -p sysknife-cli || fail "Build sysknife-daemon and sysknife"
+cargo build --release -p sysknife-daemon -p sysknife-cli -p sysknife-daemon-test \
+    || fail "Build sysknife-daemon, sysknife, and sysknife-daemon-test"
 
 echo "Binaries:"
-ls -lh target/release/sysknife-daemon target/release/sysknife
+ls -lh target/release/sysknife-daemon target/release/sysknife target/release/sysknife-daemon-test
 
 # ---------------------------------------------------------------------------
 # Phase 2: Install the daemon via Makefile
@@ -225,6 +226,11 @@ step "Set up test user 'lacsdev'"
 if ! id lacsdev &>/dev/null; then
     useradd -m -s /bin/bash lacsdev
 fi
+
+# Add lacsdev to the sysknife socket-gating group (required to reach the socket)
+# and the sysknife-dev role group (required for mutation actions such as SSH key ops).
+# make install above ran systemd-sysusers which created these groups.
+usermod --append --groups sysknife,sysknife-dev lacsdev
 
 LACSDEV_SSH_DIR="/home/lacsdev/.ssh"
 mkdir -p "$LACSDEV_SSH_DIR"
