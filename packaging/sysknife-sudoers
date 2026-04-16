@@ -1,29 +1,29 @@
-# sudoers fragment for the LACS privileged daemon.
+# sudoers fragment for the SysKnife privileged daemon.
 #
-# Deploy to: /etc/sudoers.d/lacs
+# Deploy to: /etc/sudoers.d/sysknife
 # Permissions: 0440  (sudo refuses files that are world-writable)
 #
 # These commands are not controllable via D-Bus / polkit and therefore
 # require a direct sudo invocation by the daemon process.
 # Only the exact commands listed here are allowed — no shell or wildcard.
 #
-# IMPORTANT: test with `visudo -cf /etc/sudoers.d/lacs` before deploying.
+# IMPORTANT: test with `visudo -cf /etc/sudoers.d/sysknife` before deploying.
 
-Defaults:lacs !requiretty
+Defaults:sysknife !requiretty
 
 # User management — create and delete system/human accounts.
 # useradd: called by CreateUser  (sudo useradd --create-home ...)
 # userdel: called by DeleteUser  (sudo userdel <username>)
-lacs ALL=(root) NOPASSWD: /usr/sbin/useradd
-lacs ALL=(root) NOPASSWD: /usr/sbin/userdel
+sysknife ALL=(root) NOPASSWD: /usr/sbin/useradd
+sysknife ALL=(root) NOPASSWD: /usr/sbin/userdel
 
 # Group membership — add/remove users to/from groups.
 # usermod: called by AddUserToGroup  (sudo usermod --append --groups <grp> <user>)
 # gpasswd: called by RemoveUserFromGroup  (sudo gpasswd --delete <user> <grp>)
-lacs ALL=(root) NOPASSWD: /usr/sbin/usermod
-lacs ALL=(root) NOPASSWD: /usr/bin/gpasswd
+sysknife ALL=(root) NOPASSWD: /usr/sbin/usermod
+sysknife ALL=(root) NOPASSWD: /usr/bin/gpasswd
 
 # Group management — create, delete, and modify groups.
-lacs ALL=(root) NOPASSWD: /usr/sbin/groupadd
-lacs ALL=(root) NOPASSWD: /usr/sbin/groupdel
-lacs ALL=(root) NOPASSWD: /usr/sbin/groupmod
+sysknife ALL=(root) NOPASSWD: /usr/sbin/groupadd
+sysknife ALL=(root) NOPASSWD: /usr/sbin/groupdel
+sysknife ALL=(root) NOPASSWD: /usr/sbin/groupmod

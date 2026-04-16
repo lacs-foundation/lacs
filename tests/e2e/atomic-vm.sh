@@ -281,7 +281,15 @@ cmd_provision() {
         -e "ssh $(ssh_opts) -p $port" \
         "$repo_root/" "${VM_USER}@127.0.0.1:/home/${VM_USER}/sysknife/"
     log "Running provisioner inside the VM..."
-    cmd_ssh "cd /home/${VM_USER}/sysknife && sudo bash tests/e2e/provision.sh"
+    local prov_env=""
+    for var in OPENAI_API_KEY ANTHROPIC_API_KEY GEMINI_API_KEY SYSKNIFE_SKIP_OLLAMA \
+               SYSKNIFE_TEST_MODEL VM_USER; do
+        eval "val=\${$var:-}"
+        if [ -n "$val" ]; then
+            prov_env+=" $var='$val'"
+        fi
+    done
+    cmd_ssh "cd /home/${VM_USER}/sysknife && sudo${prov_env} bash tests/e2e/provision.sh"
 }
 
 # Generate a dedicated SSH key for the VM (no passphrase). Idempotent.
@@ -376,8 +384,8 @@ ln-sf /usr/lib/systemd/system/sshd.service ${deploy_path}/etc/systemd/system/mul
 # 6. SELinux permissive — we don't test SELinux semantics, and our offline
 # /etc edits skip the relabel that selinux-enforcing mode requires.
 copy-out ${deploy_path}/etc/selinux/config /tmp
+! mv /tmp/config /tmp/selinux-config
 ! sed -i 's|^SELINUX=enforcing|SELINUX=permissive|' /tmp/selinux-config
-! mv /tmp/config /tmp/selinux-config 2>/dev/null || true
 upload /tmp/selinux-config ${deploy_path}/etc/selinux/config
 
 # 7. Home + .ssh + authorized_keys
@@ -421,7 +429,8 @@ cmd_run() {
     local sudo_env=""
     for var in SYSKNIFE_ALLOW_DESTRUCTIVE SYSKNIFE_LLM_PROVIDER SYSKNIFE_LLM_MODEL \
                SYSKNIFE_TEST_MODEL SYSKNIFE_OLLAMA_URL SYSKNIFE_LISTEN_URI \
-               SYSKNIFE_STORY_TIMEOUT; do
+               SYSKNIFE_STORY_TIMEOUT \
+               OPENAI_API_KEY ANTHROPIC_API_KEY GEMINI_API_KEY; do
         eval "val=\${$var:-}"
         if [ -n "$val" ]; then
             sudo_env+=" $var='$val'"

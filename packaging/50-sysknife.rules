@@ -1,10 +1,10 @@
 // polkit JavaScript rules for LACS — grant the lacs daemon permission to
 // call specific privileged D-Bus interfaces on behalf of users in the
-// "lacs" Unix group.
+// "sysknife" Unix group.
 //
-// Deploy to: /usr/share/polkit-1/rules.d/50-lacs.rules
+// Deploy to: /usr/share/polkit-1/rules.d/50-sysknife.rules
 //
-// These rules authorize the lacs *daemon process* (running as the "lacs"
+// These rules authorize the sysknife *daemon process* (running as the "sysknife"
 // system user) to invoke system management actions without an interactive
 // password prompt, provided the action is in the approved list below.
 //
@@ -13,9 +13,9 @@
 // intentional for destructive or rarely-needed operations.
 
 polkit.addRule(function(action, subject) {
-    // Allow the lacs system user (the daemon process) to call these actions
+    // Allow the sysknife system user (the daemon process) to call these actions
     // without further authentication.
-    var lacsDaemonUser = "lacs";
+    var lacsDaemonUser = "sysknife";
 
     var allowedActions = [
         // ── rpm-ostree (Fedora Silverblue / Kinoite) ─────────────────────

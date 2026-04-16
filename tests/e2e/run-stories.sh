@@ -58,8 +58,29 @@ fi
 # defaults to /tmp/sysknife-daemon.sock — neither matches our provisioned VM.
 # Force the right values here so individual story scripts don't need to
 # know or care.
-export SYSKNIFE_LLM_PROVIDER="${SYSKNIFE_LLM_PROVIDER:-ollama}"
-export SYSKNIFE_LLM_MODEL="${SYSKNIFE_LLM_MODEL:-${SYSKNIFE_TEST_MODEL:-qwen3:8b}}"
+# Auto-detect provider from available API keys if not explicitly set.
+if [ -z "${SYSKNIFE_LLM_PROVIDER:-}" ]; then
+    if [ -n "${OPENAI_API_KEY:-}" ]; then
+        export SYSKNIFE_LLM_PROVIDER="openai"
+    elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+        export SYSKNIFE_LLM_PROVIDER="anthropic"
+    elif [ -n "${GEMINI_API_KEY:-}" ]; then
+        export SYSKNIFE_LLM_PROVIDER="gemini"
+    else
+        export SYSKNIFE_LLM_PROVIDER="ollama"
+    fi
+fi
+export SYSKNIFE_LLM_PROVIDER
+# Default model per provider when not explicitly set.
+if [ -z "${SYSKNIFE_LLM_MODEL:-}" ] && [ -z "${SYSKNIFE_TEST_MODEL:-}" ]; then
+    case "$SYSKNIFE_LLM_PROVIDER" in
+        openai)    SYSKNIFE_LLM_MODEL="gpt-4o" ;;
+        anthropic) SYSKNIFE_LLM_MODEL="claude-sonnet-4-6" ;;
+        gemini)    SYSKNIFE_LLM_MODEL="gemini-2.0-flash" ;;
+        *)         SYSKNIFE_LLM_MODEL="" ;;
+    esac
+fi
+export SYSKNIFE_LLM_MODEL="${SYSKNIFE_LLM_MODEL:-${SYSKNIFE_TEST_MODEL:-}}"
 export SYSKNIFE_OLLAMA_URL="${SYSKNIFE_OLLAMA_URL:-http://127.0.0.1:11434}"
 # sysknife-daemon's packaged systemd unit binds /run/sysknife/daemon.sock.
 export SYSKNIFE_LISTEN_URI="${SYSKNIFE_LISTEN_URI:-unix:///run/sysknife/daemon.sock}"
@@ -234,7 +255,7 @@ for n in "${STORIES[@]}"; do
   local_name="${STORY_NAMES[$n]:-Story $n}"
   local_result="${RESULTS[$n]}"
   local_duration="${DURATIONS[$n]}"
-  local_msg="${MESSAGES[$n]}"
+  local_msg="${MESSAGES[$n]:-}"
 
   printf "  Story %2d (%-46s) " "$n" "$local_name"
 

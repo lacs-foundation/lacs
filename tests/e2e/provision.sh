@@ -89,21 +89,30 @@ cargo --version || fail "Rust install verification"
 # ---------------------------------------------------------------------------
 
 step "Install Ollama"
-if ! command -v ollama &>/dev/null; then
-    curl -fsSL https://ollama.com/install.sh | sh || fail "Ollama install"
+# Skip Ollama entirely when a cloud API key is present (OpenAI, Anthropic, Gemini).
+# Set SYSKNIFE_SKIP_OLLAMA=1 explicitly to force-skip even without a key.
+_skip_ollama="${SYSKNIFE_SKIP_OLLAMA:-}"
+if [ -z "$_skip_ollama" ] \
+    && { [ -n "${OPENAI_API_KEY:-}" ] || [ -n "${ANTHROPIC_API_KEY:-}" ] || [ -n "${GEMINI_API_KEY:-}" ]; }; then
+    _skip_ollama=1
+    echo "Cloud API key detected — skipping Ollama install and model pull."
 fi
 
-# The official installer tries to create a systemd unit + ollama system
-# user. On rpm-ostree systems (Silverblue, Kinoite, Sway Atomic, Budgie Atomic,
-# COSMIC Atomic) that
-# can fail because /usr is read-only, or because the install was
-# interrupted. Write a minimal unit ourselves if it's missing. Idempotent.
-if [ ! -f /etc/systemd/system/ollama.service ] \
-    && [ ! -f /usr/lib/systemd/system/ollama.service ]; then
-    echo "Ollama systemd unit not found — writing one to /etc/systemd/system/"
-    install -d -m 755 -o "$VM_USER" -g "$VM_USER" /var/lib/ollama 2>/dev/null \
-        || install -d -m 755 -o lacsdev -g lacsdev /var/lib/ollama
-    cat > /etc/systemd/system/ollama.service <<UNIT
+if [ -z "$_skip_ollama" ]; then
+    if ! command -v ollama &>/dev/null; then
+        curl -fsSL https://ollama.com/install.sh | sh || fail "Ollama install"
+    fi
+
+    # The official installer tries to create a systemd unit + ollama system
+    # user. On rpm-ostree systems (Silverblue, Kinoite, Sway Atomic, Budgie Atomic,
+    # COSMIC Atomic) that can fail because /usr is read-only, or because the
+    # install was interrupted. Write a minimal unit ourselves if it's missing.
+    if [ ! -f /etc/systemd/system/ollama.service ] \
+        && [ ! -f /usr/lib/systemd/system/ollama.service ]; then
+        echo "Ollama systemd unit not found — writing one to /etc/systemd/system/"
+        install -d -m 755 -o "$VM_USER" -g "$VM_USER" /var/lib/ollama 2>/dev/null \
+            || install -d -m 755 -o lacsdev -g lacsdev /var/lib/ollama
+        cat > /etc/systemd/system/ollama.service <<UNIT
 [Unit]
 Description=Ollama Service
 After=network-online.target
@@ -119,60 +128,61 @@ Group=${VM_USER:-lacsdev}
 [Install]
 WantedBy=default.target
 UNIT
-    systemctl daemon-reload
-fi
+        systemctl daemon-reload
+    fi
 
-# Performance tuning drop-in. Ollama defaults to NumCPU/2 threads which
-# is 2 on a 4-vCPU VM — too few. OLLAMA_KEEP_ALIVE=30m keeps the model
-# resident between stories instead of unloading after 5 minutes of
-# inactivity (that unload costs 5-10 s on every subsequent story).
-install -d -m 755 /etc/systemd/system/ollama.service.d
-cat > /etc/systemd/system/ollama.service.d/override.conf <<'DROP'
+    # Performance tuning drop-in. Ollama defaults to NumCPU/2 threads which
+    # is 2 on a 4-vCPU VM — too few. OLLAMA_KEEP_ALIVE=30m keeps the model
+    # resident between stories instead of unloading after 5 minutes of
+    # inactivity (that unload costs 5-10 s on every subsequent story).
+    install -d -m 755 /etc/systemd/system/ollama.service.d
+    cat > /etc/systemd/system/ollama.service.d/override.conf <<'DROP'
 [Service]
 Environment=OLLAMA_NUM_THREADS=4
 Environment=OLLAMA_KEEP_ALIVE=30m
 DROP
-systemctl daemon-reload
+    systemctl daemon-reload
 
-systemctl enable --now ollama || fail "Start Ollama systemd unit"
-systemctl restart ollama     # ensure the drop-in is applied
-# Wait up to 15s for the server to accept connections.
-for _ in $(seq 1 15); do
-    if curl -sf http://127.0.0.1:11434/api/tags > /dev/null; then break; fi
-    sleep 1
-done
-curl -sf http://127.0.0.1:11434/api/tags > /dev/null || fail "Ollama not responding on 11434"
+    systemctl enable --now ollama || fail "Start Ollama systemd unit"
+    systemctl restart ollama     # ensure the drop-in is applied
+    # Wait up to 15s for the server to accept connections.
+    for _ in $(seq 1 15); do
+        if curl -sf http://127.0.0.1:11434/api/tags > /dev/null; then break; fi
+        sleep 1
+    done
+    curl -sf http://127.0.0.1:11434/api/tags > /dev/null || fail "Ollama not responding on 11434"
 
-# ---------------------------------------------------------------------------
-# Phase 2: Pull the LLM
-# ---------------------------------------------------------------------------
+    # -------------------------------------------------------------------------
+    # Pull the LLM
+    # -------------------------------------------------------------------------
 
-step "Pull test LLM model"
-# qwen3:8b is the default because it produces the most reliable tool
-# calls in SysKnife's planning loop. 5.2 GB disk, thinking-capable, tool-
-# capable. SysKnife auto-detects the `qwen3` prefix and enables thinking
-# mode via `options` (see THINKING_MODEL_PREFIXES in
-# crates/sysknife-brain/src/planner.rs).
-#
-# Performance expectations:
-#   - Host GPU via SYSKNIFE_OLLAMA_URL=http://10.0.2.2:11434 — <60 s/story
-#   - GPU passthrough (VFIO) — similar
-#   - CPU-only on a 4 vCPU VM — impractical: thinking exceeds Ollama's
-#     ~120 s request timeout. Either disable thinking
-#     (`ollama_think = false` in config.toml or
-#     SYSKNIFE_OLLAMA_THINK=false), or switch to a non-thinking model
-#     via SYSKNIFE_TEST_MODEL (see below). See HACKING.md §8.
-#
-# Override with SYSKNIFE_TEST_MODEL. Known-good alternatives:
-#   SYSKNIFE_TEST_MODEL=llama3.2:3b      # CPU fallback: 2 GB, no thinking,
-#                                    # ~2–4 min/story on 4 vCPUs.
-#   SYSKNIFE_TEST_MODEL=qwen2.5:3b       # lighter CPU fallback, no thinking
-#   SYSKNIFE_TEST_MODEL=qwen3:30b-a3b    # MoE, needs 16 GB+ VM RAM + GPU
-#
-# Known-bad (returned 400 "does not support tools" or similar):
-#   gemma3:1b, gemma3:4b, qwen3:0.6b, qwen3:1.7b.
-SYSKNIFE_TEST_MODEL="${SYSKNIFE_TEST_MODEL:-qwen3:8b}"
-ollama pull "$SYSKNIFE_TEST_MODEL" || fail "Pull $SYSKNIFE_TEST_MODEL"
+    step "Pull test LLM model"
+    # qwen3:8b is the default because it produces the most reliable tool
+    # calls in SysKnife's planning loop. 5.2 GB disk, thinking-capable, tool-
+    # capable. SysKnife auto-detects the `qwen3` prefix and enables thinking
+    # mode via `options` (see THINKING_MODEL_PREFIXES in
+    # crates/sysknife-brain/src/planner.rs).
+    #
+    # Performance expectations:
+    #   - Host GPU via SYSKNIFE_OLLAMA_URL=http://10.0.2.2:11434 — <60 s/story
+    #   - GPU passthrough (VFIO) — similar
+    #   - CPU-only on a 4 vCPU VM — impractical: thinking exceeds Ollama's
+    #     ~120 s request timeout. Either disable thinking
+    #     (`ollama_think = false` in config.toml or
+    #     SYSKNIFE_OLLAMA_THINK=false), or switch to a non-thinking model
+    #     via SYSKNIFE_TEST_MODEL (see below). See HACKING.md §8.
+    #
+    # Override with SYSKNIFE_TEST_MODEL. Known-good alternatives:
+    #   SYSKNIFE_TEST_MODEL=llama3.2:3b      # CPU fallback: 2 GB, no thinking,
+    #                                    # ~2–4 min/story on 4 vCPUs.
+    #   SYSKNIFE_TEST_MODEL=qwen2.5:3b       # lighter CPU fallback, no thinking
+    #   SYSKNIFE_TEST_MODEL=qwen3:30b-a3b    # MoE, needs 16 GB+ VM RAM + GPU
+    #
+    # Known-bad (returned 400 "does not support tools" or similar):
+    #   gemma3:1b, gemma3:4b, qwen3:0.6b, qwen3:1.7b.
+    SYSKNIFE_TEST_MODEL="${SYSKNIFE_TEST_MODEL:-qwen3:8b}"
+    ollama pull "$SYSKNIFE_TEST_MODEL" || fail "Pull $SYSKNIFE_TEST_MODEL"
+fi
 
 # ---------------------------------------------------------------------------
 # Phase 2: Build SysKnife
@@ -262,6 +272,6 @@ echo ""
 echo "================================================================"
 echo "  PROVISIONING COMPLETE"
 echo "  Ready marker: $MARKER"
-echo "  Ollama model: $SYSKNIFE_TEST_MODEL"
+echo "  Ollama model: ${SYSKNIFE_TEST_MODEL:-(cloud API — no local model)}"
 echo "  Run stories:  cd $REPO_DIR && sudo -E tests/e2e/run-stories.sh"
 echo "================================================================"

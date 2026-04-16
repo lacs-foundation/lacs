@@ -1,11 +1,11 @@
-# LACS Makefile — build, install, and uninstall the daemon and shell.
+# SysKnife Makefile — build, install, and uninstall the daemon and shell.
 #
 # Typical usage (as root or via sudo):
 #   make build
 #   sudo make install
 #   sudo make uninstall
 #
-# PREFIX can be overridden: sudo make install PREFIX=/opt/lacs
+# PREFIX can be overridden: sudo make install PREFIX=/opt/sysknife
 
 PREFIX      ?= /usr/local
 BINDIR      ?= $(PREFIX)/bin
@@ -32,52 +32,52 @@ CARGO_BUILD_FLAGS ?= --release --locked
 ## ── Build ────────────────────────────────────────────────────────────────────
 
 build:
-	cargo build $(CARGO_BUILD_FLAGS) -p lacs-daemon
-	@echo "Build complete. Binary: target/release/lacs-daemon"
+	cargo build $(CARGO_BUILD_FLAGS) -p sysknife-daemon
+	@echo "Build complete. Binary: target/release/sysknife-daemon"
 
 ## ── Install ──────────────────────────────────────────────────────────────────
 
 install: daemon-install
 	@echo ""
-	@echo "LACS daemon installed. Run 'sudo systemctl enable --now lacs-daemon' to start."
+	@echo "SysKnife daemon installed. Run 'sudo systemctl enable --now sysknife-daemon' to start."
 
 daemon-install: build
-	install -Dm 755 target/release/lacs-daemon $(BINDIR)/lacs-daemon
+	install -Dm 755 target/release/sysknife-daemon $(BINDIR)/sysknife-daemon
 
 	# System user and group (idempotent via systemd-sysusers).
-	install -Dm 644 packaging/lacs-sysusers.conf $(SYSUSERS)/lacs.conf
-	systemd-sysusers $(SYSUSERS)/lacs.conf
+	install -Dm 644 packaging/sysknife-sysusers.conf $(SYSUSERS)/sysknife.conf
+	systemd-sysusers $(SYSUSERS)/sysknife.conf
 
 	# Runtime and state directories (idempotent via systemd-tmpfiles).
-	install -Dm 644 packaging/lacs-tmpfiles.conf $(TMPFILES)/lacs.conf
-	systemd-tmpfiles --create $(TMPFILES)/lacs.conf
+	install -Dm 644 packaging/sysknife-tmpfiles.conf $(TMPFILES)/sysknife.conf
+	systemd-tmpfiles --create $(TMPFILES)/sysknife.conf
 
 	# systemd unit.
-	install -Dm 644 packaging/lacs-daemon.service $(SYSTEMD)/lacs-daemon.service
+	install -Dm 644 packaging/sysknife-daemon.service $(SYSTEMD)/sysknife-daemon.service
 	systemctl daemon-reload
 
 	# polkit rules.
-	install -Dm 644 packaging/50-lacs.rules $(POLKIT)/50-lacs.rules
+	install -Dm 644 packaging/50-sysknife.rules $(POLKIT)/50-sysknife.rules
 
 	# sudoers fragment (visudo validates before install).
-	visudo -cf packaging/lacs-sudoers
-	install -Dm 440 packaging/lacs-sudoers $(SUDOERS)/lacs
+	visudo -cf packaging/sysknife-sudoers
+	install -Dm 440 packaging/sysknife-sudoers $(SUDOERS)/sysknife
 
 ## ── Uninstall ────────────────────────────────────────────────────────────────
 
 uninstall: daemon-uninstall
 
 daemon-uninstall:
-	-systemctl disable --now lacs-daemon 2>/dev/null || true
-	rm -f $(BINDIR)/lacs-daemon
-	rm -f $(SYSTEMD)/lacs-daemon.service
+	-systemctl disable --now sysknife-daemon 2>/dev/null || true
+	rm -f $(BINDIR)/sysknife-daemon
+	rm -f $(SYSTEMD)/sysknife-daemon.service
 	systemctl daemon-reload
-	rm -f $(POLKIT)/50-lacs.rules
-	rm -f $(SUDOERS)/lacs
-	rm -f $(SYSUSERS)/lacs.conf
-	rm -f $(TMPFILES)/lacs.conf
-	@echo "Daemon uninstalled. User 'lacs' and /var/lib/lacs data were NOT removed."
-	@echo "To remove them manually: userdel lacs && rm -rf /var/lib/lacs /run/lacs"
+	rm -f $(POLKIT)/50-sysknife.rules
+	rm -f $(SUDOERS)/sysknife
+	rm -f $(SYSUSERS)/sysknife.conf
+	rm -f $(TMPFILES)/sysknife.conf
+	@echo "Daemon uninstalled. User 'sysknife' and /var/lib/sysknife data were NOT removed."
+	@echo "To remove them manually: userdel sysknife && rm -rf /var/lib/sysknife /run/sysknife"
 
 ## ── Dev checks ───────────────────────────────────────────────────────────────
 
