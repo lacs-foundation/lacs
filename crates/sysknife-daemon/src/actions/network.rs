@@ -22,13 +22,14 @@ pub fn configure_wifi(ssid: &str) -> ActionSpec {
 }
 
 pub fn set_dns_servers(interface: &str, servers: &[&str]) -> ActionSpec {
-    let args = std::iter::once("dns")
+    let args = std::iter::once("resolvectl")
+        .chain(std::iter::once("dns"))
         .chain(std::iter::once(interface))
         .chain(servers.iter().copied());
 
     ActionSpec {
         action_name: "SetDnsServers",
-        mechanism: command_mechanism("resolvectl", args),
+        mechanism: command_mechanism("sudo", args),
         risk_level: RiskLevel::Medium,
         reboot_required: false,
         rollback_available: false,
@@ -36,19 +37,17 @@ pub fn set_dns_servers(interface: &str, servers: &[&str]) -> ActionSpec {
 }
 
 pub fn configure_firewall(zone: &str, service: &str, enabled: bool) -> ActionSpec {
-    let mut args = vec!["--zone".to_string(), zone.to_string()];
-    if enabled {
-        args.push("--add-service".to_string());
-    } else {
-        args.push("--remove-service".to_string());
-    }
-    args.push(service.to_string());
+    let verb = if enabled { "add-service" } else { "remove-service" };
+    let script = format!(
+        "firewall-cmd --permanent --zone='{}' --{}='{}' && firewall-cmd --reload",
+        zone, verb, service
+    );
 
     ActionSpec {
         action_name: "ConfigureFirewall",
         mechanism: super::ActionMechanism::Command {
-            program: "firewall-cmd",
-            args,
+            program: "sudo",
+            args: vec!["sh".to_string(), "-c".to_string(), script],
         },
         risk_level: RiskLevel::Medium,
         reboot_required: false,

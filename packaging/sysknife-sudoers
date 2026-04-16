@@ -27,3 +27,30 @@ sysknife ALL=(root) NOPASSWD: /usr/bin/gpasswd
 sysknife ALL=(root) NOPASSWD: /usr/sbin/groupadd
 sysknife ALL=(root) NOPASSWD: /usr/sbin/groupdel
 sysknife ALL=(root) NOPASSWD: /usr/sbin/groupmod
+
+# Service management — start, stop, restart, reload, enable, disable, mask, unmask,
+# daemon-reload. All systemctl write operations require root on Fedora.
+sysknife ALL=(root) NOPASSWD: /usr/bin/systemctl
+
+# Identity configuration — hostname, timezone, locale, NTP all require root via
+# hostnamectl/timedatectl/localectl (polkit "interactive auth" fails for system users).
+sysknife ALL=(root) NOPASSWD: /usr/bin/hostnamectl
+sysknife ALL=(root) NOPASSWD: /usr/bin/timedatectl
+sysknife ALL=(root) NOPASSWD: /usr/bin/localectl
+
+# Network configuration — resolvectl dns requires root; firewall-cmd --permanent
+# writes to /etc/firewalld/ which requires root.
+sysknife ALL=(root) NOPASSWD: /usr/bin/resolvectl
+
+# OS deployment management — rpm-ostree upgrade/install/rollback/cleanup/rebase/kargs
+# communicate with rpm-ostreed via D-Bus and require root authorization.
+# rpm-ostree status/kargs (read-only) still work without root but sudo does not hurt.
+sysknife ALL=(root) NOPASSWD: /usr/bin/rpm-ostree
+
+# OSTree admin operations — pin/unpin deployments require root filesystem access.
+sysknife ALL=(root) NOPASSWD: /usr/bin/ostree
+
+# Shell for multi-step operations that require root and involve piping or conditional
+# logic (firewall --permanent + --reload, group membership ensure + usermod/gpasswd).
+# Restricted to NOPASSWD invocations only — sysknife cannot launch an interactive shell.
+sysknife ALL=(root) NOPASSWD: /usr/bin/sh

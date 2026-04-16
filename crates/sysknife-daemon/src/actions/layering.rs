@@ -19,8 +19,11 @@ pub fn install_packages(packages: &[&str]) -> ActionSpec {
     ActionSpec {
         action_name: "InstallPackages",
         mechanism: command_mechanism(
-            "rpm-ostree",
-            std::iter::once("install").chain(packages.iter().copied()),
+            "sudo",
+            std::iter::once("rpm-ostree")
+                .chain(std::iter::once("install"))
+                .chain(std::iter::once("--idempotent"))
+                .chain(packages.iter().copied()),
         ),
         risk_level: RiskLevel::High,
         reboot_required: true,
@@ -32,8 +35,10 @@ pub fn remove_packages(packages: &[&str]) -> ActionSpec {
     ActionSpec {
         action_name: "RemovePackages",
         mechanism: command_mechanism(
-            "rpm-ostree",
-            std::iter::once("uninstall").chain(packages.iter().copied()),
+            "sudo",
+            std::iter::once("rpm-ostree")
+                .chain(std::iter::once("uninstall"))
+                .chain(packages.iter().copied()),
         ),
         risk_level: RiskLevel::High,
         reboot_required: true,
@@ -54,7 +59,7 @@ pub fn get_layered_packages() -> ActionSpec {
 pub fn add_layered_package(package: &str) -> ActionSpec {
     ActionSpec {
         action_name: "AddLayeredPackage",
-        mechanism: command_mechanism("rpm-ostree", ["install", package]),
+        mechanism: command_mechanism("sudo", ["rpm-ostree", "install", "--idempotent", package]),
         risk_level: RiskLevel::High,
         reboot_required: true,
         rollback_available: true,
@@ -64,7 +69,7 @@ pub fn add_layered_package(package: &str) -> ActionSpec {
 pub fn remove_layered_package(package: &str) -> ActionSpec {
     ActionSpec {
         action_name: "RemoveLayeredPackage",
-        mechanism: command_mechanism("rpm-ostree", ["uninstall", package]),
+        mechanism: command_mechanism("sudo", ["rpm-ostree", "uninstall", package]),
         risk_level: RiskLevel::High,
         reboot_required: true,
         rollback_available: true,
@@ -78,7 +83,7 @@ pub fn replace_layered_package(old: &str, new: &str) -> ActionSpec {
     // neither package is present. The running system is unchanged until reboot.
     ActionSpec {
         action_name: "ReplaceLayeredPackage",
-        mechanism: command_mechanism("rpm-ostree", ["install", new, "--uninstall", old]),
+        mechanism: command_mechanism("sudo", ["rpm-ostree", "install", new, "--uninstall", old]),
         risk_level: RiskLevel::High,
         reboot_required: true,
         rollback_available: true,
@@ -92,7 +97,7 @@ pub fn remove_base_package(package: &str) -> ActionSpec {
     // explicitly installed by the user.
     ActionSpec {
         action_name: "RemoveBasePackage",
-        mechanism: command_mechanism("rpm-ostree", ["override", "remove", package]),
+        mechanism: command_mechanism("sudo", ["rpm-ostree", "override", "remove", package]),
         risk_level: RiskLevel::High,
         reboot_required: true,
         rollback_available: true,
@@ -117,7 +122,7 @@ pub fn get_pending_updates() -> ActionSpec {
 pub fn reset_layered_package_override() -> ActionSpec {
     ActionSpec {
         action_name: "ResetLayeredPackageOverride",
-        mechanism: command_mechanism("rpm-ostree", ["override", "reset"]),
+        mechanism: command_mechanism("sudo", ["rpm-ostree", "override", "reset", "--all"]),
         risk_level: RiskLevel::High,
         reboot_required: true,
         rollback_available: true,

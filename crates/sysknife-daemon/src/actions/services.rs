@@ -40,7 +40,7 @@ pub fn list_services() -> ActionSpec {
 pub fn start_service(unit: &str) -> ActionSpec {
     ActionSpec {
         action_name: "StartService",
-        mechanism: command_mechanism("systemctl", ["start", unit]),
+        mechanism: command_mechanism("sudo", ["systemctl", "start", unit]),
         risk_level: RiskLevel::Medium,
         reboot_required: false,
         rollback_available: false,
@@ -50,7 +50,7 @@ pub fn start_service(unit: &str) -> ActionSpec {
 pub fn stop_service(unit: &str) -> ActionSpec {
     ActionSpec {
         action_name: "StopService",
-        mechanism: command_mechanism("systemctl", ["stop", unit]),
+        mechanism: command_mechanism("sudo", ["systemctl", "stop", unit]),
         risk_level: RiskLevel::Medium,
         reboot_required: false,
         rollback_available: false,
@@ -60,7 +60,7 @@ pub fn stop_service(unit: &str) -> ActionSpec {
 pub fn restart_service(unit: &str) -> ActionSpec {
     ActionSpec {
         action_name: "RestartService",
-        mechanism: command_mechanism("systemctl", ["restart", unit]),
+        mechanism: command_mechanism("sudo", ["systemctl", "restart", unit]),
         risk_level: RiskLevel::Medium,
         reboot_required: false,
         rollback_available: false,
@@ -72,7 +72,7 @@ pub fn set_service_enabled(unit: &str, enabled: bool) -> ActionSpec {
 
     ActionSpec {
         action_name: "SetServiceEnabled",
-        mechanism: command_mechanism("systemctl", [verb, unit]),
+        mechanism: command_mechanism("sudo", ["systemctl", verb, unit]),
         risk_level: RiskLevel::Medium,
         reboot_required: false,
         rollback_available: false,
@@ -82,7 +82,7 @@ pub fn set_service_enabled(unit: &str, enabled: bool) -> ActionSpec {
 pub fn mask_service(unit: &str) -> ActionSpec {
     ActionSpec {
         action_name: "MaskService",
-        mechanism: command_mechanism("systemctl", ["mask", unit]),
+        mechanism: command_mechanism("sudo", ["systemctl", "mask", unit]),
         risk_level: RiskLevel::Medium,
         reboot_required: false,
         rollback_available: false,
@@ -92,7 +92,7 @@ pub fn mask_service(unit: &str) -> ActionSpec {
 pub fn unmask_service(unit: &str) -> ActionSpec {
     ActionSpec {
         action_name: "UnmaskService",
-        mechanism: command_mechanism("systemctl", ["unmask", unit]),
+        mechanism: command_mechanism("sudo", ["systemctl", "unmask", unit]),
         risk_level: RiskLevel::Medium,
         reboot_required: false,
         rollback_available: false,
@@ -120,7 +120,7 @@ pub fn reload_service(unit: &str) -> ActionSpec {
     // is sufficient and the unit supports it.
     ActionSpec {
         action_name: "ReloadService",
-        mechanism: command_mechanism("systemctl", ["reload", unit]),
+        mechanism: command_mechanism("sudo", ["systemctl", "reload", unit]),
         risk_level: RiskLevel::Medium,
         reboot_required: false,
         rollback_available: false,
@@ -147,7 +147,7 @@ pub fn reload_daemon() -> ActionSpec {
     // using the previously-loaded definition even if the file has changed.
     ActionSpec {
         action_name: "ReloadDaemon",
-        mechanism: command_mechanism("systemctl", ["daemon-reload"]),
+        mechanism: command_mechanism("sudo", ["systemctl", "daemon-reload"]),
         risk_level: RiskLevel::Medium,
         reboot_required: false,
         rollback_available: false,
