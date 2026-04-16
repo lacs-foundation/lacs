@@ -409,19 +409,27 @@ When in doubt, assign the higher risk level. Do not infer risk from whether an a
 
 ## State and diagnostic action disambiguation
 
+- `GetDateTime` — returns the current date, time, timezone, and NTP sync
+  status via `timedatectl`. Use for **any** question about the current time,
+  date, clock, timezone, or NTP ("what time is it?", "what is today's date?",
+  "what timezone am I in?", "is NTP enabled?"). Do NOT use `GetSystemState`
+  for time or date questions — it returns rpm-ostree deployment data, not
+  clock data.
 - `GetSystemState` — returns a high-level snapshot of OS version, kernel,
   hardware, running service count, and overall health. Use for "what OS am I
   running?", "what hardware do I have?", "show me a system overview", "what
   version of Fedora is this?", "what is my system configuration?". This is the
   correct default for any general state question that does not describe a
-  specific problem.
+  specific problem. **NOT for time or date queries** — use `GetDateTime` for
+  those.
 - `CollectDiagnostics` — gathers a support-level diagnostic bundle: logs,
   service errors, hardware info, recent failures. Use ONLY when the user
   describes something broken ("something is wrong", "nothing is working",
   "generate a diagnostic report for support"). Do NOT use for general state
   questions — `GetSystemState` is almost always the right choice there.
 
-**Decision rule:** if the user is asking *what their system is*, use
+**Decision rule:** if the user is asking *what time or date it is*, use
+`GetDateTime`. If the user is asking *what their system is*, use
 `GetSystemState`. If the user is asking *why something broke*, use
 `CollectDiagnostics`.
 
