@@ -1,16 +1,16 @@
 ---
-# End-to-end tests for LACS.
+# End-to-end tests for SysKnife.
 #
 # Two jobs:
 #
 # 1. `scripts-lint`: always runs. ShellCheck on tests/e2e/, and compile
-#    lacs-cli. Fast (~1 min), safe on every PR.
+#    sysknife-cli. Fast (~1 min), safe on every PR. This is a CI gate.
 #
-# 2. `container-smoke`: runs on workflow_dispatch or when a PR is labeled
-#    `e2e`. Boots Ollama and the daemon directly in the runner, pulls a
-#    small tool-capable model (llama3.2:3b), and runs the 14 read-only user
-#    stories (1-7, 11-17). Slow (~10-20 min; most time is Ollama load +
-#    inference; stories 12/15 also exercise query_job_history).
+# 2. `container-smoke`: developer guidance only — NOT a CI gate. Runs
+#    on workflow_dispatch only. Boots Ollama and the daemon directly in
+#    the runner, pulls llama3.2:3b, and runs the 14 read-only user stories.
+#    User stories test LLM planning behavior against a probabilistic system;
+#    they are development guidance, not merge criteria.
 #
 # The full high-fidelity flow — real Fedora Silverblue in QEMU/KVM via
 # quickemu — is documented for local runs (see docs/contributing/testing.md).
@@ -21,8 +21,6 @@ name: e2e
 
 on:
   workflow_dispatch:
-  pull_request:
-    types: [labeled, opened, synchronize, reopened]
 
 permissions:
   contents: read
@@ -46,15 +44,13 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
 
-      - name: Build lacs-cli
-        run: cargo build -p lacs-cli --locked
+      - name: Build sysknife-cli
+        run: cargo build -p sysknife-cli --locked
 
   container-smoke:
-    # Opt-in: runs on manual dispatch or PRs labeled `e2e`.
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' &&
-       contains(github.event.pull_request.labels.*.name, 'e2e'))
+    # Developer guidance only — NOT a CI gate.
+    # Runs on workflow_dispatch only (manual trigger).
+    if: github.event_name == 'workflow_dispatch'
 
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -92,23 +88,23 @@ jobs:
       - name: Pull tool-capable model
         run: ollama pull llama3.2:3b
 
-      - name: Build lacs-daemon and lacs
+      - name: Build sysknife-daemon and sysknife
         run: |
-          cargo build --release -p lacs-daemon -p lacs-cli --locked
-          sudo cp target/release/lacs-daemon /usr/local/bin/
-          sudo cp target/release/lacs /usr/local/bin/
+          cargo build --release -p sysknife-daemon -p sysknife-cli --locked
+          sudo cp target/release/sysknife-daemon /usr/local/bin/
+          sudo cp target/release/sysknife /usr/local/bin/
 
       - name: Set up daemon socket directory
         run: |
-          sudo mkdir -p /run/lacs
-          sudo chmod 0755 /run/lacs
+          sudo mkdir -p /run/sysknife
+          sudo chmod 0755 /run/sysknife
 
-      - name: Start lacs-daemon
+      - name: Start sysknife-daemon
         env:
           SYSKNIFE_LISTEN_URI: unix:///run/sysknife/daemon.sock
-          SYSKNIFE_DATABASE_PATH: /tmp/lacs-daemon.sqlite
+          SYSKNIFE_DATABASE_PATH: /tmp/sysknife-daemon.sqlite
         run: |
-          sudo -E nohup lacs-daemon > /tmp/lacs-daemon.log 2>&1 &
+          sudo -E nohup sysknife-daemon > /tmp/sysknife-daemon.log 2>&1 &
           for i in $(seq 1 30); do
             if [ -S /run/sysknife/daemon.sock ]; then
               echo "Daemon socket ready after ${i}s"
@@ -153,8 +149,8 @@ jobs:
       - name: Dump daemon log on failure
         if: failure()
         run: |
-          echo "=== lacs-daemon log ==="
-          sudo cat /tmp/lacs-daemon.log || true
+          echo "=== sysknife-daemon log ==="
+          sudo cat /tmp/sysknife-daemon.log || true
           echo "=== ollama log ==="
           cat /tmp/ollama.log || true
 
