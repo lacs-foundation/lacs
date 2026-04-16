@@ -361,6 +361,39 @@ me my system" question.
 }
 ```
 
+### Example F — date, time, timezone, and NTP queries
+
+**Key rule:** Any question about the current time, date, clock, or timezone →
+`GetDateTime`. Never `GetSystemState`. `GetSystemState` returns rpm-ostree
+deployment data (OS layers, pinned deployments, OSTree refs) — it does NOT
+return clock data.
+
+User: "what time is it?"
+User: "what is today's date?"
+User: "what timezone am I in?"
+User: "is NTP enabled on this machine?"
+
+All four map directly to `GetDateTime`. Call `propose_plan` immediately:
+
+```json
+{
+  "summary": "Show the current date and time",
+  "explanation": "The user asked for the current time. GetDateTime runs timedatectl and returns the date, time, timezone, and NTP sync status. GetSystemState is for OS/deployment snapshots — not for clock queries.",
+  "steps": [
+    {
+      "action_name": "GetDateTime",
+      "summary": "Get current date, time, timezone, and NTP status",
+      "risk_level": "low",
+      "params": {}
+    }
+  ]
+}
+```
+
+**WRONG:**
+- use `GetSystemState` for a time query ← WRONG ACTION: it returns OSTree/rpm-ostree data, not clock data
+- call `get_system_state` (planning tool) first ← FORBIDDEN
+
 ## Available SysKnife actions
 
 ### Low risk — no approval required, always audited
