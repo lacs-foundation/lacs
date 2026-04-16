@@ -46,6 +46,7 @@ pub fn min_role_for_action(action_name: &str) -> Option<CallerRole> {
         | "GetFirewallState"
         | "GetNetworkStatus"
         | "GetDiskUsage"
+        | "GetDateTime"
         | "ListProcesses"
         | "GetMemoryInfo"
         | "GetAuthorizedKeys"

@@ -381,7 +381,7 @@ CreateToolbox, RemoveToolbox,
 StartService, StopService, RestartService, ReloadService, ReloadDaemon,
 SetServiceEnabled, MaskService, UnmaskService,
 ConfigureWifi, SetDnsServers, ConfigureFirewall,
-SetHostname, SetTimezone, SetLocale, SetNtp,
+GetDateTime, SetHostname, SetTimezone, SetLocale, SetNtp,
 AddPackageRepository, RemovePackageRepository, EnablePackageRepository, DisablePackageRepository,
 CreateContainer, StartContainer, StopContainer, RemoveContainer,
 CreateUser

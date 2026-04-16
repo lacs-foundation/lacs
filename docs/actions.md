@@ -1,8 +1,11 @@
 # SysKnife Action Reference
 
-All 77 daemon actions, their underlying commands, whether they are destructive, and what they do.
+All 78 daemon actions, their underlying commands, whether they are
+destructive, and what they do.
 
-> **Destructive** — mutates persistent system state (package installs, deployment changes, user/group writes, firewall rules, reboots). Read-only queries are Non-destructive even if they use privileged tools.
+> **Destructive** — mutates persistent system state (package installs,
+> deployment changes, user/group writes, firewall rules, reboots).
+> Read-only queries are Non-destructive even if they use privileged tools.
 
 ## Deployment
 
@@ -111,6 +114,7 @@ All 77 daemon actions, their underlying commands, whether they are destructive, 
 
 | Action | Command | Destructive | Description |
 |--------|---------|-------------|-------------|
+| GetDateTime | `timedatectl` | No | Show current date, time, timezone, and NTP status |
 | SetHostname | `sudo hostnamectl set-hostname <name>` | No | Set the system's static hostname |
 | SetTimezone | `sudo timedatectl set-timezone <tz>` | No | Set the system timezone (e.g. America/New_York) |
 | SetLocale | `sudo localectl set-locale <locale>` | No | Set the system locale (e.g. en_US.UTF-8) |
@@ -122,7 +126,7 @@ All 77 daemon actions, their underlying commands, whether they are destructive, 
 |--------|---------|-------------|-------------|
 | GetAuthorizedKeys | `cat /home/<user>/.ssh/authorized_keys` | No | Read the SSH authorized_keys file for a user |
 | AddAuthorizedKey | `sh -c "grep -Fxq '<key>' '<path>' 2>/dev/null \|\| echo '<key>' >> '<path>'"` | No | Append an SSH public key to authorized_keys if not already present; idempotent |
-| RemoveAuthorizedKey | `sh -c "sed -i '\\|^<key>$|d' '<path>'"` | No | Remove an exact-matching SSH public key line from authorized_keys |
+| RemoveAuthorizedKey | `sh -c "sed -i '/^KEY$/d' PATH"` | No | Remove an exact-matching SSH public key line from authorized_keys |
 
 ## Package Repositories
 
