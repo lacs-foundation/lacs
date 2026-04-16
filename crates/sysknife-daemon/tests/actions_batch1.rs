@@ -257,6 +257,39 @@ fn get_pending_updates_uses_check_flag_and_is_low_risk() {
 }
 
 #[test]
+fn reset_layered_package_override_uses_all_flag() {
+    // Bug fix regression: `rpm-ostree override reset` without args exits 1 with
+    // "At least one PACKAGE must be specified". The `--all` flag resets every
+    // active override without needing explicit package names.
+    let spec = layering::reset_layered_package_override();
+
+    assert_eq!(spec.action_name, "ResetLayeredPackageOverride");
+    assert_eq!(spec.risk_level, RiskLevel::High);
+    assert!(spec.reboot_required);
+    assert!(spec.rollback_available);
+    assert_eq!(
+        spec.mechanism,
+        ActionMechanism::Command {
+            program: "sudo",
+            args: vec![
+                "rpm-ostree".to_string(),
+                "override".to_string(),
+                "reset".to_string(),
+                "--all".to_string(),
+            ],
+        }
+    );
+    // Explicitly verify --all is present — bare `reset` requires package names
+    // and fails with exit=1 in production.
+    if let ActionMechanism::Command { args, .. } = &spec.mechanism {
+        assert!(
+            args.contains(&"--all".to_string()),
+            "must pass --all to reset all overrides without specifying package names"
+        );
+    }
+}
+
+#[test]
 fn update_flatpak_with_app_id_appends_it() {
     use sysknife_daemon::actions::flatpak;
 

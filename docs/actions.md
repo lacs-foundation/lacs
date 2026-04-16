@@ -49,7 +49,7 @@ All 77 daemon actions, their underlying commands, whether they are destructive, 
 | AddLayeredPackage | `sudo rpm-ostree install --idempotent <pkg>` | Yes | Add a single layered package; requires reboot; no-op if already installed |
 | RemoveLayeredPackage | `sudo rpm-ostree uninstall <pkg>` | Yes | Remove a single layered package; requires reboot |
 | ReplaceLayeredPackage | `sudo rpm-ostree install <new> --uninstall <old>` | Yes | Atomically swap one layered package for another in a single deployment transaction |
-| ResetLayeredPackageOverride | `sudo rpm-ostree override reset` | Yes | Remove all package overrides, restoring base OS packages; requires reboot |
+| ResetLayeredPackageOverride | `sudo rpm-ostree override reset --all` | Yes | Remove all package overrides, restoring base OS packages; requires reboot |
 | RemoveBasePackage | `sudo rpm-ostree override remove <pkg>` | Yes | Hide a base OS package from the deployment; requires reboot |
 | GetPendingUpdates | `rpm-ostree upgrade --check` | No | Check if OS updates are available without downloading or applying them; always exits 0 |
 

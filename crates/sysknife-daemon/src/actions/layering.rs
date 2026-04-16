@@ -122,7 +122,7 @@ pub fn get_pending_updates() -> ActionSpec {
 pub fn reset_layered_package_override() -> ActionSpec {
     ActionSpec {
         action_name: "ResetLayeredPackageOverride",
-        mechanism: command_mechanism("sudo", ["rpm-ostree", "override", "reset"]),
+        mechanism: command_mechanism("sudo", ["rpm-ostree", "override", "reset", "--all"]),
         risk_level: RiskLevel::High,
         reboot_required: true,
         rollback_available: true,
