@@ -172,21 +172,37 @@ development setup including pre-commit hooks and E2E story testing.
 ## MCP server
 
 SysKnife exposes an [MCP](https://modelcontextprotocol.io/) server so Claude
-Desktop, Cursor, and any other MCP-capable agent can invoke the planner
-directly.
+Code, Claude Desktop, Cursor, and any other MCP-capable agent can invoke the
+planner directly.
 
-Add to `claude_desktop_config.json`:
+### Setup wizard (recommended)
 
-```json
-{
-  "mcpServers": {
-    "sysknife": {
-      "command": "sysknife",
-      "args": ["mcp-server"]
-    }
-  }
-}
+```sh
+npx sysknife-setup
 ```
+
+The wizard detects your `sysknife` binary, asks for the daemon socket and LLM
+provider, and creates `.mcp.json` plus the Claude Code approval hook. Then
+reload Claude Code with `/reload-plugins`.
+
+### Connecting to a daemon in a VM
+
+Run the daemon inside a VM and connect the MCP client on your host via
+**SSH socket tunnel** or **virtio-vsock** (KVM/QEMU only):
+
+```sh
+# SSH tunnel (any hypervisor)
+ssh -fN -L /tmp/sysknife-vm.sock:/run/sysknife/daemon.sock <user>@<vm-host>
+# → set SYSKNIFE_SOCKET=/tmp/sysknife-vm.sock in .mcp.json
+
+# virtio-vsock (faster, no SSH required)
+# → set SYSKNIFE_SOCKET=vsock://<CID>:9734 and SYSKNIFE_TOKEN=<hex>
+```
+
+See **[docs/vm-daemon-setup.md](docs/vm-daemon-setup.md)** for the full
+walkthrough — token generation, libvirt XML, and troubleshooting.
+
+### How the approval flow works
 
 The server exposes two tools: `sysknife_plan` and `sysknife_execute`. The
 calling agent passes a natural-language intent to `sysknife_plan`, presents

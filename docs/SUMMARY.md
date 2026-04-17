@@ -8,6 +8,7 @@
 
 - [Quick Start](quickstart.md)
 - [MCP Server](mcp.md)
+- [VM + Daemon Setup](vm-daemon-setup.md)
 - [CLI Reference](cli.md)
 
 # Architecture
