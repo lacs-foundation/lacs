@@ -71,6 +71,11 @@ enum DaemonRequest {
         action_name: String,
         params: Value,
     },
+    Describe {
+        request_id: String,
+        action_name: String,
+        params: Value,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -106,6 +111,12 @@ enum DaemonResponse {
         request_id: String,
         action_name: String,
         output: String,
+    },
+    DescribeResponse {
+        request_id: String,
+        command: String,
+        risk_level: String,
+        reboot_required: bool,
     },
     ErrorResponse {
         request_id: String,
@@ -432,6 +443,11 @@ pub async fn connection_handler_with_executor(
                 )
                 .await
             }
+            DaemonRequest::Describe {
+                request_id,
+                action_name,
+                params,
+            } => handle_describe(&mut framed, &action_name, &params, request_id).await,
             DaemonRequest::Cancel { job_id } => {
                 // MVP: cancel acknowledgement only. Active-job signaling is a follow-up.
                 send_error(
@@ -678,6 +694,61 @@ async fn handle_query_action(
             request_id: request_id.to_string(),
             action_name: action_name.to_string(),
             output: output_text,
+        },
+    )
+    .await
+}
+
+/// Return a human-readable command string for an action without executing it.
+///
+/// Resolves `build_action_spec(action_name, params)` and formats the
+/// `ActionMechanism` as a shell-style string so callers can show the user
+/// exactly what will run.
+async fn handle_describe(
+    framed: &mut FramedStream<UnixStream>,
+    action_name: &str,
+    params: &Value,
+    request_id: &str,
+) -> Result<(), HandlerError> {
+    use crate::actions::ActionMechanism;
+    use crate::executor::build_action_spec;
+
+    let spec = match build_action_spec(action_name, params) {
+        Ok(s) => s,
+        Err(e) => {
+            return send_error(
+                framed,
+                request_id,
+                "validation_failure",
+                format!("unknown action: {action_name} ({e})"),
+            )
+            .await;
+        }
+    };
+
+    let command = match &spec.mechanism {
+        ActionMechanism::Command { program, args } => {
+            if args.is_empty() {
+                program.to_string()
+            } else {
+                format!("{} {}", program, args.join(" "))
+            }
+        }
+        ActionMechanism::FileScan { path } => format!("read {path}"),
+        ActionMechanism::FileWrite { path, .. } => format!("write {path}"),
+        ActionMechanism::FilePatch { path, .. } => format!("patch {path}"),
+        ActionMechanism::FileDelete { path } => format!("rm {path}"),
+    };
+
+    let risk_level = format!("{:?}", spec.risk_level).to_lowercase();
+
+    send_response(
+        framed,
+        &DaemonResponse::DescribeResponse {
+            request_id: request_id.to_string(),
+            command,
+            risk_level,
+            reboot_required: spec.reboot_required,
         },
     )
     .await
@@ -1572,6 +1643,57 @@ mod tests {
                 other => panic!("unexpected message type: {other}"),
             }
         }
+    }
+
+    // ------------------------------------------------------------------
+    // describe
+    // ------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn describe_returns_command_and_risk_for_known_action() {
+        let dir = tempdir().unwrap();
+        let state = test_state(&dir);
+
+        let resps = exchange(
+            state,
+            CallerRole::Observer,
+            vec![json!({
+                "type": "describe",
+                "request_id": "r1",
+                "action_name": "GetDateTime",
+                "params": {}
+            })],
+            1,
+        )
+        .await;
+
+        assert_eq!(resps[0]["type"], "describe_response");
+        assert_eq!(resps[0]["request_id"], "r1");
+        assert_eq!(resps[0]["command"], "timedatectl");
+        assert_eq!(resps[0]["risk_level"], "low");
+        assert_eq!(resps[0]["reboot_required"], false);
+    }
+
+    #[tokio::test]
+    async fn describe_returns_error_for_unknown_action() {
+        let dir = tempdir().unwrap();
+        let state = test_state(&dir);
+
+        let resps = exchange(
+            state,
+            CallerRole::Observer,
+            vec![json!({
+                "type": "describe",
+                "request_id": "r1",
+                "action_name": "NotARealAction",
+                "params": {}
+            })],
+            1,
+        )
+        .await;
+
+        assert_eq!(resps[0]["type"], "error_response");
+        assert_eq!(resps[0]["category"], "validation_failure");
     }
 
     // ------------------------------------------------------------------
