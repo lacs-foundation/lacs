@@ -48,7 +48,7 @@ pre-commit install
 cd apps/sysknife-shell && pnpm install && cd ../..
 
 # Run all tests to verify everything works
-cargo test --workspace --locked
+cargo nextest run --workspace --locked
 cd apps/sysknife-shell && pnpm test && pnpm exec tsc --noEmit && cd ../..
 ```
 
@@ -104,7 +104,7 @@ split it.
 # Required before every push
 cargo fmt --all --check
 cargo clippy --workspace --all-features --locked -- -D warnings
-cargo test --workspace --locked
+cargo nextest run --workspace --locked
 
 # Frontend
 cd apps/sysknife-shell && pnpm test && pnpm exec tsc --noEmit && cd ../..

@@ -150,7 +150,7 @@ git clone https://github.com/lacs-foundation/sysknife
 cd sysknife
 
 # Run all Rust tests
-cargo test --workspace --locked
+cargo nextest run --workspace --locked
 
 # Run frontend tests
 cd apps/sysknife-shell && pnpm install && pnpm test && cd ../..
@@ -218,12 +218,16 @@ and PR checklist. Open an issue before starting any substantial change.
 
 ## Protocol
 
-SysKnife is the reference implementation of the **LACS (Linux Agent Control Standard)** protocol.
-The protocol specification — typed actions, risk classification, approval gates, audit requirements — is published separately and is CC0 licensed (public domain):
+SysKnife is the reference implementation of the
+**LACS (Linux Agent Control Standard)** protocol.
+The protocol specification — typed actions, risk classification, approval
+gates, audit requirements — is published separately and is CC0 licensed
+(public domain):
 
 → **[lacs-foundation/specification](https://github.com/lacs-foundation/specification)**
 
-Other implementations of LACS for other distributions or languages are explicitly encouraged.
+Other implementations of LACS for other distributions or languages are
+explicitly encouraged.
 
 ## Documentation
 

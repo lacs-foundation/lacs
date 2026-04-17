@@ -26,7 +26,7 @@ These run on every CI build and must pass before merge:
 # Rust
 cargo fmt --all --check
 cargo clippy --workspace --all-features --locked -- -D warnings
-cargo test --workspace --locked
+cargo nextest run --workspace --locked
 
 # TypeScript / React
 cd apps/sysknife-shell
@@ -322,7 +322,7 @@ Per-story logs are written to `tests/e2e/logs/story-N.log`.
 
 ## Before opening a PR
 
-1. `cargo test --workspace && pnpm test` — required, fast
+1. `cargo nextest run --workspace && pnpm test` — required, fast
 2. `cargo clippy --workspace --all-features --locked -- -D warnings`
 3. `cargo fmt --all --check`
 4. For changes to the brain, daemon, IPC, or action catalogue:

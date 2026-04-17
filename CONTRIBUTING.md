@@ -25,7 +25,7 @@ pip install pre-commit && pre-commit install
 cd apps/sysknife-shell && pnpm install && cd ../..
 
 # Run all tests
-cargo test --workspace --locked
+cargo nextest run --workspace --locked
 cd apps/sysknife-shell && pnpm test && pnpm exec tsc --noEmit && cd ../..
 
 # Open an issue, branch off main, implement with TDD, then open a PR

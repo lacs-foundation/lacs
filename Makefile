@@ -82,5 +82,5 @@ daemon-uninstall:
 ## ── Dev checks ───────────────────────────────────────────────────────────────
 
 check:
-	cargo test --workspace --locked
+	cargo nextest run --workspace --locked
 	cargo clippy --workspace --locked -- -D warnings

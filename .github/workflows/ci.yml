@@ -129,5 +129,8 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-features --locked -- -D warnings
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@cargo-nextest
+
       - name: Test workspace
-        run: cargo test --workspace --locked
+        run: cargo nextest run --workspace --locked
