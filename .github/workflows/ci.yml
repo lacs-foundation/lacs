@@ -81,19 +81,14 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v6
-        with:
-          version: 9
-
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: npm ci
 
       - name: Type check
-        run: pnpm exec tsc --noEmit
+        run: npx tsc --noEmit
 
       - name: Test
-        run: pnpm test
+        run: npx vitest run
 
   rust:
     runs-on: ubuntu-latest
