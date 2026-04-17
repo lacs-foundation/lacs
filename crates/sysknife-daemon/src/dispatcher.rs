@@ -713,6 +713,22 @@ async fn handle_describe(
     use crate::actions::ActionMechanism;
     use crate::executor::build_action_spec;
 
+    // ListJobHistory is handled directly in the dispatcher (SQLite query) and
+    // has no ActionSpec.  Return a synthetic describe response so callers get a
+    // meaningful `command` string instead of a validation_failure error.
+    if action_name == "ListJobHistory" {
+        return send_response(
+            framed,
+            &DaemonResponse::DescribeResponse {
+                request_id: request_id.to_string(),
+                command: "query daemon job history (SQLite)".to_string(),
+                risk_level: "low".to_string(),
+                reboot_required: false,
+            },
+        )
+        .await;
+    }
+
     let spec = match build_action_spec(action_name, params) {
         Ok(s) => s,
         Err(e) => {

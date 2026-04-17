@@ -224,16 +224,17 @@ async fn plan_intent_inner(intent: &str) -> Result<serde_json::Value, String> {
 }
 
 /// For each step in the plan, call the daemon's `describe` endpoint to fill in
-/// `command`.  Errors are silently swallowed — a missing command is better than
-/// a broken plan response.
+/// `command`.  On error the `command` field is set to `"[<error>]"` so the
+/// user sees a visible signal rather than a silent empty string.  A wrong
+/// action name or missing required param is a planning bug — surfacing it
+/// in-band lets the user (and the model) diagnose the problem immediately.
 async fn enrich_with_commands(output: &mut PlanOutput) {
     let socket = resolve_socket();
     let client = DaemonClient::new(socket);
     for step in &mut output.steps {
-        if let Ok(DescribeInfo { command, .. }) =
-            client.describe(&step.action_name, &step.params).await
-        {
-            step.command = command;
+        match client.describe(&step.action_name, &step.params).await {
+            Ok(DescribeInfo { command, .. }) => step.command = command,
+            Err(e) => step.command = format!("[{e}]"),
         }
     }
 }
