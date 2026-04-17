@@ -140,7 +140,7 @@ pub fn query_tools() -> Vec<ToolDefinition> {
         ToolDefinition {
             name: "query_network".into(),
             description: "Show network interface addresses and status.".into(),
-            input_schema: empty_schema,
+            input_schema: empty_schema.clone(),
         },
         ToolDefinition {
             name: "query_authorized_keys".into(),
@@ -156,6 +156,14 @@ pub fn query_tools() -> Vec<ToolDefinition> {
                 },
                 "required": ["username"]
             }),
+        },
+        ToolDefinition {
+            name: "query_current_user".into(),
+            description: "Return the Linux username of the user who launched sysknife. \
+                          Call this before any action that requires a `username` param when \
+                          the username is not already known from context."
+                .into(),
+            input_schema: empty_schema.clone(),
         },
         ToolDefinition {
             name: "query_job_history".into(),
@@ -444,9 +452,9 @@ mod tests {
     }
 
     #[test]
-    fn query_tools_returns_twenty_two_definitions() {
+    fn query_tools_returns_twenty_three_definitions() {
         let tools = query_tools();
-        assert_eq!(tools.len(), 22);
+        assert_eq!(tools.len(), 23);
         for tool in &tools {
             assert!(tool.name.starts_with("query_"));
             assert!(!tool.description.is_empty());

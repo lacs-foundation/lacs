@@ -502,6 +502,12 @@ ListServices, ListTimers, ReloadDaemon, GetDiskUsage, ListProcesses,
 GetMemoryInfo, GetDateTime, GetFirewallState, GetNetworkStatus,
 ListUsers, ListGroups.
 
+**Username resolution** — many actions (Flatpak, containers, toolbox, SSH keys,
+users) require a `"username"` param identifying the Linux user to act on.
+If the username is not explicit in the user's request, call `query_current_user`
+first — it returns the username of the person who launched SysKnife.
+Use `"username"` as the key — NOT `"user"`.
+
 **Flatpak** — all user-scoped ops require `"username"` (the Linux user whose
 Flatpak installation to target). Use `"username"` — NOT `"user"`.
 - `InstallFlatpak`: `{"username":"alice","app_id":"org.mozilla.firefox","remote":"flathub"}`

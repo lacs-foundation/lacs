@@ -922,6 +922,20 @@ impl LlmPlanner {
                                     is_error: err,
                                 });
                             }
+                            // query_current_user is served from the client env —
+                            // no daemon round-trip needed.
+                            "query_current_user" => {
+                                let content = match self.state_client.current_user() {
+                                    Ok(u) => format!("Current user: {u}"),
+                                    Err(e) => format!("Error: cannot determine current user: {e}"),
+                                };
+                                tool_results.push(ToolResultBlock {
+                                    tool_use_id: id.clone(),
+                                    call_id: call_id.clone(),
+                                    content,
+                                    is_error: false,
+                                });
+                            }
                             other_name => {
                                 match crate::planning_tools::query_tools::query_tool_to_action(
                                     other_name, input,
