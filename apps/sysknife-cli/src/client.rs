@@ -133,6 +133,16 @@ fn string_array(field: &str, v: &Value) -> Result<Vec<String>, PlanningError> {
 // DaemonClient
 // ---------------------------------------------------------------------------
 
+/// Information returned by [`DaemonClient::describe`].
+pub struct DescribeInfo {
+    /// Formatted command string, e.g. `"timedatectl"` or `"sudo hostnamectl set-hostname myhost"`.
+    pub command: String,
+    /// Risk level string: `"low"`, `"medium"`, or `"high"`.
+    pub risk_level: String,
+    /// Whether the action requires a reboot to take effect.
+    pub reboot_required: bool,
+}
+
 /// Client for the sysknife-daemon Unix socket.
 pub struct DaemonClient {
     socket_path: PathBuf,
@@ -313,6 +323,59 @@ impl DaemonClient {
             ))),
             _ => Err(CliError::ConfigOrDaemon(format!(
                 "unexpected response type: {:?}",
+                resp["type"]
+            ))),
+        }
+    }
+
+    /// Describe an action: resolve its mechanism and return the formatted
+    /// command string, risk level, and reboot requirement without executing.
+    pub async fn describe(
+        &self,
+        action_name: &str,
+        params: &Value,
+    ) -> Result<DescribeInfo, CliError> {
+        let mut stream = tokio::net::UnixStream::connect(&self.socket_path)
+            .await
+            .map_err(|e| {
+                CliError::ConfigOrDaemon(format!(
+                    "cannot connect to {}: {e}",
+                    self.socket_path.display()
+                ))
+            })?;
+
+        let req = serde_json::to_vec(&serde_json::json!({
+            "type": "describe",
+            "request_id": format!("cli-describe-{action_name}"),
+            "action_name": action_name,
+            "params": params,
+        }))
+        .map_err(|e| CliError::ConfigOrDaemon(format!("serialize: {e}")))?;
+
+        write_framed_async(&mut stream, &req)
+            .await
+            .map_err(|e| CliError::ConfigOrDaemon(format!("send: {e}")))?;
+
+        let raw = read_framed_async(&mut stream)
+            .await
+            .map_err(|e| CliError::ConfigOrDaemon(format!("recv: {e}")))?;
+
+        let resp: Value = serde_json::from_slice(&raw)
+            .map_err(|e| CliError::ConfigOrDaemon(format!("parse response: {e}")))?;
+
+        match resp["type"].as_str() {
+            Some("describe_response") => Ok(DescribeInfo {
+                command: resp["command"].as_str().unwrap_or("").to_string(),
+                risk_level: resp["risk_level"].as_str().unwrap_or("unknown").to_string(),
+                reboot_required: resp["reboot_required"].as_bool().unwrap_or(false),
+            }),
+            Some("error_response") => Err(CliError::PlanningFailed(format!(
+                "{}: {}",
+                resp["category"].as_str().unwrap_or("error"),
+                resp["message"].as_str().unwrap_or("unknown")
+            ))),
+            _ => Err(CliError::ConfigOrDaemon(format!(
+                "unexpected response type: {}",
                 resp["type"]
             ))),
         }

@@ -37,7 +37,7 @@ use sysknife_types::RiskLevel;
 use sysknife_brain::config::BrainConfig;
 use sysknife_brain::planner::LlmPlanner;
 
-use crate::client::DaemonClient;
+use crate::client::{DaemonClient, DescribeInfo};
 use crate::error::CliError;
 use crate::runner::resolve_socket;
 
@@ -52,7 +52,8 @@ pub struct PlanInput {
 }
 
 /// One action step in the proposed plan.
-#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default)]
 pub struct PlanStepOutput {
     /// Canonical action name from the SysKnife catalogue.
     pub action_name: String,
@@ -62,6 +63,9 @@ pub struct PlanStepOutput {
     pub risk_level: String,
     /// Action-specific parameters.
     pub params: serde_json::Value,
+    /// Formatted shell command that will run on the VM, e.g. `"timedatectl"`.
+    /// Empty string when the daemon is unreachable.
+    pub command: String,
 }
 
 /// The full plan returned by `lacs_plan`.
@@ -157,9 +161,10 @@ impl LacsMcpServer {
         let value = plan_intent_inner(&intent)
             .await
             .map_err(|e| ErrorData::internal_error(e, None))?;
-        let output: PlanOutput = serde_json::from_value(value).map_err(|e| {
+        let mut output: PlanOutput = serde_json::from_value(value).map_err(|e| {
             ErrorData::internal_error(format!("output deserialization error: {e}"), None)
         })?;
+        enrich_with_commands(&mut output).await;
         Ok(Json(output))
     }
 
@@ -215,6 +220,21 @@ async fn plan_intent_inner(intent: &str) -> Result<serde_json::Value, String> {
         .map_err(|e| format!("planning error: {e}"))?;
 
     serde_json::to_value(&plan).map_err(|e| format!("serialization error: {e}"))
+}
+
+/// For each step in the plan, call the daemon's `describe` endpoint to fill in
+/// `command`.  Errors are silently swallowed — a missing command is better than
+/// a broken plan response.
+async fn enrich_with_commands(output: &mut PlanOutput) {
+    let socket = resolve_socket();
+    let client = DaemonClient::new(socket);
+    for step in &mut output.steps {
+        if let Ok(DescribeInfo { command, .. }) =
+            client.describe(&step.action_name, &step.params).await
+        {
+            step.command = command;
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
