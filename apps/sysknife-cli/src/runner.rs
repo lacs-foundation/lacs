@@ -78,14 +78,7 @@ pub fn since_to_hours(s: &str) -> Option<u32> {
 /// Uses Howard Hinnant's civil day algorithm to convert a proleptic-Gregorian
 /// date to a day count, then scales to seconds.
 fn rfc3339_to_unix(s: &str) -> Option<i64> {
-    // Strip the UTC timezone suffix.
-    let s = if let Some(prefix) = s.strip_suffix('Z') {
-        prefix
-    } else if let Some(prefix) = s.strip_suffix("+00:00") {
-        prefix
-    } else {
-        return None;
-    };
+    let s = s.strip_suffix('Z').or_else(|| s.strip_suffix("+00:00"))?;
 
     // Split on the 'T' separator.
     let (date_part, time_and_frac) = s.split_once('T')?;
