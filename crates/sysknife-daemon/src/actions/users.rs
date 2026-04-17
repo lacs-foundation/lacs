@@ -50,7 +50,7 @@ pub fn create_user(username: &str, shell: Option<&str>, home: Option<&str>) -> A
             program: "sudo",
             args,
         },
-        risk_level: RiskLevel::Medium,
+        risk_level: RiskLevel::High,
         reboot_required: false,
         rollback_available: false,
     }

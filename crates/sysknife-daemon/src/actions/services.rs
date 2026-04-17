@@ -83,7 +83,7 @@ pub fn mask_service(unit: &str) -> ActionSpec {
     ActionSpec {
         action_name: "MaskService",
         mechanism: command_mechanism("sudo", ["systemctl", "mask", unit]),
-        risk_level: RiskLevel::Medium,
+        risk_level: RiskLevel::High,
         reboot_required: false,
         rollback_available: false,
     }

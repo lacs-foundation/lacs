@@ -31,7 +31,7 @@ pub fn add_package_repository(repo_id: &str, repo_url: &str) -> ActionSpec {
             format!("/etc/yum.repos.d/{repo_id}.repo"),
             format!("[{repo_id}]\nbaseurl={repo_url}\nenabled=1\n"),
         ),
-        risk_level: RiskLevel::Medium,
+        risk_level: RiskLevel::High,
         reboot_required: false,
         rollback_available: false,
     }

@@ -1481,4 +1481,71 @@ mod tests {
             );
         }
     }
+
+    // ── Risk level reclassification (NIST 800-53 / CIS Controls v8.1) ────────
+    // These five actions were incorrectly classified Medium; they must be High.
+    // T1136.001 (CreateUser), T1562.004 (ConfigureFirewall), T1562.001 (MaskService),
+    // supply-chain vector (AddPackageRepository), T1557 path (SetDnsServers).
+
+    #[test]
+    fn create_user_is_high_risk() {
+        let spec = build_action_spec("CreateUser", &json!({ "username": "alice" })).unwrap();
+        assert_eq!(
+            spec.risk_level,
+            RiskLevel::High,
+            "CreateUser must be High (T1136.001 Persistence)"
+        );
+    }
+
+    #[test]
+    fn configure_firewall_is_high_risk() {
+        let spec = build_action_spec(
+            "ConfigureFirewall",
+            &json!({ "zone": "public", "service": "ssh", "enabled": true }),
+        )
+        .unwrap();
+        assert_eq!(
+            spec.risk_level,
+            RiskLevel::High,
+            "ConfigureFirewall must be High (T1562.004 Defense Evasion)"
+        );
+    }
+
+    #[test]
+    fn mask_service_is_high_risk() {
+        let spec = build_action_spec("MaskService", &json!({ "unit": "auditd.service" })).unwrap();
+        assert_eq!(
+            spec.risk_level,
+            RiskLevel::High,
+            "MaskService must be High (T1562.001 Impair Defenses)"
+        );
+    }
+
+    #[test]
+    fn add_package_repository_is_high_risk() {
+        let spec = build_action_spec(
+            "AddPackageRepository",
+            &json!({ "repo_id": "my-repo", "repo_url": "https://ok.example/repo" }),
+        )
+        .unwrap();
+        assert_eq!(
+            spec.risk_level,
+            RiskLevel::High,
+            "AddPackageRepository must be High (supply-chain vector)"
+        );
+    }
+
+    #[test]
+    fn set_dns_servers_is_high_risk() {
+        let spec = build_action_spec(
+            "SetDnsServers",
+            &json!({ "interface": "eth0", "servers": ["8.8.8.8"] }),
+        )
+        .unwrap();
+        assert_eq!(
+            spec.risk_level,
+            RiskLevel::High,
+            "SetDnsServers must be High (DNS hijacking / T1557)"
+        );
+    }
 }

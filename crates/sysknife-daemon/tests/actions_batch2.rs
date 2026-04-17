@@ -469,7 +469,7 @@ fn user_creation_and_group_changes_use_sudo_prefixed_shadow_tools() {
     let add_group = users::add_user_to_group("alice", "wheel");
     let remove_group = users::remove_user_from_group("alice", "wheel");
 
-    assert_eq!(create.risk_level, RiskLevel::Medium);
+    assert_eq!(create.risk_level, RiskLevel::High);
     assert_eq!(
         create.mechanism,
         ActionMechanism::Command {
