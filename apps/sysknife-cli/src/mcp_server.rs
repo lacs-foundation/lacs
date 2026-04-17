@@ -39,7 +39,7 @@ use sysknife_brain::planner::LlmPlanner;
 
 use crate::client::{DaemonClient, DescribeInfo};
 use crate::error::CliError;
-use crate::runner::resolve_socket;
+use crate::runner::resolve_socket_target;
 
 // ---------------------------------------------------------------------------
 // sysknife_plan — input / output types
@@ -203,8 +203,7 @@ impl SysknifeMcpServer {
 async fn plan_intent_inner(intent: &str) -> Result<serde_json::Value, String> {
     let config = BrainConfig::from_env().map_err(|e| format!("config error: {e}"))?;
 
-    let socket = resolve_socket();
-    let state_client = DaemonClient::new(socket);
+    let state_client = DaemonClient::new(resolve_socket_target());
 
     let planner = LlmPlanner::from_config(config, Box::new(state_client))
         .map_err(|e| format!("planner init error: {e}"))?;
@@ -229,8 +228,7 @@ async fn plan_intent_inner(intent: &str) -> Result<serde_json::Value, String> {
 /// action name or missing required param is a planning bug — surfacing it
 /// in-band lets the user (and the model) diagnose the problem immediately.
 async fn enrich_with_commands(output: &mut PlanOutput) {
-    let socket = resolve_socket();
-    let client = DaemonClient::new(socket);
+    let client = DaemonClient::new(resolve_socket_target());
     for step in &mut output.steps {
         match client.describe(&step.action_name, &step.params).await {
             Ok(DescribeInfo { command, .. }) => step.command = command,
@@ -248,8 +246,7 @@ async fn execute_steps_inner(
     max_risk: Option<&str>,
 ) -> Result<ExecuteOutput, String> {
     let ceiling = parse_max_risk(max_risk)?;
-    let socket = resolve_socket();
-    let client = DaemonClient::new(socket);
+    let client = DaemonClient::new(resolve_socket_target());
 
     let mut results: Vec<StepResult> = Vec::new();
     let mut plan_needs_reboot = false;

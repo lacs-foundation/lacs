@@ -29,19 +29,25 @@ use sysknife_brain::state_client::StateClient as _;
 
 use crate::approval::{ApprovalDecision, ApprovalPolicy, MaxRisk};
 use crate::cli::{Cli, HistoryArgs};
-use crate::client::DaemonClient;
+use crate::client::{DaemonClient, SocketTarget};
 use crate::error::CliError;
 
 // ---------------------------------------------------------------------------
-// resolve_socket
+// resolve_socket / resolve_socket_target
 // ---------------------------------------------------------------------------
 
-/// Returns the daemon socket path from `$SYSKNIFE_SOCKET`, falling back to the
-/// system-wide default `/run/sysknife/daemon.sock`.
-pub fn resolve_socket() -> PathBuf {
-    std::env::var_os("SYSKNIFE_SOCKET")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/run/sysknife/daemon.sock"))
+/// Returns the daemon [`SocketTarget`] from `$SYSKNIFE_SOCKET`.
+///
+/// Falls back to the system-wide Unix socket default when the env var is absent.
+/// Exits the process with an error message if the env var is set but unparseable.
+pub fn resolve_socket_target() -> SocketTarget {
+    match std::env::var("SYSKNIFE_SOCKET") {
+        Ok(s) => SocketTarget::try_from_str(&s).unwrap_or_else(|e| {
+            eprintln!("sysknife: invalid SYSKNIFE_SOCKET: {e}");
+            std::process::exit(1);
+        }),
+        Err(_) => SocketTarget::Unix(PathBuf::from("/run/sysknife/daemon.sock")),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -241,10 +247,15 @@ pub fn run_completions(shell: clap_complete::Shell) {
 // ---------------------------------------------------------------------------
 
 /// Check daemon connectivity and print configuration summary.
-pub async fn run_doctor(socket: PathBuf, json_out: bool, log: &Logger) -> Result<(), CliError> {
+pub async fn run_doctor(
+    socket: SocketTarget,
+    json_out: bool,
+    log: &Logger,
+) -> Result<(), CliError> {
     let config = BrainConfig::from_env().map_err(|e| CliError::ConfigOrDaemon(e.to_string()))?;
 
-    let client = DaemonClient::new(socket.clone());
+    let socket_label = format!("{socket:?}");
+    let client = DaemonClient::new(socket);
 
     // `curated_state` is a blocking sync call; use spawn_blocking so the
     // multi-threaded runtime is not blocked on one thread indefinitely.
@@ -257,7 +268,7 @@ pub async fn run_doctor(socket: PathBuf, json_out: bool, log: &Logger) -> Result
             if json_out {
                 let out = json!({
                     "ok": true,
-                    "socket": socket.display().to_string(),
+                    "socket": socket_label,
                     "host": state.host_name(),
                     "provider": config.provider_name(),
                     "model": config.model_name(),
@@ -265,7 +276,7 @@ pub async fn run_doctor(socket: PathBuf, json_out: bool, log: &Logger) -> Result
                 log.println(&serde_json::to_string(&out).expect("static JSON"));
             } else {
                 crate::render::print_doctor_ok(
-                    &socket.display().to_string(),
+                    &socket_label,
                     state.host_name(),
                     config.provider_name(),
                     config.model_name(),
@@ -291,7 +302,11 @@ pub async fn run_doctor(socket: PathBuf, json_out: bool, log: &Logger) -> Result
 // ---------------------------------------------------------------------------
 
 /// Query past LACS execution history via `ListJobHistory`.
-pub async fn run_history(args: HistoryArgs, socket: PathBuf, log: &Logger) -> Result<(), CliError> {
+pub async fn run_history(
+    args: HistoryArgs,
+    socket: SocketTarget,
+    log: &Logger,
+) -> Result<(), CliError> {
     let since_hours = match args.since.as_deref() {
         None => None,
         Some(s) => {
@@ -338,7 +353,7 @@ pub async fn run_history(args: HistoryArgs, socket: PathBuf, log: &Logger) -> Re
 /// Options derived from global CLI flags; threaded into `run_intent` and
 /// `run_repl` so callers do not have to pass each flag individually.
 pub struct RunOpts {
-    pub socket: PathBuf,
+    pub socket: SocketTarget,
     pub yes: bool,
     pub max_risk: Option<MaxRisk>,
     pub non_interactive: bool,
@@ -943,7 +958,12 @@ mod tests {
             limit: 20,
         };
         let log = Logger::new(None).unwrap();
-        let result = run_history(args, PathBuf::from("/nonexistent.sock"), &log).await;
+        let result = run_history(
+            args,
+            SocketTarget::Unix(PathBuf::from("/nonexistent.sock")),
+            &log,
+        )
+        .await;
         match result {
             Err(CliError::ConfigOrDaemon(msg)) => {
                 assert!(
@@ -964,7 +984,12 @@ mod tests {
             limit: 20,
         };
         let log = Logger::new(None).unwrap();
-        let result = run_history(args, PathBuf::from("/nonexistent.sock"), &log).await;
+        let result = run_history(
+            args,
+            SocketTarget::Unix(PathBuf::from("/nonexistent.sock")),
+            &log,
+        )
+        .await;
         match result {
             Err(CliError::ConfigOrDaemon(msg)) => {
                 assert!(msg.contains("future"), "error must say 'future'");
@@ -974,24 +999,39 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // resolve_socket uses SYSKNIFE_SOCKET env var
+    // resolve_socket_target uses SYSKNIFE_SOCKET env var
     // -----------------------------------------------------------------------
 
     #[test]
-    fn resolve_socket_uses_env_var() {
+    fn resolve_socket_target_defaults_to_unix_when_unset() {
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        // SAFETY: we hold ENV_LOCK so no other test mutates SYSKNIFE_SOCKET concurrently.
-        unsafe { std::env::set_var("SYSKNIFE_SOCKET", "/tmp/test.sock") };
-        let p = resolve_socket();
         unsafe { std::env::remove_var("SYSKNIFE_SOCKET") };
-        assert_eq!(p, PathBuf::from("/tmp/test.sock"));
+        let t = resolve_socket_target();
+        assert_eq!(
+            t,
+            crate::client::SocketTarget::Unix(PathBuf::from("/run/sysknife/daemon.sock"))
+        );
     }
 
     #[test]
-    fn resolve_socket_default_without_env_var() {
+    fn resolve_socket_target_parses_unix_uri() {
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe { std::env::set_var("SYSKNIFE_SOCKET", "unix:///tmp/custom.sock") };
+        let t = resolve_socket_target();
         unsafe { std::env::remove_var("SYSKNIFE_SOCKET") };
-        let p = resolve_socket();
-        assert_eq!(p, PathBuf::from("/run/sysknife/daemon.sock"));
+        assert_eq!(
+            t,
+            crate::client::SocketTarget::Unix(PathBuf::from("/tmp/custom.sock"))
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn resolve_socket_target_parses_vsock_uri() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe { std::env::set_var("SYSKNIFE_SOCKET", "vsock://3:7777") };
+        let t = resolve_socket_target();
+        unsafe { std::env::remove_var("SYSKNIFE_SOCKET") };
+        assert_eq!(t, crate::client::SocketTarget::Vsock { cid: 3, port: 7777 });
     }
 }

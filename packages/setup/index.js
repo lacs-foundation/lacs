@@ -5,8 +5,10 @@
 // SysKnife setup — zero-dependency onboarding script
 //
 // Creates:
-//   .mcp.json                                          MCP server config
-//   .claude/hookify.require-sysknife-approval.local.md  Claude Code hook
+//   .mcp.json                                                  MCP server config
+//   .claude/hookify.require-sysknife-approval.local.md         approval gate
+//   .claude/hookify.sysknife-schema-fetch.local.md             schema-fetch reminder
+//   .claude/hookify.sysknife-bash-guard.local.md               VM query guard
 //
 // Single VM:   npx sysknife-setup
 // Multiple VMs: the wizard prompts "Add another VM?" and collects each target.
@@ -14,10 +16,11 @@
 //   independent, named tool sets (sysknife-web, sysknife-db, …).
 // ---------------------------------------------------------------------------
 
-const fs = require('fs');
+const fs   = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const readline = require('readline');
+const crypto   = require('crypto');
 
 // ---------------------------------------------------------------------------
 // Terminal helpers
@@ -65,6 +68,11 @@ function sanitizeName(s) {
   return s.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'vm';
 }
 
+/** Generate a 32-byte hex token suitable for vsock auth. */
+function generateToken() {
+  return crypto.randomBytes(32).toString('hex');
+}
+
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
@@ -92,7 +100,7 @@ const API_KEY_VARS = {
 // Always includes multi-VM fleet guidance even when a single target is
 // configured — users may add targets manually later, and the rule stays valid.
 
-const HOOK_CONTENT = `---
+const HOOK_APPROVAL = `---
 name: require-sysknife-approval
 enabled: true
 event: prompt
@@ -127,6 +135,45 @@ When sysknife is configured with multiple targets (sysknife-web, sysknife-db, �
 Each VM is independent — show each plan explicitly.
 `;
 
+const HOOK_SCHEMA_FETCH = `---
+name: sysknife-schema-fetch
+enabled: true
+event: prompt
+pattern: .*
+---
+
+# Deferred MCP tool schemas must be fetched before use
+
+Sysknife MCP tools (\`sysknife_plan\`, \`sysknife_execute\`, \`sysknife_preview\`) are
+registered as **deferred tools** — their full schemas are NOT loaded at session
+start to save context.
+
+**Before calling any sysknife tool you have not used yet this session:**
+1. Call \`ToolSearch\` with the tool name (e.g. \`select:sysknife_plan\`) to fetch its schema.
+2. Only then call the tool.
+
+Skipping this step causes \`InputValidationError\` because the parameter schema is unknown.
+`;
+
+const HOOK_BASH_GUARD = `---
+name: sysknife-bash-guard
+enabled: true
+event: bash
+pattern: (?:date|hostname|uname|df|free|uptime|who|id|ps|top|systemctl|journalctl|ip\\s|ss\\s|netstat|lscpu|lsmem|cat\\s+/proc|dmidecode)
+---
+
+# Route VM system queries through sysknife — not local Bash
+
+The command you are about to run queries system state.  If the user is asking
+about their **QEMU/KVM guest VM**, this local Bash command returns host data —
+not VM data.
+
+**Before running local Bash for system queries:**
+1. Check whether sysknife MCP tools are available (fetch deferred schemas via \`ToolSearch\`).
+2. If sysknife is available, use \`sysknife_plan\` → approve → \`sysknife_execute\` instead.
+3. Only run the local Bash command if sysknife is unavailable or the user explicitly asks for the local host.
+`;
+
 // ---------------------------------------------------------------------------
 // Collect one VM target (socket + optional vsock token)
 // ---------------------------------------------------------------------------
@@ -145,11 +192,13 @@ async function collectTarget(rl, idx) {
   if (socket.startsWith('vsock://')) {
     console.log();
     console.log(`  ${Y}vsock detected.${X} A pre-shared token is required.`);
-    console.log(`  Generate one: ${D}openssl rand -hex 32${X}`);
+    console.log(`  ${D}Leave blank to auto-generate one.${X}`);
     console.log(`  On the guest: ${D}echo "admin:<token>" | sudo tee /etc/sysknife/token${X}`);
     token = await ask(rl, 'SYSKNIFE_TOKEN (hex)', '');
     if (!token) {
-      warn('No token entered — set SYSKNIFE_TOKEN in .mcp.json before connecting');
+      token = generateToken();
+      ok(`Generated vsock auth token: ${token}`);
+      warn('Copy this token to the guest VM at /etc/sysknife/token');
     }
   }
 
@@ -183,7 +232,7 @@ function targetNextStep(target) {
 async function main() {
   console.log();
   console.log(`${B}SysKnife Setup${X}`);
-  console.log(`  Configures .mcp.json and the Claude Code approval hook.`);
+  console.log(`  Configures .mcp.json and Claude Code hooks.`);
   console.log(`  Supports single and multi-VM (fleet) configurations.`);
   console.log();
 
@@ -335,15 +384,23 @@ async function main() {
     : serverKeys.join(', ');
   ok(`Created .mcp.json  (${targets.length} target${targets.length > 1 ? 's' : ''}: ${targetSummary})`);
 
-  // ── Write hookify rule ───────────────────────────────────────────────────
+  // ── Write hookify rules ──────────────────────────────────────────────────
 
   if (!fs.existsSync('.claude')) {
     fs.mkdirSync('.claude', { recursive: true });
   }
 
-  const hookPath = path.join('.claude', 'hookify.require-sysknife-approval.local.md');
-  fs.writeFileSync(hookPath, HOOK_CONTENT);
-  ok(`Created ${hookPath}`);
+  const rules = [
+    { file: 'hookify.require-sysknife-approval.local.md', content: HOOK_APPROVAL },
+    { file: 'hookify.sysknife-schema-fetch.local.md',     content: HOOK_SCHEMA_FETCH },
+    { file: 'hookify.sysknife-bash-guard.local.md',       content: HOOK_BASH_GUARD },
+  ];
+
+  for (const { file, content } of rules) {
+    const hookPath = path.join('.claude', file);
+    fs.writeFileSync(hookPath, content);
+    ok(`Created ${hookPath}`);
+  }
 
   // ── Gitignore advice ─────────────────────────────────────────────────────
 

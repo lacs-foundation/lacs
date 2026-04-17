@@ -38,17 +38,78 @@ const SOCKET_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
 
 // ---------------------------------------------------------------------------
+// SocketTarget — Unix socket path or vsock CID:PORT
+// ---------------------------------------------------------------------------
+
+/// Where the daemon listens.  Constructed from `SYSKNIFE_SOCKET` env var via
+/// [`SocketTarget::try_from_str`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SocketTarget {
+    Unix(PathBuf),
+    /// Connect to a VM daemon over virtio-vsock.
+    #[cfg(target_os = "linux")]
+    Vsock {
+        cid: u32,
+        port: u32,
+    },
+}
+
+impl SocketTarget {
+    /// Parse a socket target from a string.
+    ///
+    /// Accepted forms:
+    /// - `vsock://CID:PORT`  — virtio-vsock (Linux only)
+    /// - `unix:///path`      — Unix domain socket
+    /// - `/absolute/path`    — bare path → Unix socket (backward compat)
+    pub fn try_from_str(s: &str) -> Result<Self, String> {
+        #[cfg(target_os = "linux")]
+        if let Some(rest) = s.strip_prefix("vsock://") {
+            let (cid_str, port_str) = rest
+                .split_once(':')
+                .ok_or_else(|| format!("vsock URI must be vsock://CID:PORT, got: {s}"))?;
+            let cid = cid_str
+                .parse::<u32>()
+                .map_err(|_| format!("invalid CID in vsock URI: {s}"))?;
+            let port = port_str
+                .parse::<u32>()
+                .map_err(|_| format!("invalid port in vsock URI: {s}"))?;
+            return Ok(Self::Vsock { cid, port });
+        }
+        if let Some(path) = s.strip_prefix("unix://") {
+            return Ok(Self::Unix(PathBuf::from(path)));
+        }
+        Ok(Self::Unix(PathBuf::from(s)))
+    }
+}
+
+impl From<PathBuf> for SocketTarget {
+    fn from(p: PathBuf) -> Self {
+        Self::Unix(p)
+    }
+}
+
+/// Read the pre-shared token for vsock connections from `SYSKNIFE_TOKEN`.
+fn vsock_token() -> Option<String> {
+    let t = std::env::var("SYSKNIFE_TOKEN").ok()?;
+    if t.is_empty() {
+        None
+    } else {
+        Some(t)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Framing — sync (used by StateClient impl)
 // ---------------------------------------------------------------------------
 
-fn write_framed(stream: &mut UnixStream, msg: &[u8]) -> std::io::Result<()> {
+fn write_framed(stream: &mut impl Write, msg: &[u8]) -> std::io::Result<()> {
     let len = u32::try_from(msg.len())
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "message too large"))?;
     stream.write_all(&len.to_le_bytes())?;
     stream.write_all(msg)
 }
 
-fn read_framed(stream: &mut UnixStream) -> std::io::Result<Vec<u8>> {
+fn read_framed(stream: &mut impl Read) -> std::io::Result<Vec<u8>> {
     let mut len_buf = [0u8; 4];
     stream.read_exact(&mut len_buf)?;
     let len = u32::from_le_bytes(len_buf) as usize;
@@ -67,10 +128,10 @@ fn read_framed(stream: &mut UnixStream) -> std::io::Result<Vec<u8>> {
 // Framing — async (used by preview / execute)
 // ---------------------------------------------------------------------------
 
-async fn write_framed_async(
-    stream: &mut tokio::net::UnixStream,
-    msg: &[u8],
-) -> std::io::Result<()> {
+async fn write_framed_async<W>(stream: &mut W, msg: &[u8]) -> std::io::Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
     use tokio::io::AsyncWriteExt;
     let len = u32::try_from(msg.len())
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "message too large"))?;
@@ -79,7 +140,10 @@ async fn write_framed_async(
     Ok(())
 }
 
-async fn read_framed_async(stream: &mut tokio::net::UnixStream) -> std::io::Result<Vec<u8>> {
+async fn read_framed_async<R>(stream: &mut R) -> std::io::Result<Vec<u8>>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
     use tokio::io::AsyncReadExt;
     let mut len_buf = [0u8; 4];
     stream.read_exact(&mut len_buf).await?;
@@ -93,6 +157,60 @@ async fn read_framed_async(stream: &mut tokio::net::UnixStream) -> std::io::Resu
     let mut buf = vec![0u8; len];
     stream.read_exact(&mut buf).await?;
     Ok(buf)
+}
+
+// ---------------------------------------------------------------------------
+// Transport enums — unify sync and async streams without trait objects
+// ---------------------------------------------------------------------------
+
+/// Sync connection wrapper: either a Unix socket or a vsock socket.
+enum SyncStream {
+    Unix(UnixStream),
+    #[cfg(target_os = "linux")]
+    Vsock(vsock::VsockStream),
+}
+
+impl SyncStream {
+    fn write_frame(&mut self, msg: &[u8]) -> std::io::Result<()> {
+        match self {
+            Self::Unix(s) => write_framed(s, msg),
+            #[cfg(target_os = "linux")]
+            Self::Vsock(s) => write_framed(s, msg),
+        }
+    }
+
+    fn read_frame(&mut self) -> std::io::Result<Vec<u8>> {
+        match self {
+            Self::Unix(s) => read_framed(s),
+            #[cfg(target_os = "linux")]
+            Self::Vsock(s) => read_framed(s),
+        }
+    }
+}
+
+/// Async connection wrapper: either a Unix socket or a vsock socket.
+enum AsyncStream {
+    Unix(tokio::net::UnixStream),
+    #[cfg(target_os = "linux")]
+    Vsock(tokio_vsock::VsockStream),
+}
+
+impl AsyncStream {
+    async fn write_frame(&mut self, msg: &[u8]) -> std::io::Result<()> {
+        match self {
+            Self::Unix(s) => write_framed_async(s, msg).await,
+            #[cfg(target_os = "linux")]
+            Self::Vsock(s) => write_framed_async(s, msg).await,
+        }
+    }
+
+    async fn read_frame(&mut self) -> std::io::Result<Vec<u8>> {
+        match self {
+            Self::Unix(s) => read_framed_async(s).await,
+            #[cfg(target_os = "linux")]
+            Self::Vsock(s) => read_framed_async(s).await,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -139,16 +257,98 @@ pub struct DescribeInfo {
     pub command: String,
 }
 
-/// Client for the sysknife-daemon Unix socket.
+/// Client for the sysknife-daemon socket (Unix or vsock).
 pub struct DaemonClient {
-    socket_path: PathBuf,
+    target: SocketTarget,
 }
 
 impl DaemonClient {
-    /// Construct with the resolved socket path (caller handles config/env lookup).
-    pub fn new(socket_path: impl Into<PathBuf>) -> Self {
+    /// Construct with the resolved socket target (caller handles config/env lookup).
+    pub fn new(target: impl Into<SocketTarget>) -> Self {
         Self {
-            socket_path: socket_path.into(),
+            target: target.into(),
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Sync connect
+    // ------------------------------------------------------------------
+
+    fn connect_sync(&self) -> Result<SyncStream, PlanningError> {
+        match &self.target {
+            SocketTarget::Unix(path) => {
+                let stream = UnixStream::connect(path)
+                    .map_err(|e| PlanningError::StateUnavailable(format!("connect: {e}")))?;
+                stream
+                    .set_read_timeout(Some(SOCKET_TIMEOUT))
+                    .map_err(|e| PlanningError::StateUnavailable(format!("set timeout: {e}")))?;
+                stream
+                    .set_write_timeout(Some(SOCKET_TIMEOUT))
+                    .map_err(|e| PlanningError::StateUnavailable(format!("set timeout: {e}")))?;
+                Ok(SyncStream::Unix(stream))
+            }
+            #[cfg(target_os = "linux")]
+            SocketTarget::Vsock { cid, port } => {
+                let mut stream = vsock::VsockStream::connect_with_cid_port(*cid, *port)
+                    .map_err(|e| PlanningError::StateUnavailable(format!("connect: {e}")))?;
+                stream
+                    .set_read_timeout(Some(SOCKET_TIMEOUT))
+                    .map_err(|e| PlanningError::StateUnavailable(format!("set timeout: {e}")))?;
+                stream
+                    .set_write_timeout(Some(SOCKET_TIMEOUT))
+                    .map_err(|e| PlanningError::StateUnavailable(format!("set timeout: {e}")))?;
+                let token = vsock_token().ok_or_else(|| {
+                    PlanningError::StateUnavailable(
+                        "SYSKNIFE_TOKEN is not set; vsock connections require a pre-shared token"
+                            .into(),
+                    )
+                })?;
+                let auth_bytes =
+                    serde_json::to_vec(&serde_json::json!({"type": "auth", "token": token}))
+                        .map_err(|e| {
+                            PlanningError::StateUnavailable(format!("serialize auth: {e}"))
+                        })?;
+                write_framed(&mut stream, &auth_bytes)
+                    .map_err(|e| PlanningError::StateUnavailable(format!("send auth: {e}")))?;
+                Ok(SyncStream::Vsock(stream))
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Async connect
+    // ------------------------------------------------------------------
+
+    async fn connect_async(&self) -> Result<AsyncStream, CliError> {
+        match &self.target {
+            SocketTarget::Unix(path) => {
+                let stream = tokio::net::UnixStream::connect(path).await.map_err(|e| {
+                    CliError::ConfigOrDaemon(format!("cannot connect to {}: {e}", path.display()))
+                })?;
+                Ok(AsyncStream::Unix(stream))
+            }
+            #[cfg(target_os = "linux")]
+            SocketTarget::Vsock { cid, port } => {
+                use tokio_vsock::{VsockAddr, VsockStream};
+                let addr = VsockAddr::new(*cid, *port);
+                let mut stream = VsockStream::connect(addr).await.map_err(|e| {
+                    CliError::ConfigOrDaemon(format!("cannot connect to vsock {cid}:{port}: {e}"))
+                })?;
+                let token = vsock_token().ok_or_else(|| {
+                    CliError::ConfigOrDaemon(
+                        "SYSKNIFE_TOKEN is not set; vsock connections require a pre-shared token"
+                            .into(),
+                    )
+                })?;
+                let auth_bytes =
+                    serde_json::to_vec(&serde_json::json!({"type": "auth", "token": token}))
+                        .map_err(|e| CliError::ConfigOrDaemon(format!("serialize auth: {e}")))?;
+                tokio::time::timeout(SOCKET_TIMEOUT, write_framed_async(&mut stream, &auth_bytes))
+                    .await
+                    .map_err(|_| CliError::ConfigOrDaemon("auth frame send timed out".into()))?
+                    .map_err(|e| CliError::ConfigOrDaemon(format!("send auth: {e}")))?;
+                Ok(AsyncStream::Vsock(stream))
+            }
         }
     }
 
@@ -157,14 +357,7 @@ impl DaemonClient {
     // ------------------------------------------------------------------
 
     fn curated_state_inner(&self) -> Result<CuratedState, PlanningError> {
-        let mut stream = UnixStream::connect(&self.socket_path)
-            .map_err(|e| PlanningError::StateUnavailable(format!("connect: {e}")))?;
-        stream
-            .set_read_timeout(Some(SOCKET_TIMEOUT))
-            .map_err(|e| PlanningError::StateUnavailable(format!("set timeout: {e}")))?;
-        stream
-            .set_write_timeout(Some(SOCKET_TIMEOUT))
-            .map_err(|e| PlanningError::StateUnavailable(format!("set timeout: {e}")))?;
+        let mut stream = self.connect_sync()?;
 
         let req = serde_json::to_vec(&serde_json::json!({
             "type": "query_state",
@@ -172,10 +365,12 @@ impl DaemonClient {
         }))
         .map_err(|e| PlanningError::StateUnavailable(format!("serialize: {e}")))?;
 
-        write_framed(&mut stream, &req)
+        stream
+            .write_frame(&req)
             .map_err(|e| PlanningError::StateUnavailable(format!("send: {e}")))?;
 
-        let raw = read_framed(&mut stream)
+        let raw = stream
+            .read_frame()
             .map_err(|e| PlanningError::StateUnavailable(format!("recv: {e}")))?;
 
         let resp: Value = serde_json::from_slice(&raw)
@@ -189,7 +384,6 @@ impl DaemonClient {
                 let host = s["host_name"]
                     .as_str()
                     .ok_or_else(|| PlanningError::StateUnavailable("missing host_name".into()))?;
-                // deployment is optional: empty on non-ostree systems (see CuratedState::new)
                 let deployment = s["deployment"].as_str().unwrap_or("");
                 CuratedState::new(
                     host,
@@ -218,14 +412,7 @@ impl DaemonClient {
         action_name: &str,
         params: &Value,
     ) -> Result<String, PlanningError> {
-        let mut stream = UnixStream::connect(&self.socket_path)
-            .map_err(|e| PlanningError::StateUnavailable(format!("connect: {e}")))?;
-        stream
-            .set_read_timeout(Some(SOCKET_TIMEOUT))
-            .map_err(|e| PlanningError::StateUnavailable(format!("set timeout: {e}")))?;
-        stream
-            .set_write_timeout(Some(SOCKET_TIMEOUT))
-            .map_err(|e| PlanningError::StateUnavailable(format!("set timeout: {e}")))?;
+        let mut stream = self.connect_sync()?;
 
         let req = serde_json::to_vec(&serde_json::json!({
             "type": "query_action",
@@ -235,10 +422,12 @@ impl DaemonClient {
         }))
         .map_err(|e| PlanningError::StateUnavailable(format!("serialize: {e}")))?;
 
-        write_framed(&mut stream, &req)
+        stream
+            .write_frame(&req)
             .map_err(|e| PlanningError::StateUnavailable(format!("send: {e}")))?;
 
-        let raw = read_framed(&mut stream)
+        let raw = stream
+            .read_frame()
             .map_err(|e| PlanningError::StateUnavailable(format!("recv: {e}")))?;
 
         let resp: Value = serde_json::from_slice(&raw)
@@ -267,23 +456,14 @@ impl DaemonClient {
     // Async operations
     // ------------------------------------------------------------------
 
-    /// Preview a plan step.
-    ///
-    /// Returns the [`PreviewEnvelope`] which contains `request_hash`.
-    /// Pass `request_hash` verbatim to [`DaemonClient::execute`] as `approval_hash`.
+    /// Preview a plan step.  Returns the [`PreviewEnvelope`] containing
+    /// `request_hash`; pass it verbatim to [`execute`] as `approval_hash`.
     pub async fn preview(
         &self,
         action_name: &str,
         params: &Value,
     ) -> Result<PreviewEnvelope, CliError> {
-        let mut stream = tokio::net::UnixStream::connect(&self.socket_path)
-            .await
-            .map_err(|e| {
-                CliError::ConfigOrDaemon(format!(
-                    "cannot connect to {}: {e}",
-                    self.socket_path.display()
-                ))
-            })?;
+        let mut stream = self.connect_async().await?;
 
         let req = serde_json::to_vec(&serde_json::json!({
             "type": "preview",
@@ -293,11 +473,13 @@ impl DaemonClient {
         }))
         .map_err(|e| CliError::ConfigOrDaemon(format!("serialize: {e}")))?;
 
-        write_framed_async(&mut stream, &req)
+        stream
+            .write_frame(&req)
             .await
             .map_err(|e| CliError::ConfigOrDaemon(format!("send: {e}")))?;
 
-        let raw = read_framed_async(&mut stream)
+        let raw = stream
+            .read_frame()
             .await
             .map_err(|e| CliError::ConfigOrDaemon(format!("recv: {e}")))?;
 
@@ -324,21 +506,13 @@ impl DaemonClient {
         }
     }
 
-    /// Describe an action: resolve its mechanism and return the formatted
-    /// command string, risk level, and reboot requirement without executing.
+    /// Describe an action: returns command, risk level, reboot requirement.
     pub async fn describe(
         &self,
         action_name: &str,
         params: &Value,
     ) -> Result<DescribeInfo, CliError> {
-        let mut stream = tokio::net::UnixStream::connect(&self.socket_path)
-            .await
-            .map_err(|e| {
-                CliError::ConfigOrDaemon(format!(
-                    "cannot connect to {}: {e}",
-                    self.socket_path.display()
-                ))
-            })?;
+        let mut stream = self.connect_async().await?;
 
         let req = serde_json::to_vec(&serde_json::json!({
             "type": "describe",
@@ -348,11 +522,13 @@ impl DaemonClient {
         }))
         .map_err(|e| CliError::ConfigOrDaemon(format!("serialize: {e}")))?;
 
-        write_framed_async(&mut stream, &req)
+        stream
+            .write_frame(&req)
             .await
             .map_err(|e| CliError::ConfigOrDaemon(format!("send: {e}")))?;
 
-        let raw = read_framed_async(&mut stream)
+        let raw = stream
+            .read_frame()
             .await
             .map_err(|e| CliError::ConfigOrDaemon(format!("recv: {e}")))?;
 
@@ -375,10 +551,8 @@ impl DaemonClient {
         }
     }
 
-    /// Execute a previously previewed step.
-    ///
-    /// `on_line` is called for each progress line emitted by the daemon, with
-    /// ANSI escape sequences already stripped.
+    /// Execute a previously previewed step.  `on_line` is called for each
+    /// progress line with ANSI escapes already stripped.
     pub async fn execute(
         &self,
         action_name: &str,
@@ -386,14 +560,7 @@ impl DaemonClient {
         approval_hash: &str,
         mut on_line: impl FnMut(&str),
     ) -> Result<ResultEnvelope, CliError> {
-        let mut stream = tokio::net::UnixStream::connect(&self.socket_path)
-            .await
-            .map_err(|e| {
-                CliError::ConfigOrDaemon(format!(
-                    "cannot connect to {}: {e}",
-                    self.socket_path.display()
-                ))
-            })?;
+        let mut stream = self.connect_async().await?;
 
         let req = serde_json::to_vec(&serde_json::json!({
             "type": "execute",
@@ -404,12 +571,14 @@ impl DaemonClient {
         }))
         .map_err(|e| CliError::ConfigOrDaemon(format!("serialize: {e}")))?;
 
-        write_framed_async(&mut stream, &req)
+        stream
+            .write_frame(&req)
             .await
             .map_err(|e| CliError::ConfigOrDaemon(format!("send: {e}")))?;
 
         loop {
-            let raw = read_framed_async(&mut stream)
+            let raw = stream
+                .read_frame()
                 .await
                 .map_err(|e| CliError::ExecutionFailed(format!("recv: {e}")))?;
 
@@ -743,7 +912,7 @@ mod tests {
     // -----------------------------------------------------------------------
     #[test]
     fn curated_state_connection_failure_maps_to_state_unavailable() {
-        let client = DaemonClient::new("/tmp/sysknife-no-such-socket-xyzzy.sock");
+        let client = DaemonClient::new(PathBuf::from("/tmp/sysknife-no-such-socket-xyzzy.sock"));
         let err = client.curated_state().unwrap_err();
         match err {
             PlanningError::StateUnavailable(msg) => {
@@ -758,7 +927,7 @@ mod tests {
 
     #[tokio::test]
     async fn preview_connection_failure_maps_to_config_or_daemon() {
-        let client = DaemonClient::new("/tmp/sysknife-no-such-socket-xyzzy.sock");
+        let client = DaemonClient::new(PathBuf::from("/tmp/sysknife-no-such-socket-xyzzy.sock"));
         let err = client
             .preview("GetDiskUsage", &serde_json::json!({}))
             .await
@@ -1143,6 +1312,67 @@ mod tests {
                 assert!(msg.contains("unexpected response type"), "got: {msg}");
             }
             other => panic!("expected ConfigOrDaemon, got {other:?}"),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // SocketTarget parsing
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn socket_target_bare_path_is_unix() {
+        let t = SocketTarget::try_from_str("/run/sysknife/daemon.sock").unwrap();
+        assert_eq!(
+            t,
+            SocketTarget::Unix(PathBuf::from("/run/sysknife/daemon.sock"))
+        );
+    }
+
+    #[test]
+    fn socket_target_unix_uri_parses() {
+        let t = SocketTarget::try_from_str("unix:///tmp/sysknife.sock").unwrap();
+        assert_eq!(t, SocketTarget::Unix(PathBuf::from("/tmp/sysknife.sock")));
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn socket_target_vsock_uri_parses() {
+        let t = SocketTarget::try_from_str("vsock://3:7777").unwrap();
+        assert_eq!(t, SocketTarget::Vsock { cid: 3, port: 7777 });
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn socket_target_vsock_invalid_cid_fails() {
+        assert!(SocketTarget::try_from_str("vsock://notanumber:7777").is_err());
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn socket_target_vsock_missing_colon_fails() {
+        assert!(SocketTarget::try_from_str("vsock://7777").is_err());
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn socket_target_vsock_invalid_port_fails() {
+        assert!(SocketTarget::try_from_str("vsock://3:notaport").is_err());
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn vsock_connection_failure_maps_to_state_unavailable() {
+        // CID 99 does not exist in CI — the connect must fail gracefully.
+        let client = DaemonClient::new(SocketTarget::Vsock {
+            cid: 99,
+            port: 7777,
+        });
+        let err = client.curated_state().unwrap_err();
+        match err {
+            PlanningError::StateUnavailable(msg) => {
+                assert!(msg.contains("connect"), "expected 'connect' in: {msg}");
+            }
+            other => panic!("expected StateUnavailable, got {other:?}"),
         }
     }
 }
