@@ -188,9 +188,10 @@ Add to `claude_desktop_config.json`:
 }
 ```
 
-The server exposes a single `lacs_plan` tool. The calling agent passes a
-natural-language intent; SysKnife returns a typed plan with risk levels. The
-approval flow is preserved at the MCP layer.
+The server exposes two tools: `sysknife_plan` and `sysknife_execute`. The
+calling agent passes a natural-language intent to `sysknife_plan`, presents
+the returned risk-labelled plan to the user, waits for approval, then calls
+`sysknife_execute`. The approval flow is preserved at the MCP layer.
 
 ## Roadmap
 

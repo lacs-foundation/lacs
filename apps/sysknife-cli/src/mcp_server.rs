@@ -2,14 +2,14 @@
 //!
 //! Exposes two tools:
 //!
-//! - `lacs_plan`    — turn a natural-language intent into a risk-labelled plan.
-//! - `lacs_execute` — execute a plan returned by `lacs_plan`.
+//! - `sysknife_plan`    — turn a natural-language intent into a risk-labelled plan.
+//! - `sysknife_execute` — execute a plan returned by `sysknife_plan`.
 //!
 //! Typical agentic loop:
 //!
-//! 1. Call `lacs_plan { intent }` — show the plan to the user, explain risk.
-//! 2. User approves.
-//! 3. Call `lacs_execute { steps, max_risk }` — daemon runs each step and
+//! 1. Call `sysknife_plan { intent }` — show the plan to the user, explain risk.
+//! 2. **STOP** — wait for explicit user approval before doing anything else.
+//! 3. Call `sysknife_execute { steps, max_risk }` — daemon runs each step and
 //!    streams output back as collected lines.
 //!
 //! The server uses stdio transport so any MCP client (Claude Desktop,
@@ -42,7 +42,7 @@ use crate::error::CliError;
 use crate::runner::resolve_socket;
 
 // ---------------------------------------------------------------------------
-// lacs_plan — input / output types
+// sysknife_plan — input / output types
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -82,7 +82,7 @@ pub struct PlanOutput {
 }
 
 // ---------------------------------------------------------------------------
-// lacs_execute — input / output types
+// sysknife_execute — input / output types
 // ---------------------------------------------------------------------------
 
 /// A single step to execute, taken verbatim from `lacs_plan` output.
@@ -94,10 +94,10 @@ pub struct StepToExecute {
     pub params: serde_json::Value,
 }
 
-/// Input to `lacs_execute`.
+/// Input to `sysknife_execute`.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ExecuteInput {
-    /// Steps to execute — take the `steps` array from `lacs_plan` output.
+    /// Steps to execute — take the `steps` array from `sysknife_plan` output.
     pub steps: Vec<StepToExecute>,
     /// Highest risk level you are willing to execute without further
     /// confirmation.  One of `"low"`, `"medium"`, `"high"`.
@@ -141,20 +141,21 @@ pub struct ExecuteOutput {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
-pub struct LacsMcpServer;
+pub struct SysknifeMcpServer;
 
 #[tool_router(server_handler)]
-impl LacsMcpServer {
+impl SysknifeMcpServer {
     /// Plan a Linux system administration intent.
     ///
     /// Returns a JSON object with the proposed steps, each carrying an
     /// `action_name`, `summary`, `risk_level` ("low" | "medium" | "high"),
-    /// and `params`. No action is executed — call `lacs_execute` with the
-    /// returned steps after the user approves the plan.
+    /// `params`, and `command` (the resolved shell command). No action is
+    /// executed — call `sysknife_execute` with the returned steps after the
+    /// user approves the plan.
     #[tool(
-        description = "Plan a Linux system administration intent. Returns typed steps with risk levels (low/medium/high). No action is executed — call lacs_execute with the returned steps after the user approves."
+        description = "Plan a Linux system administration intent. Returns typed steps with risk levels and the resolved shell command per step. IMPORTANT: After presenting this plan to the user, STOP immediately. Do not call any other tools. Wait for explicit user approval before proceeding."
     )]
-    async fn lacs_plan(
+    async fn sysknife_plan(
         &self,
         Parameters(PlanInput { intent }): Parameters<PlanInput>,
     ) -> Result<Json<PlanOutput>, ErrorData> {
@@ -168,9 +169,9 @@ impl LacsMcpServer {
         Ok(Json(output))
     }
 
-    /// Execute a plan produced by `lacs_plan`.
+    /// Execute a plan produced by `sysknife_plan`.
     ///
-    /// Pass the `steps` array from `lacs_plan` output unchanged.  Set
+    /// Pass the `steps` array from `sysknife_plan` output unchanged.  Set
     /// `max_risk` to the highest risk level you are willing to execute
     /// without further confirmation (`"low"` | `"medium"` | `"high"`;
     /// defaults to `"medium"`).
@@ -182,9 +183,9 @@ impl LacsMcpServer {
     /// Returns per-step results including output lines, warnings, and
     /// whether a reboot is required.
     #[tool(
-        description = "Execute a plan produced by lacs_plan. Pass the steps array unchanged. Set max_risk to the highest risk you will execute without confirmation (low/medium/high, default medium). Returns per-step output, warnings, and reboot requirements."
+        description = "Execute a plan produced by sysknife_plan. Pass the steps array unchanged. Set max_risk to the highest risk you will execute without confirmation (low/medium/high, default medium). Returns per-step output, warnings, and reboot requirements."
     )]
-    async fn lacs_execute(
+    async fn sysknife_execute(
         &self,
         Parameters(ExecuteInput { steps, max_risk }): Parameters<ExecuteInput>,
     ) -> Result<Json<ExecuteOutput>, ErrorData> {
@@ -196,7 +197,7 @@ impl LacsMcpServer {
 }
 
 // ---------------------------------------------------------------------------
-// lacs_plan helper
+// sysknife_plan helper
 // ---------------------------------------------------------------------------
 
 async fn plan_intent_inner(intent: &str) -> Result<serde_json::Value, String> {
@@ -238,7 +239,7 @@ async fn enrich_with_commands(output: &mut PlanOutput) {
 }
 
 // ---------------------------------------------------------------------------
-// lacs_execute helper
+// sysknife_execute helper
 // ---------------------------------------------------------------------------
 
 async fn execute_steps_inner(
@@ -375,7 +376,7 @@ fn check_risk_ceiling(risk: &RiskLevel, ceiling: u8) -> Result<(), ()> {
 // ---------------------------------------------------------------------------
 
 pub async fn run_mcp_server() -> Result<(), CliError> {
-    let service = LacsMcpServer
+    let service = SysknifeMcpServer
         .serve(stdio())
         .await
         .map_err(|e| CliError::ExecutionFailed(format!("MCP server error: {e}")))?;
