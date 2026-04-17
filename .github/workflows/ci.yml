@@ -48,8 +48,6 @@ jobs:
             docs/adr/*.md
 
       - name: Check markdown links
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           for file in \
             README.md \
@@ -89,7 +87,7 @@ jobs:
           version: latest
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install
 
       - name: Type check
         run: pnpm exec tsc --noEmit

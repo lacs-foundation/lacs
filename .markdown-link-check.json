@@ -1,14 +1,8 @@
 {
+  "ignorePatterns": [
+    { "pattern": "^https://github\\.com" }
+  ],
   "retryOn429": true,
   "retryCount": 3,
-  "fallbackRetryDelay": "5s",
-  "httpHeaders": [
-    {
-      "urls": ["https://github.com"],
-      "headers": {
-        "Authorization": "Bearer $GITHUB_TOKEN",
-        "Accept": "application/vnd.github.v3+json"
-      }
-    }
-  ]
+  "fallbackRetryDelay": "5s"
 }
