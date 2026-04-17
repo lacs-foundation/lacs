@@ -8,8 +8,10 @@
 //   .mcp.json                                          MCP server config
 //   .claude/hookify.require-sysknife-approval.local.md  Claude Code hook
 //
-// Usage:
-//   npx sysknife-setup
+// Single VM:   npx sysknife-setup
+// Multiple VMs: the wizard prompts "Add another VM?" and collects each target.
+//   Each target becomes a separate mcpServers entry so Claude Code sees
+//   independent, named tool sets (sysknife-web, sysknife-db, …).
 // ---------------------------------------------------------------------------
 
 const fs = require('fs');
@@ -32,6 +34,7 @@ const X = `${ESC}0m`;  // reset
 function ok(msg)   { console.log(`  ${G}✓${X}  ${msg}`); }
 function warn(msg) { console.log(`  ${Y}⚠${X}  ${msg}`); }
 function step(msg) { console.log(`  ${D}→${X}  ${msg}`); }
+function hr()      { console.log(`  ${D}${'─'.repeat(52)}${X}`); }
 
 // ---------------------------------------------------------------------------
 // Utilities
@@ -57,6 +60,11 @@ function ask(rl, question, defaultVal) {
   });
 }
 
+/** Strip characters that are unsafe in MCP server key names. */
+function sanitizeName(s) {
+  return s.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'vm';
+}
+
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
@@ -80,6 +88,9 @@ const API_KEY_VARS = {
 // ---------------------------------------------------------------------------
 // Hookify rule content
 // ---------------------------------------------------------------------------
+//
+// Always includes multi-VM fleet guidance even when a single target is
+// configured — users may add targets manually later, and the rule stays valid.
 
 const HOOK_CONTENT = `---
 name: require-sysknife-approval
@@ -88,7 +99,9 @@ event: prompt
 pattern: .*
 ---
 
-# sysknife execution rule (always active)
+# SysKnife execution rules (always active)
+
+## Single VM
 
 When using the sysknife MCP tools, you MUST follow this order:
 
@@ -99,7 +112,69 @@ When using the sysknife MCP tools, you MUST follow this order:
 
 **Never call \`sysknife_execute\` in the same turn as \`sysknife_plan\`.**
 Always stop after showing the plan and wait for the user's response.
+
+## Multiple VMs (fleet operations)
+
+When sysknife is configured with multiple targets (sysknife-web, sysknife-db, …):
+
+1. Call \`sysknife_plan\` for **all** VMs that will be affected — before executing any
+2. Present **all** plans together so the user can review the full scope of changes
+3. **WAIT** for the user to explicitly approve all plans in a single response
+4. Only then call \`sysknife_execute\` for each VM
+
+**Never execute one VM while another VM's plan is still pending review.**
+**Never skip showing a plan because it looks similar to another VM's plan.**
+Each VM is independent — show each plan explicitly.
 `;
+
+// ---------------------------------------------------------------------------
+// Collect one VM target (socket + optional vsock token)
+// ---------------------------------------------------------------------------
+
+async function collectTarget(rl, idx) {
+  console.log();
+  console.log(`  ${B}── VM Target ${idx} ${'─'.repeat(40 - String(idx).length)}${X}`);
+  console.log(`  ${D}Socket examples:${X}`);
+  console.log(`    ${D}/run/sysknife/daemon.sock${X}   ${D}local daemon (systemd default)${X}`);
+  console.log(`    ${D}/tmp/sysknife-vm.sock${X}        ${D}SSH tunnel to a VM${X}`);
+  console.log(`    ${D}vsock://10:9734${X}              ${D}virtio-vsock (CID:port)${X}`);
+
+  const socket = await ask(rl, 'Daemon socket', '/run/sysknife/daemon.sock');
+
+  let token = '';
+  if (socket.startsWith('vsock://')) {
+    console.log();
+    console.log(`  ${Y}vsock detected.${X} A pre-shared token is required.`);
+    console.log(`  Generate one: ${D}openssl rand -hex 32${X}`);
+    console.log(`  On the guest: ${D}echo "admin:<token>" | sudo tee /etc/sysknife/token${X}`);
+    token = await ask(rl, 'SYSKNIFE_TOKEN (hex)', '');
+    if (!token) {
+      warn('No token entered — set SYSKNIFE_TOKEN in .mcp.json before connecting');
+    }
+  }
+
+  return { socket, token };
+}
+
+// ---------------------------------------------------------------------------
+// Next-step hint for a single target
+// ---------------------------------------------------------------------------
+
+function targetNextStep(target) {
+  const { socket, name } = target;
+  const label = name ? `${name} (${socket})` : socket;
+
+  if (socket.startsWith('vsock://')) {
+    step(`Start daemon in ${label} guest:  sudo systemctl start sysknife-daemon`);
+  } else if (socket !== '/run/sysknife/daemon.sock' && socket !== '/tmp/sysknife-daemon.sock') {
+    // Likely an SSH tunnel socket — remind user to open the tunnel
+    step(`Open SSH tunnel for ${label}:  ssh -fN -L ${socket}:/run/sysknife/daemon.sock <user>@<host>`);
+    step(`Then start the daemon in the guest:  sudo systemctl start sysknife-daemon`);
+  } else {
+    step('Start the daemon:  sudo systemctl start sysknife-daemon');
+    step('              or:  cargo run -p sysknife-daemon');
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Main
@@ -109,6 +184,7 @@ async function main() {
   console.log();
   console.log(`${B}SysKnife Setup${X}`);
   console.log(`  Configures .mcp.json and the Claude Code approval hook.`);
+  console.log(`  Supports single and multi-VM (fleet) configurations.`);
   console.log();
 
   const rl = readline.createInterface({
@@ -136,16 +212,9 @@ async function main() {
     warn(`${binaryPath} does not exist yet — update .mcp.json after installing`);
   }
 
-  // ── 2. Daemon socket ────────────────────────────────────────────────────
-
-  console.log();
-  const socketPath = await ask(
-    rl,
-    'Daemon socket path',
-    '/tmp/sysknife-daemon.sock'
-  );
-
-  // ── 3. LLM provider ─────────────────────────────────────────────────────
+  // ── 2. LLM provider ─────────────────────────────────────────────────────
+  // Collected once and shared across all targets — each MCP server process
+  // uses the same model, only the daemon socket differs.
 
   console.log();
   const providerList = PROVIDERS.map((p, i) => (i === 0 ? `${B}${p}${X}` : p)).join(' / ');
@@ -159,7 +228,7 @@ async function main() {
     process.exit(1);
   }
 
-  // ── 4. API key ──────────────────────────────────────────────────────────
+  // ── 3. API key ──────────────────────────────────────────────────────────
 
   const envVar = API_KEY_VARS[provider];
   let apiKey = '';
@@ -176,38 +245,95 @@ async function main() {
     }
   }
 
-  // ── 5. Model ─────────────────────────────────────────────────────────────
+  // ── 4. Model ─────────────────────────────────────────────────────────────
 
   console.log();
   const model = await ask(rl, 'Model name', MODEL_DEFAULTS[provider]);
 
+  // ── 5. VM targets (loop) ─────────────────────────────────────────────────
+
+  const targets = [];
+  let addingMore = true;
+
+  while (addingMore) {
+    const target = await collectTarget(rl, targets.length + 1);
+    targets.push(target);
+
+    console.log();
+    const answer = await ask(rl, 'Add another VM?', 'N');
+    addingMore = answer.toLowerCase().startsWith('y');
+  }
+
+  // ── 6. Names for multi-VM (only when >1 target) ──────────────────────────
+  //
+  // Single target: mcpServers key stays "sysknife" — fully backward-compatible.
+  // Multiple targets: user picks a short label for each; keys become
+  // "sysknife-<name>".  Names are collected after all targets are entered so
+  // the happy-path (single VM) gets no extra prompts.
+
+  if (targets.length > 1) {
+    console.log();
+    hr();
+    console.log(`  ${B}Name your targets${X}`);
+    console.log(`  ${D}Names become MCP server IDs: sysknife-<name>${X}`);
+    console.log(`  ${D}Claude will see sysknife-<name>__sysknife_plan, etc.${X}`);
+    console.log();
+
+    for (let i = 0; i < targets.length; i++) {
+      const defaultName = `vm${i + 1}`;
+      const raw = await ask(rl, `Name for ${targets[i].socket}`, defaultName);
+      targets[i].name = sanitizeName(raw);
+    }
+
+    // Deduplicate: if two targets got the same sanitized name, suffix with index
+    const seen = new Map();
+    for (const t of targets) {
+      const count = seen.get(t.name) ?? 0;
+      if (count > 0) { t.name = `${t.name}-${count + 1}`; }
+      seen.set(t.name, count + 1);
+    }
+  }
+
   rl.close();
+
+  // ── Build mcpServers entries ─────────────────────────────────────────────
+
+  const sharedEnv = {
+    SYSKNIFE_LLM_PROVIDER: provider,
+    SYSKNIFE_LLM_MODEL:    model,
+  };
+  if (envVar && apiKey) {
+    sharedEnv[envVar] = apiKey;
+  }
+
+  function makeServer(target) {
+    const env = { SYSKNIFE_SOCKET: target.socket, ...sharedEnv };
+    if (target.token) { env['SYSKNIFE_TOKEN'] = target.token; }
+    return { command: binaryPath, args: ['mcp-server'], env };
+  }
+
+  const mcpServers = {};
+  if (targets.length === 1) {
+    // Single target — backward-compatible key "sysknife"
+    mcpServers['sysknife'] = makeServer(targets[0]);
+  } else {
+    for (const t of targets) {
+      mcpServers[`sysknife-${t.name}`] = makeServer(t);
+    }
+  }
 
   // ── Write .mcp.json ──────────────────────────────────────────────────────
 
   console.log();
 
-  const mcpEnv = {
-    SYSKNIFE_SOCKET:       socketPath,
-    SYSKNIFE_LLM_PROVIDER: provider,
-    SYSKNIFE_LLM_MODEL:    model,
-  };
-  if (envVar && apiKey) {
-    mcpEnv[envVar] = apiKey;
-  }
-
-  const mcpConfig = {
-    mcpServers: {
-      sysknife: {
-        command: binaryPath,
-        args:    ['mcp-server'],
-        env:     mcpEnv,
-      },
-    },
-  };
-
+  const mcpConfig = { mcpServers };
   fs.writeFileSync('.mcp.json', JSON.stringify(mcpConfig, null, 2) + '\n');
-  ok('Created .mcp.json');
+
+  const serverKeys = Object.keys(mcpServers);
+  const targetSummary = targets.length === 1
+    ? 'sysknife'
+    : serverKeys.join(', ');
+  ok(`Created .mcp.json  (${targets.length} target${targets.length > 1 ? 's' : ''}: ${targetSummary})`);
 
   // ── Write hookify rule ───────────────────────────────────────────────────
 
@@ -242,10 +368,14 @@ async function main() {
 
   if (!fs.existsSync(binaryPath)) {
     step('Build sysknife:  cargo build -p sysknife-cli --release');
+    console.log();
   }
 
-  step('Start the daemon:  sudo systemctl start sysknife-daemon');
-  step('              or:  cargo run -p sysknife-daemon');
+  for (const t of targets) {
+    targetNextStep(t);
+  }
+
+  console.log();
   step('Reload Claude Code:  type /reload-plugins in the Claude Code chat');
 
   if (envVar && !apiKey && !process.env[envVar]) {

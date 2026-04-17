@@ -531,7 +531,7 @@ fn require_str<'a>(params: &'a Value, key: &'static str) -> Result<&'a str, Exec
 ///
 /// Returns [`ExecutorError::MissingParam`] if neither key is present,
 /// [`ExecutorError::InvalidParam`] if the value is not a string.
-fn resolve_username<'a>(params: &'a Value) -> Result<&'a str, ExecutorError> {
+fn resolve_username(params: &Value) -> Result<&str, ExecutorError> {
     params
         .get("username")
         .or_else(|| params.get("user"))

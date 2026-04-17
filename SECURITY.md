@@ -163,7 +163,7 @@ The four role groups (`sysknife-observer`, `sysknife-dev`, `sysknife-admin`,
 Every plan rejected by the brain's safety fence (unknown action name,
 bad risk level, etc.) is appended as a JSON line to:
 
-```
+```text
 $XDG_DATA_HOME/sysknife/safety-audit.jsonl
 ~/.local/share/sysknife/safety-audit.jsonl  (fallback)
 ```
@@ -183,7 +183,7 @@ Query with `journalctl` (see below) or directly with `sqlite3`.
 On systemd hosts, every safety fence rejection is also forwarded to the
 systemd journal as a structured log entry with these fields:
 
-```
+```text
 SYSKNIFE_EVENT=safety_fence_rejection
 SYSKNIFE_INTENT=<the user's original intent>
 SYSKNIFE_REASON=<why the fence triggered>

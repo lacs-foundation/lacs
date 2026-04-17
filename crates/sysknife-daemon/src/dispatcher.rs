@@ -447,7 +447,7 @@ pub async fn connection_handler_with_executor(
                 request_id,
                 action_name,
                 params,
-            } => handle_describe(&mut framed, &action_name, &params, request_id).await,
+            } => handle_describe(&mut framed, action_name, params, request_id).await,
             DaemonRequest::Cancel { job_id } => {
                 // MVP: cancel acknowledgement only. Active-job signaling is a follow-up.
                 send_error(

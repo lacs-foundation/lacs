@@ -288,7 +288,7 @@ async fn execute_steps_inner(
             plan_needs_reboot = true;
         }
 
-        let status = serde_json::to_value(&result.status)
+        let status = serde_json::to_value(result.status)
             .ok()
             .and_then(|v| v.as_str().map(String::from))
             .unwrap_or_else(|| "unknown".into());

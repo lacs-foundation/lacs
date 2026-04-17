@@ -1126,7 +1126,7 @@ async fn run_group_membership_cycle(
         // getent output: groupname:x:gid:member1,member2,...
         // Split on last ':' and check comma-separated members.
         out.split(':')
-            .last()
+            .next_back()
             .unwrap_or("")
             .split(',')
             .any(|m| m.trim() == user)

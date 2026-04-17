@@ -137,10 +137,6 @@ fn string_array(field: &str, v: &Value) -> Result<Vec<String>, PlanningError> {
 pub struct DescribeInfo {
     /// Formatted command string, e.g. `"timedatectl"` or `"sudo hostnamectl set-hostname myhost"`.
     pub command: String,
-    /// Risk level string: `"low"`, `"medium"`, or `"high"`.
-    pub risk_level: String,
-    /// Whether the action requires a reboot to take effect.
-    pub reboot_required: bool,
 }
 
 /// Client for the sysknife-daemon Unix socket.
@@ -366,8 +362,6 @@ impl DaemonClient {
         match resp["type"].as_str() {
             Some("describe_response") => Ok(DescribeInfo {
                 command: resp["command"].as_str().unwrap_or("").to_string(),
-                risk_level: resp["risk_level"].as_str().unwrap_or("unknown").to_string(),
-                reboot_required: resp["reboot_required"].as_bool().unwrap_or(false),
             }),
             Some("error_response") => Err(CliError::PlanningFailed(format!(
                 "{}: {}",

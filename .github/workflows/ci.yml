@@ -61,7 +61,7 @@ jobs:
             docs/adr/0002-brain-provider-layer.md \
             docs/adr/0003-ipc-wire-protocol.md
           do
-            markdown-link-check "$file"
+            markdown-link-check --config .markdown-link-check.json "$file"
           done
 
       - name: Lint GitHub issue templates
@@ -71,7 +71,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: apps/lacs-shell
+        working-directory: apps/sysknife-shell
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -81,19 +81,14 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v6
-        with:
-          version: latest
-
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: npm ci
 
       - name: Type check
-        run: pnpm exec tsc --noEmit
+        run: npx tsc --noEmit
 
       - name: Test
-        run: pnpm test
+        run: npx vitest run
 
   rust:
     runs-on: ubuntu-latest
