@@ -25,7 +25,8 @@ produced. Provides:
 - `BrainConfig` — provider and model selection
 - Provider adapters: Anthropic, OpenAI, Gemini, Ollama
 - Planning tools: `get_system_state`, `query_*`, `propose_plan`, `remember`, `forget`
-- Safety fence: validates every action name and risk level before a plan leaves the brain
+- Safety fence: validates every action name and risk level before a plan
+  leaves the brain
 
 ### sysknife-types
 
@@ -33,7 +34,8 @@ Shared domain types used by every crate. Contains:
 
 - `CallerRole` — `Observer` | `Dev` | `Admin` | `Boot`
 - `RiskLevel` — `Low` | `Medium` | `High`
-- `JobState` — `Queued` | `Running` | `Succeeded` | `Failed` | `Canceled` | `RolledBack` | `NeedsReboot`
+- `JobState` — `Queued` | `Running` | `Succeeded` | `Failed` | `Canceled` |
+  `RolledBack` | `NeedsReboot`
 - Request and result envelopes for IPC messages
 
 ### sysknife-core
@@ -80,7 +82,7 @@ this is the mode used by every E2E story script.
 The daemon is trusted. The brain and shell are not trusted with raw
 privileged execution.
 
-```
+```text
 sysknife-brain  ──plan──►  sysknife-shell  ──approval──►  sysknife-daemon
  (planner)               (approval)                 (executor)
 ```

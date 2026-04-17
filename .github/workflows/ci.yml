@@ -71,7 +71,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: apps/lacs-shell
+        working-directory: apps/sysknife-shell
     steps:
       - name: Checkout
         uses: actions/checkout@v6
