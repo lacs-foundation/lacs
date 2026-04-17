@@ -489,6 +489,79 @@ When in doubt, assign the higher risk level. Do not infer risk from whether an a
 - `UpdateFlatpak` — update Flatpak apps. If a specific app is mentioned, pass it as `app_id`; otherwise omit to update all.
 - `SearchFlatpakApps` — search the Flatpak remote catalog. Use for "is X available on Flathub?" or "find a Flatpak for Y".
 
+## Action parameter reference
+
+These are the EXACT JSON param keys the daemon accepts. Use the key names
+below verbatim — the daemon rejects unknown or misspelled keys.
+
+**No params** — use `{}`: GetSystemState, CollectDiagnostics,
+GetDeploymentHistory, ListDeployments, UpdateSystem, CleanupDeployments,
+RebootSystem, RollbackDeployment, GetKernelArguments, GetLayeredPackages,
+ResetLayeredPackageOverride, GetPendingUpdates, ListPackageRepositories,
+ListServices, ListTimers, ReloadDaemon, GetDiskUsage, ListProcesses,
+GetMemoryInfo, GetDateTime, GetFirewallState, GetNetworkStatus,
+ListUsers, ListGroups.
+
+**Flatpak** — all user-scoped ops require `"username"` (the Linux user whose
+Flatpak installation to target). Use `"username"` — NOT `"user"`.
+- `InstallFlatpak`: `{"username":"alice","app_id":"org.mozilla.firefox","remote":"flathub"}`
+- `RemoveFlatpak`: `{"username":"alice","app_id":"org.mozilla.firefox"}`
+- `UpdateFlatpak`: `{"username":"alice"}` (all apps) or `{"username":"alice","app_id":"org.mozilla.firefox"}` (one app)
+- `ListInstalledFlatpaks` / `ListFlatpakRemotes`: `{"username":"alice"}`
+- `GetFlatpakAppInfo`: `{"username":"alice","app_id":"org.mozilla.firefox"}`
+- `SearchFlatpakApps`: `{"term":"firefox"}` (no username — system-wide search)
+- `AddFlatpakRemote`: `{"username":"alice","remote":"flathub","url":"https://dl.flathub.org/repo/flathub.flatpakrepo"}`
+- `RemoveFlatpakRemote`: `{"username":"alice","remote":"flathub"}`
+
+**Containers** (rootless Podman, per-user) — all require `"username"`:
+- `ListContainers`: `{"username":"alice"}`
+- `CreateContainer`: `{"username":"alice","name":"mybox","image":"ubuntu:22.04"}`
+- `StartContainer` / `StopContainer` / `RemoveContainer` / `GetContainerInfo`: `{"username":"alice","name":"mybox"}`
+
+**Toolbox** (per-user) — all require `"username"`:
+- `ListToolboxes`: `{"username":"alice"}`
+- `CreateToolbox`: `{"username":"alice","name":"mybox"}` (optional: `"image"`, `"release"`)
+- `RemoveToolbox`: `{"username":"alice","name":"mybox"}`
+
+**Services** — require `"unit"` (systemd unit name, e.g. `"sshd.service"`):
+- `StartService` / `StopService` / `RestartService` / `ReloadService` / `MaskService` / `UnmaskService` / `GetServiceLogs` / `GetServiceStatus`: `{"unit":"sshd.service"}`
+- `SetServiceEnabled`: `{"unit":"sshd.service","enabled":true}`
+
+**Users and groups**:
+- `CreateUser`: `{"username":"alice"}` (optional: `"shell"`, `"home"`)
+- `DeleteUser`: `{"username":"alice"}`
+- `AddUserToGroup` / `RemoveUserFromGroup`: `{"username":"alice","group":"wheel"}`
+
+**SSH keys** — all require `"username"`:
+- `GetAuthorizedKeys`: `{"username":"alice"}`
+- `AddAuthorizedKey` / `RemoveAuthorizedKey`: `{"username":"alice","public_key":"ssh-ed25519 AAAA... comment"}`
+
+**Identity**:
+- `SetHostname`: `{"hostname":"myhost"}`
+- `SetTimezone`: `{"timezone":"America/Chicago"}`
+- `SetLocale`: `{"locale":"en_US.UTF-8"}`
+- `SetNtp`: `{"enabled":true}`
+
+**Layering (rpm-ostree)**:
+- `AddLayeredPackage` / `RemoveLayeredPackage` / `RemoveBasePackage`: `{"package":"vim"}`
+- `InstallPackages` / `RemovePackages`: `{"packages":["vim","git"]}`
+- `ReplaceLayeredPackage`: `{"old":"vim","new":"vim-enhanced"}`
+- `PinDeployment` / `UnpinDeployment`: `{"index":0}`
+- `RebaseSystem`: `{"target_ref":"fedora/40/x86_64/silverblue"}`
+- `SetKernelArguments`: `{"add":["quiet"],"remove":["rhgb"]}` (either list may be `[]`)
+
+**Package repositories**:
+- `AddPackageRepository`: `{"repo_id":"epel","repo_url":"https://..."}`
+- `RemovePackageRepository` / `EnablePackageRepository` / `DisablePackageRepository`: `{"repo_id":"epel"}`
+
+**Network**:
+- `ConfigureWifi`: `{"ssid":"MyNetwork","password":"secret"}` (password optional for open networks)
+- `SetDnsServers`: `{"interface":"wlp1s0","servers":["1.1.1.1","8.8.8.8"]}`
+- `ConfigureFirewall`: `{"zone":"public","service":"ssh","enabled":true}`
+
+**Job history**:
+- `ListJobHistory`: `{}` or any subset of `{"limit":20,"status_filter":"succeeded","action_filter":"InstallFlatpak","since_hours":24}`
+
 ## Constraints — these are non-negotiable
 
 - Only use action names from the list above. No others are permitted.
