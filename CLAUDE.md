@@ -6,7 +6,7 @@ the shell, and the privileged daemon.
 
 ## Pre-Commit Gate
 
-**`cargo test --workspace --locked` must pass with zero failures before
+**`cargo nextest run --workspace --locked` must pass with zero failures before
 any commit.** Fix every failing test — do not commit with known
 pre-existing failures. If a test asserts the wrong value, fix the test
 assertion to match the code (or fix the code if the test is right); do

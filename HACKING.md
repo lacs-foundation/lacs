@@ -3,7 +3,7 @@
 Real-world notes for getting a working SysKnife development + testing setup
 on your own hardware, with all the gotchas we hit and the workarounds
 that stuck. If you just want to run unit tests, see
-[CONTRIBUTING.md](CONTRIBUTING.md) — `cargo test --workspace` and `pnpm
+[CONTRIBUTING.md](CONTRIBUTING.md) — `cargo nextest run --workspace` and `pnpm
 test` are the only required gates for a PR.
 
 If you want to run SysKnife end-to-end against a real Fedora Atomic Desktop
@@ -565,9 +565,9 @@ qcow2 internal snapshot — no extra disk space until you diverge.
 
 | Change you're making | Good enough gate |
 |---|---|
-| Rust logic / parsers / reducers | `cargo test --workspace` |
+| Rust logic / parsers / reducers | `cargo nextest run --workspace` |
 | React components | `pnpm test` |
-| IPC wire format | `cargo test --workspace` + PR with `e2e` label (CI smoke) |
+| IPC wire format | `cargo nextest run --workspace` + PR with `e2e` label (CI smoke) |
 | Action catalogue (new actions) | Unit tests + VM run, stories 1–7 |
 | rpm-ostree / systemd integration | **VM required** |
 | Packaging / Makefile / sudoers / polkit | **VM required** |
@@ -759,7 +759,7 @@ but expand greedily — be cautious. Re-provision the VM and confirm
 ### 8. Verification
 
 ```sh
-cargo test --workspace --locked
+cargo nextest run --workspace --locked
 ```
 
 The `action_consistency` test will fail immediately if you missed step 3,
@@ -893,12 +893,12 @@ and add an equivalent `apt-get` or `pacman` phase.
 
 The new `detect()` arm must be covered by a unit test inside
 `distro.rs` that feeds synthetic `/etc/os-release` content. No VM
-needed — these tests are fast and run in `cargo test --workspace`.
+needed — these tests are fast and run in `cargo nextest run --workspace`.
 
 ### 8. Distro verification
 
 ```sh
-cargo test --workspace --locked
+cargo nextest run --workspace --locked
 ```
 
 The consistency test does **not** enforce distro dispatch (it calls

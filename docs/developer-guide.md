@@ -56,7 +56,7 @@ These run in under 15 seconds and are required before every push:
 
 ```sh
 # Rust unit + integration tests
-cargo test --workspace --locked
+cargo nextest run --workspace --locked
 
 # TypeScript / React tests
 cd apps/sysknife-shell && pnpm test && pnpm exec tsc --noEmit
@@ -150,7 +150,7 @@ Hooks included:
 | yamllint | YAML style |
 
 Intentionally excluded from pre-commit (they run in CI instead):
-`cargo clippy` (20–30 s), `cargo test` (minutes), `vitest` (minutes).
+`cargo clippy` (20–30 s), `cargo nextest run` (minutes), `vitest` (minutes).
 
 ## Configuration
 
@@ -209,7 +209,7 @@ log directly.
 
 ## Repository Layout
 
-```
+```text
 crates/
   sysknife-brain/     LLM planner, provider adapters, safety fence
   sysknife-types/     Shared domain types (CallerRole, RiskLevel, JobState, …)
@@ -235,7 +235,7 @@ CI runs on every pull request and push to `main`.
 |---|---|
 | Rust formatting | `cargo fmt --all --check` |
 | Clippy (warnings as errors) | `cargo clippy --workspace --all-features --locked -- -D warnings` |
-| Rust tests | `cargo test --workspace --locked` |
+| Rust tests | `cargo nextest run --workspace --locked` |
 | TypeScript type check | `npx tsc --noEmit` (in `apps/sysknife-shell`) |
 | Frontend tests | `pnpm test` (in `apps/sysknife-shell`) |
 | Markdown lint | `markdownlint-cli2` on contributor-facing docs |
@@ -247,7 +247,7 @@ Run the Rust checks locally before pushing:
 ```sh
 cargo fmt --all --check
 cargo clippy --workspace --all-features --locked -- -D warnings
-cargo test --workspace --locked
+cargo nextest run --workspace --locked
 ```
 
 ## Working Style
