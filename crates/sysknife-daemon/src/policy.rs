@@ -58,7 +58,7 @@ pub fn min_role_for_action(action_name: &str) -> Option<CallerRole> {
         //
         // Flatpak install/remove/update, container lifecycle, service
         // control, toolbox ops, identity changes, network config,
-        // package repos, and user creation.
+        // and package repo management (read-only side).
         "InstallFlatpak"
         | "RemoveFlatpak"
         | "UpdateFlatpak"
@@ -74,7 +74,6 @@ pub fn min_role_for_action(action_name: &str) -> Option<CallerRole> {
         | "ReloadService"
         | "ReloadDaemon"
         | "SetServiceEnabled"
-        | "MaskService"
         | "UnmaskService"
         | "CreateToolbox"
         | "RemoveToolbox"
@@ -83,19 +82,20 @@ pub fn min_role_for_action(action_name: &str) -> Option<CallerRole> {
         | "SetLocale"
         | "SetNtp"
         | "ConfigureWifi"
-        | "SetDnsServers"
-        | "ConfigureFirewall"
-        | "AddPackageRepository"
         | "RemovePackageRepository"
         | "EnablePackageRepository"
-        | "DisablePackageRepository"
-        | "CreateUser" => CallerRole::Dev,
+        | "DisablePackageRepository" => CallerRole::Dev,
 
         // ── High-risk system mutations (Admin) ───────────────────────────
         //
         // Deployment lifecycle, layering, kernel arguments, privilege-
-        // escalation-sensitive user-group and SSH-key operations, and
-        // account deletion (irreversible access removal).
+        // escalation-sensitive user-group and SSH-key operations, account
+        // deletion (irreversible), and security-critical network/service ops:
+        //   CreateUser       — T1136.001 Persistence; NIST AC-2
+        //   ConfigureFirewall — T1562.004 Defense Evasion; NIST SC-7
+        //   MaskService      — T1562.001 Impair Defenses; irreversible
+        //   AddPackageRepository — supply-chain vector; NIST SI-7/CM-7
+        //   SetDnsServers    — DNS hijacking / MitM (T1557); NIST SC-7
         "UpdateSystem"
         | "PinDeployment"
         | "UnpinDeployment"
@@ -115,7 +115,12 @@ pub fn min_role_for_action(action_name: &str) -> Option<CallerRole> {
         | "RemoveUserFromGroup"
         | "DeleteUser"
         | "AddAuthorizedKey"
-        | "RemoveAuthorizedKey" => CallerRole::Admin,
+        | "RemoveAuthorizedKey"
+        | "CreateUser"
+        | "ConfigureFirewall"
+        | "MaskService"
+        | "AddPackageRepository"
+        | "SetDnsServers" => CallerRole::Admin,
 
         _ => return None,
     };
@@ -255,7 +260,6 @@ mod tests {
         assert!(action_allowed(&role, "ReloadService"));
         assert!(action_allowed(&role, "ReloadDaemon"));
         assert!(action_allowed(&role, "SetServiceEnabled"));
-        assert!(action_allowed(&role, "MaskService"));
         assert!(action_allowed(&role, "UnmaskService"));
         assert!(action_allowed(&role, "CreateToolbox"));
         assert!(action_allowed(&role, "RemoveToolbox"));
@@ -264,13 +268,9 @@ mod tests {
         assert!(action_allowed(&role, "SetLocale"));
         assert!(action_allowed(&role, "SetNtp"));
         assert!(action_allowed(&role, "ConfigureWifi"));
-        assert!(action_allowed(&role, "SetDnsServers"));
-        assert!(action_allowed(&role, "ConfigureFirewall"));
-        assert!(action_allowed(&role, "AddPackageRepository"));
         assert!(action_allowed(&role, "RemovePackageRepository"));
         assert!(action_allowed(&role, "EnablePackageRepository"));
         assert!(action_allowed(&role, "DisablePackageRepository"));
-        assert!(action_allowed(&role, "CreateUser"));
         // Observer-level actions still allowed
         assert!(action_allowed(&role, "GetSystemState"));
         assert!(action_allowed(&role, "ListServices"));
@@ -309,6 +309,12 @@ mod tests {
         assert!(!action_allowed(&role, "DeleteUser"));
         assert!(!action_allowed(&role, "AddAuthorizedKey"));
         assert!(!action_allowed(&role, "RemoveAuthorizedKey"));
+        // Security-critical ops reclassified to Admin (NIST 800-53 / CIS v8.1)
+        assert!(!action_allowed(&role, "CreateUser"));
+        assert!(!action_allowed(&role, "ConfigureFirewall"));
+        assert!(!action_allowed(&role, "MaskService"));
+        assert!(!action_allowed(&role, "AddPackageRepository"));
+        assert!(!action_allowed(&role, "SetDnsServers"));
     }
 
     // ------------------------------------------------------------------
@@ -339,6 +345,12 @@ mod tests {
         assert!(action_allowed(&role, "DeleteUser"));
         assert!(action_allowed(&role, "AddAuthorizedKey"));
         assert!(action_allowed(&role, "RemoveAuthorizedKey"));
+        // Security-critical ops reclassified to Admin
+        assert!(action_allowed(&role, "CreateUser"));
+        assert!(action_allowed(&role, "ConfigureFirewall"));
+        assert!(action_allowed(&role, "MaskService"));
+        assert!(action_allowed(&role, "AddPackageRepository"));
+        assert!(action_allowed(&role, "SetDnsServers"));
         // Medium-risk still allowed
         assert!(action_allowed(&role, "InstallFlatpak"));
         assert!(action_allowed(&role, "UpdateFlatpak"));
@@ -390,6 +402,67 @@ mod tests {
         assert!(action_allowed(&role, "DeleteUser"));
         assert!(action_allowed(&role, "AddAuthorizedKey"));
         assert!(action_allowed(&role, "RemoveAuthorizedKey"));
+    }
+
+    // ------------------------------------------------------------------
+    // Security reclassification: five actions require Admin, not Dev
+    //
+    // Rationale (NIST 800-53 / CIS Controls v8.1 / MITRE ATT&CK):
+    //   CreateUser       — T1136.001 Persistence; NIST AC-2 High-baseline
+    //   ConfigureFirewall — T1562.004 Defense Evasion; NIST SC-7 Moderate+
+    //   MaskService      — T1562.001 Impair Defenses; permanent/irreversible
+    //   AddPackageRepository — supply chain vector; NIST SI-7/CM-7 Moderate+
+    //   SetDnsServers    — DNS hijacking / MitM (T1557 path); NIST SC-7
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn dev_cannot_create_user() {
+        assert!(!action_allowed(&CallerRole::Dev, "CreateUser"));
+    }
+
+    #[test]
+    fn dev_cannot_configure_firewall() {
+        assert!(!action_allowed(&CallerRole::Dev, "ConfigureFirewall"));
+    }
+
+    #[test]
+    fn dev_cannot_mask_service() {
+        assert!(!action_allowed(&CallerRole::Dev, "MaskService"));
+    }
+
+    #[test]
+    fn dev_cannot_add_package_repository() {
+        assert!(!action_allowed(&CallerRole::Dev, "AddPackageRepository"));
+    }
+
+    #[test]
+    fn dev_cannot_set_dns_servers() {
+        assert!(!action_allowed(&CallerRole::Dev, "SetDnsServers"));
+    }
+
+    #[test]
+    fn admin_can_create_user() {
+        assert!(action_allowed(&CallerRole::Admin, "CreateUser"));
+    }
+
+    #[test]
+    fn admin_can_configure_firewall() {
+        assert!(action_allowed(&CallerRole::Admin, "ConfigureFirewall"));
+    }
+
+    #[test]
+    fn admin_can_mask_service() {
+        assert!(action_allowed(&CallerRole::Admin, "MaskService"));
+    }
+
+    #[test]
+    fn admin_can_add_package_repository() {
+        assert!(action_allowed(&CallerRole::Admin, "AddPackageRepository"));
+    }
+
+    #[test]
+    fn admin_can_set_dns_servers() {
+        assert!(action_allowed(&CallerRole::Admin, "SetDnsServers"));
     }
 
     // ------------------------------------------------------------------

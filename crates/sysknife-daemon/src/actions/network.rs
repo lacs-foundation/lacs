@@ -46,7 +46,7 @@ pub fn set_dns_servers(interface: &str, servers: &[&str]) -> ActionSpec {
     ActionSpec {
         action_name: "SetDnsServers",
         mechanism: command_mechanism("sudo", args),
-        risk_level: RiskLevel::Medium,
+        risk_level: RiskLevel::High,
         reboot_required: false,
         rollback_available: false,
     }
@@ -69,7 +69,7 @@ pub fn configure_firewall(zone: &str, service: &str, enabled: bool) -> ActionSpe
             program: "sudo",
             args: vec!["sh".to_string(), "-c".to_string(), script],
         },
-        risk_level: RiskLevel::Medium,
+        risk_level: RiskLevel::High,
         reboot_required: false,
         rollback_available: false,
     }
