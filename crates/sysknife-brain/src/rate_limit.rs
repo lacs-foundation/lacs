@@ -156,7 +156,7 @@ impl RateLimiter {
                 Ok(())
             })
         } else {
-            std::fs::write(&self.path, &new_content).map_err(Into::into)
+            std::fs::write(&self.path, &new_content)
         };
 
         if let Err(e) = write_result {

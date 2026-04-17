@@ -48,6 +48,8 @@ jobs:
             docs/adr/*.md
 
       - name: Check markdown links
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           for file in \
             README.md \
@@ -61,7 +63,7 @@ jobs:
             docs/adr/0002-brain-provider-layer.md \
             docs/adr/0003-ipc-wire-protocol.md
           do
-            markdown-link-check "$file"
+            markdown-link-check --config .markdown-link-check.json "$file"
           done
 
       - name: Lint GitHub issue templates
