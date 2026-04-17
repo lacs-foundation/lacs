@@ -85,10 +85,10 @@ jobs:
         run: npm ci
 
       - name: Type check
-        run: npx tsc --noEmit
+        run: ./node_modules/.bin/tsc --noEmit
 
       - name: Test
-        run: npx vitest run
+        run: ./node_modules/.bin/vitest run
 
   rust:
     runs-on: ubuntu-latest
