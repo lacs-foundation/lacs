@@ -99,17 +99,24 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
         // ensures operations target the user's Flatpak installation
         // (~/.local/share/flatpak/) rather than the system store.
         "ListFlatpakRemotes" => {
-            let username = validated_username(require_str(params, "username")?, "username")?;
+            let username = validated_username(resolve_username(params)?, "username")?;
             Ok(flatpak::list_flatpak_remotes(&username))
         }
         "InstallFlatpak" => {
-            let username = validated_username(require_str(params, "username")?, "username")?;
+            let username = validated_username(resolve_username(params)?, "username")?;
             let app_id = validated_safe_arg(require_str(params, "app_id")?, "app_id")?;
-            let remote = validated_safe_arg(require_str(params, "remote")?, "remote")?;
+            // `remote` defaults to "flathub" — the universal Flatpak remote.
+            // Models frequently omit it; accepting the default avoids a
+            // MissingParam failure for the most common install case.
+            let remote = params
+                .get("remote")
+                .and_then(|v| v.as_str())
+                .unwrap_or("flathub");
+            let remote = validated_safe_arg(remote, "remote")?;
             Ok(flatpak::install_flatpak(&username, &app_id, &remote))
         }
         "RemoveFlatpak" => {
-            let username = validated_username(require_str(params, "username")?, "username")?;
+            let username = validated_username(resolve_username(params)?, "username")?;
             let app_id = validated_safe_arg(require_str(params, "app_id")?, "app_id")?;
             Ok(flatpak::remove_flatpak(&username, &app_id))
         }
@@ -118,27 +125,27 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
             Ok(flatpak::search_flatpak_apps(&term))
         }
         "AddFlatpakRemote" => {
-            let username = validated_username(require_str(params, "username")?, "username")?;
+            let username = validated_username(resolve_username(params)?, "username")?;
             let remote = validated_safe_arg(require_str(params, "remote")?, "remote")?;
             let url = validated_safe_arg(require_str(params, "url")?, "url")?;
             Ok(flatpak::add_flatpak_remote(&username, &remote, &url))
         }
         "RemoveFlatpakRemote" => {
-            let username = validated_username(require_str(params, "username")?, "username")?;
+            let username = validated_username(resolve_username(params)?, "username")?;
             let remote = validated_safe_arg(require_str(params, "remote")?, "remote")?;
             Ok(flatpak::remove_flatpak_remote(&username, &remote))
         }
         "GetFlatpakAppInfo" => {
-            let username = validated_username(require_str(params, "username")?, "username")?;
+            let username = validated_username(resolve_username(params)?, "username")?;
             let app_id = validated_safe_arg(require_str(params, "app_id")?, "app_id")?;
             Ok(flatpak::get_flatpak_app_info(&username, &app_id))
         }
         "ListInstalledFlatpaks" => {
-            let username = validated_username(require_str(params, "username")?, "username")?;
+            let username = validated_username(resolve_username(params)?, "username")?;
             Ok(flatpak::list_installed_flatpaks(&username))
         }
         "UpdateFlatpak" => {
-            let username = validated_username(require_str(params, "username")?, "username")?;
+            let username = validated_username(resolve_username(params)?, "username")?;
             // app_id is optional — omitting it updates all installed Flatpaks.
             // Empty string is treated as absent (no app specified → update all).
             let app_id = params
@@ -156,32 +163,32 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
         // Podman storage is per-user; running as the `sysknife` system user
         // would see an empty, unrelated container store.
         "ListContainers" => {
-            let username = validated_username(require_str(params, "username")?, "username")?;
+            let username = validated_username(resolve_username(params)?, "username")?;
             Ok(containers::list_containers(&username))
         }
         "CreateContainer" => {
-            let username = validated_username(require_str(params, "username")?, "username")?;
+            let username = validated_username(resolve_username(params)?, "username")?;
             let name = validated_safe_arg(require_str(params, "name")?, "name")?;
             let image = validated_safe_arg(require_str(params, "image")?, "image")?;
             Ok(containers::create_container(&username, &name, &image))
         }
         "StartContainer" => {
-            let username = validated_username(require_str(params, "username")?, "username")?;
+            let username = validated_username(resolve_username(params)?, "username")?;
             let name = validated_safe_arg(require_str(params, "name")?, "name")?;
             Ok(containers::start_container(&username, &name))
         }
         "StopContainer" => {
-            let username = validated_username(require_str(params, "username")?, "username")?;
+            let username = validated_username(resolve_username(params)?, "username")?;
             let name = validated_safe_arg(require_str(params, "name")?, "name")?;
             Ok(containers::stop_container(&username, &name))
         }
         "RemoveContainer" => {
-            let username = validated_username(require_str(params, "username")?, "username")?;
+            let username = validated_username(resolve_username(params)?, "username")?;
             let name = validated_safe_arg(require_str(params, "name")?, "name")?;
             Ok(containers::remove_container(&username, &name))
         }
         "GetContainerInfo" => {
-            let username = validated_username(require_str(params, "username")?, "username")?;
+            let username = validated_username(resolve_username(params)?, "username")?;
             let name = validated_safe_arg(require_str(params, "name")?, "name")?;
             Ok(containers::get_container_info(&username, &name))
         }
@@ -290,11 +297,11 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
         // Toolbox operations require a `username` param — toolbox containers are
         // per-user (rootless Podman) and must be managed in the user's context.
         "ListToolboxes" => {
-            let username = validated_username(require_str(params, "username")?, "username")?;
+            let username = validated_username(resolve_username(params)?, "username")?;
             Ok(toolbox::list_toolboxes(&username))
         }
         "CreateToolbox" => {
-            let username = validated_username(require_str(params, "username")?, "username")?;
+            let username = validated_username(resolve_username(params)?, "username")?;
             let name = validated_safe_arg(require_str(params, "name")?, "name")?;
             let image = params
                 .get("image")
@@ -314,7 +321,7 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
             ))
         }
         "RemoveToolbox" => {
-            let username = validated_username(require_str(params, "username")?, "username")?;
+            let username = validated_username(resolve_username(params)?, "username")?;
             let name = validated_safe_arg(require_str(params, "name")?, "name")?;
             Ok(toolbox::remove_toolbox(&username, &name))
         }
@@ -382,7 +389,7 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
         "ListUsers" => Ok(users::list_users()),
         "ListGroups" => Ok(users::list_groups()),
         "CreateUser" => {
-            let username = validated_username(require_str(params, "username")?, "username")?;
+            let username = validated_username(resolve_username(params)?, "username")?;
             let shell = params
                 .get("shell")
                 .and_then(|v| v.as_str())
@@ -400,32 +407,32 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
             ))
         }
         "DeleteUser" => {
-            let username = validated_username(require_str(params, "username")?, "username")?;
+            let username = validated_username(resolve_username(params)?, "username")?;
             Ok(users::delete_user(&username))
         }
         "AddUserToGroup" => {
-            let username = validated_username(require_str(params, "username")?, "username")?;
+            let username = validated_username(resolve_username(params)?, "username")?;
             let group = validated_group(require_str(params, "group")?, "group")?;
             Ok(users::add_user_to_group(&username, &group))
         }
         "RemoveUserFromGroup" => {
-            let username = validated_username(require_str(params, "username")?, "username")?;
+            let username = validated_username(resolve_username(params)?, "username")?;
             let group = validated_group(require_str(params, "group")?, "group")?;
             Ok(users::remove_user_from_group(&username, &group))
         }
 
         // ── SSH ──────────────────────────────────────────────────────────
         "GetAuthorizedKeys" => {
-            let username = validated_username(require_str(params, "username")?, "username")?;
+            let username = validated_username(resolve_username(params)?, "username")?;
             Ok(ssh::get_authorized_keys(&username))
         }
         "AddAuthorizedKey" => {
-            let username = validated_username(require_str(params, "username")?, "username")?;
+            let username = validated_username(resolve_username(params)?, "username")?;
             let public_key = validated_public_key(require_str(params, "public_key")?)?;
             Ok(ssh::add_authorized_key(&username, &public_key))
         }
         "RemoveAuthorizedKey" => {
-            let username = validated_username(require_str(params, "username")?, "username")?;
+            let username = validated_username(resolve_username(params)?, "username")?;
             let public_key = validated_public_key(require_str(params, "public_key")?)?;
             Ok(ssh::remove_authorized_key(&username, &public_key))
         }
@@ -513,6 +520,23 @@ fn require_str<'a>(params: &'a Value, key: &'static str) -> Result<&'a str, Exec
         None => Err(ExecutorError::MissingParam(key)),
         Some(v) => v.as_str().ok_or(ExecutorError::InvalidParam(key)),
     }
+}
+
+/// Extract the username from params, accepting either `"username"` or `"user"`
+/// as the key.  The `"username"` key takes precedence.
+///
+/// Tolerates the `"user"` alias because LLMs trained on general Linux tooling
+/// frequently produce `"user"` — accepting both here eliminates an entire class
+/// of Describe/Execute failures without requiring the model to be perfect.
+///
+/// Returns [`ExecutorError::MissingParam`] if neither key is present,
+/// [`ExecutorError::InvalidParam`] if the value is not a string.
+fn resolve_username<'a>(params: &'a Value) -> Result<&'a str, ExecutorError> {
+    params
+        .get("username")
+        .or_else(|| params.get("user"))
+        .ok_or(ExecutorError::MissingParam("username"))
+        .and_then(|v| v.as_str().ok_or(ExecutorError::InvalidParam("username")))
 }
 
 /// Validate a repo_id: must be non-empty and contain only ASCII letters,
@@ -748,6 +772,51 @@ mod tests {
         assert!(
             matches!(err, ExecutorError::MissingParam("username")),
             "expected MissingParam(username), got: {err}"
+        );
+    }
+
+    /// LLMs trained on standard Linux tooling frequently produce `"user"` instead
+    /// of `"username"`.  `resolve_username` accepts both keys so these actions
+    /// never fail with a spurious MissingParam.
+    #[test]
+    fn build_spec_flatpak_accepts_user_alias() {
+        let spec = build_action_spec("ListInstalledFlatpaks", &json!({ "user": "alice" })).unwrap();
+        assert_eq!(spec.action_name, "ListInstalledFlatpaks");
+    }
+
+    /// `resolve_username` prefers `"username"` when both keys are present.
+    #[test]
+    fn build_spec_resolve_username_prefers_explicit_username() {
+        let spec = build_action_spec(
+            "ListInstalledFlatpaks",
+            &json!({ "username": "alice", "user": "bob" }),
+        )
+        .unwrap();
+        // Verify it didn't error — the "alice" value passes validation.
+        assert_eq!(spec.action_name, "ListInstalledFlatpaks");
+    }
+
+    /// `remote` defaults to "flathub" when absent — eliminates the most common
+    /// model omission without changing behaviour when the param is explicit.
+    #[test]
+    fn build_spec_install_flatpak_defaults_remote_to_flathub() {
+        let spec = build_action_spec(
+            "InstallFlatpak",
+            &json!({ "username": "alice", "app_id": "org.mozilla.firefox" }),
+        )
+        .unwrap();
+        assert_eq!(
+            spec.mechanism,
+            ActionMechanism::Command {
+                program: "sudo",
+                args: vec![
+                    "runuser".to_string(),
+                    "-l".to_string(),
+                    "alice".to_string(),
+                    "-c".to_string(),
+                    "flatpak install --user -y 'flathub' 'org.mozilla.firefox'".to_string(),
+                ],
+            }
         );
     }
 
