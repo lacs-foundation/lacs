@@ -11,10 +11,10 @@ pattern: .*
 
 When using the sysknife MCP tools, you MUST follow this order:
 
-1. Call `lacs_plan` → present the plan to the user
+1. Call `sysknife_plan` → present the plan to the user
 2. **WAIT** for the user to explicitly approve
    (words like "yes", "do it", "execute", "go ahead", "approved")
-3. Only then call `lacs_execute`
+3. Only then call `sysknife_execute`
 
-**Never call `lacs_execute` in the same turn as `lacs_plan`.**
+**Never call `sysknife_execute` in the same turn as `sysknife_plan`.**
 Always stop after showing the plan and wait for the user's response.

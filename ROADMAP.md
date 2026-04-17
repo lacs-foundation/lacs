@@ -116,8 +116,9 @@ Tracked in the v0.4.0 milestone.
 ## Phase 9: Launch
 
 - record demo video on real Silverblue hardware (#32)
-- ~~`lacs_plan` MCP tool (`sysknife mcp-server`)~~ — done; stdio transport via
-  `rmcp`, returns typed plan JSON, plan-only (no execution through MCP)
+- ~~`sysknife_plan` / `sysknife_execute` MCP tools~~ — done; stdio
+  transport via `rmcp`; returns typed plan JSON with resolved commands;
+  execution gated on explicit user approval
 - extend MCP server with direct read-only tools — expose all ~25 Observer-level
   actions (`get_disk_usage`, `list_services`, `get_authorized_keys`, …) as
   individual MCP tools so Claude Desktop can read live system state in-context;

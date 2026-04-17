@@ -8,7 +8,7 @@ system administration tasks on a remote SysKnife daemon.
 
 ## Tools
 
-### `lacs_plan`
+### `sysknife_plan`
 
 Turn a natural-language intent into a risk-labelled plan.  No action is
 executed.
@@ -36,19 +36,20 @@ Each `PlanStep`:
 | `summary`     | string | What this step does                      |
 | `risk_level`  | string | `"low"`, `"medium"`, or `"high"`         |
 | `params`      | object | Action-specific parameters               |
+| `command`     | string | Resolved shell command, e.g. `"timedatectl"` (empty if daemon unreachable) |
 
 ---
 
-### `lacs_execute`
+### `sysknife_execute`
 
-Execute a plan produced by `lacs_plan`.  Pass the `steps` array
+Execute a plan produced by `sysknife_plan`.  Pass the `steps` array
 unchanged.
 
 **Input**
 
 | Field      | Type          | Description                                      |
 |------------|---------------|--------------------------------------------------|
-| `steps`    | `StepToExecute[]` | Steps from `lacs_plan` output              |
+| `steps`    | `StepToExecute[]` | Steps from `sysknife_plan` output              |
 | `max_risk` | string?       | Ceiling: `"low"`, `"medium"` (default), `"high"` |
 
 Steps whose daemon-assessed risk exceeds `max_risk` cause an error
@@ -80,19 +81,19 @@ Each `StepResult`:
 **The assistant must always follow this order — no exceptions:**
 
 ```text
-1. lacs_plan { intent }
+1. sysknife_plan { intent }
         ↓
    Present the plan (steps + risk levels) to the user
         ↓
 2. WAIT for explicit user approval
    ("yes", "do it", "execute", "go ahead", "approved")
         ↓
-3. lacs_execute { steps, max_risk }
+3. sysknife_execute { steps, max_risk }
         ↓
    Report results
 ```
 
-**Never call `lacs_execute` in the same turn as `lacs_plan`.**  The plan
+**Never call `sysknife_execute` in the same turn as `sysknife_plan`.**  The plan
 must be shown and the user must respond before any execution occurs.
 
 This rule is enforced by the hookify prompt hook in
@@ -160,7 +161,7 @@ In Claude Code: run `/reload-plugins`.
 ```text
 User:    check disk usage on the VM
 
-Claude:  [calls lacs_plan { intent: "check disk usage" }]
+Claude:  [calls sysknife_plan { intent: "check disk usage" }]
 
          Plan: Check disk usage on all filesystems
          Steps:
@@ -170,7 +171,7 @@ Claude:  [calls lacs_plan { intent: "check disk usage" }]
 
 User:    yes
 
-Claude:  [calls lacs_execute { steps: [...], max_risk: "low" }]
+Claude:  [calls sysknife_execute { steps: [...], max_risk: "low" }]
 
          GetDiskUsage ✓
          Filesystem     Size  Used Avail Use%  Mounted on

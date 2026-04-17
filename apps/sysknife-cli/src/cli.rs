@@ -85,8 +85,9 @@ pub enum Command {
 
     /// Start an MCP server over stdio.
     ///
-    /// Exposes a `lacs_plan` tool so Claude Desktop, Cursor, and any other
-    /// MCP-capable agent can invoke the LACS planner directly.
+    /// Exposes `sysknife_plan` and `sysknife_execute` tools so Claude Code,
+    /// Claude Desktop, Cursor, and any other MCP-capable agent can plan and
+    /// execute Linux administration tasks via the SysKnife daemon.
     ///
     /// Add to `claude_desktop_config.json`:
     ///   { "mcpServers": { "sysknife": { "command": "sysknife", "args": ["mcp-server"] } } }
