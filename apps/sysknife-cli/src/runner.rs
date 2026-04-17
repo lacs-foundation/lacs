@@ -36,16 +36,6 @@ use crate::error::CliError;
 // resolve_socket / resolve_socket_target
 // ---------------------------------------------------------------------------
 
-/// Returns the daemon socket path from `$SYSKNIFE_SOCKET` as a raw `PathBuf`
-/// (backward-compat helper used by tests).
-pub fn resolve_socket() -> PathBuf {
-    std::env::var("SYSKNIFE_SOCKET")
-        .ok()
-        .filter(|s| !s.starts_with("vsock://"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/run/sysknife/daemon.sock"))
-}
-
 /// Returns the daemon [`SocketTarget`] from `$SYSKNIFE_SOCKET`.
 ///
 /// Falls back to the system-wide Unix socket default when the env var is absent.
@@ -1009,24 +999,39 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // resolve_socket uses SYSKNIFE_SOCKET env var
+    // resolve_socket_target uses SYSKNIFE_SOCKET env var
     // -----------------------------------------------------------------------
 
     #[test]
-    fn resolve_socket_uses_env_var() {
+    fn resolve_socket_target_defaults_to_unix_when_unset() {
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        // SAFETY: we hold ENV_LOCK so no other test mutates SYSKNIFE_SOCKET concurrently.
-        unsafe { std::env::set_var("SYSKNIFE_SOCKET", "/tmp/test.sock") };
-        let p = resolve_socket();
         unsafe { std::env::remove_var("SYSKNIFE_SOCKET") };
-        assert_eq!(p, PathBuf::from("/tmp/test.sock"));
+        let t = resolve_socket_target();
+        assert_eq!(
+            t,
+            crate::client::SocketTarget::Unix(PathBuf::from("/run/sysknife/daemon.sock"))
+        );
     }
 
     #[test]
-    fn resolve_socket_default_without_env_var() {
+    fn resolve_socket_target_parses_unix_uri() {
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe { std::env::set_var("SYSKNIFE_SOCKET", "unix:///tmp/custom.sock") };
+        let t = resolve_socket_target();
         unsafe { std::env::remove_var("SYSKNIFE_SOCKET") };
-        let p = resolve_socket();
-        assert_eq!(p, PathBuf::from("/run/sysknife/daemon.sock"));
+        assert_eq!(
+            t,
+            crate::client::SocketTarget::Unix(PathBuf::from("/tmp/custom.sock"))
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn resolve_socket_target_parses_vsock_uri() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe { std::env::set_var("SYSKNIFE_SOCKET", "vsock://3:7777") };
+        let t = resolve_socket_target();
+        unsafe { std::env::remove_var("SYSKNIFE_SOCKET") };
+        assert_eq!(t, crate::client::SocketTarget::Vsock { cid: 3, port: 7777 });
     }
 }

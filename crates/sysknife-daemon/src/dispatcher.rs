@@ -421,7 +421,10 @@ async fn authenticate_vsock_token(
         token: String,
     }
 
-    let raw = framed.recv().await.ok()?;
+    let raw = tokio::time::timeout(std::time::Duration::from_secs(10), framed.recv())
+        .await
+        .ok()? // timeout expired
+        .ok()?; // framing error
     let auth: AuthFrame = serde_json::from_slice(&raw).ok()?;
     if auth.msg_type != "auth" {
         return None;
@@ -523,7 +526,6 @@ async fn dispatch_loop<S>(
                     framed,
                     Arc::clone(&executor),
                     &state.transactions,
-                    &caller_role,
                     action_name,
                     params,
                     request_id,
@@ -589,24 +591,11 @@ async fn handle_query_action(
     framed: &mut FramedStream<impl AsyncRead + AsyncWrite + Unpin>,
     executor: Arc<dyn ActionExecutor>,
     transactions: &crate::transactions::TransactionStore,
-    caller_role: &CallerRole,
     action_name: &str,
     params: &Value,
     request_id: &str,
 ) -> Result<(), HandlerError> {
-    use crate::auth::role_rank;
     use crate::policy::min_role_for_action;
-
-    // Defense-in-depth: verify the caller has at least Observer rank.
-    if role_rank(caller_role) < role_rank(&CallerRole::Observer) {
-        return send_error(
-            framed,
-            request_id,
-            "authorization_failure",
-            format!("query_action requires at least Observer role; caller has {caller_role:?}"),
-        )
-        .await;
-    }
 
     // Only allow Low-risk (Observer-level) actions.
     let min_role = match min_role_for_action(action_name) {
@@ -866,7 +855,6 @@ async fn handle_preview(
     action_name: &str,
     params: &Value,
 ) -> Result<(), HandlerError> {
-    // Validate action name and params.
     let spec = match build_action_spec(action_name, params) {
         Ok(s) => s,
         Err(e) => {
@@ -874,7 +862,6 @@ async fn handle_preview(
         }
     };
 
-    // Authorize caller against the per-action allowlist.
     if !authorize_action(caller_role, action_name) {
         return send_error(
             framed,
@@ -977,7 +964,6 @@ async fn handle_execute(
     params: &Value,
     approval_hash: &str,
 ) -> Result<(), HandlerError> {
-    // Validate action + params first (cheap).
     let spec = match build_action_spec(action_name, params) {
         Ok(s) => s,
         Err(e) => {
@@ -985,7 +971,6 @@ async fn handle_execute(
         }
     };
 
-    // Authorize against the per-action allowlist.
     if !authorize_action(caller_role, action_name) {
         return send_error(
             framed,
@@ -1059,7 +1044,6 @@ async fn handle_execute(
 
     let job_id = Uuid::new_v4().to_string();
 
-    // Announce job start.
     send_response(
         framed,
         &DaemonResponse::JobStarted {
@@ -1070,7 +1054,6 @@ async fn handle_execute(
     )
     .await?;
 
-    // Lifecycle event: authorization check passed.
     let _ = send_response(
         framed,
         &DaemonResponse::JobProgress {
@@ -1080,7 +1063,6 @@ async fn handle_execute(
     )
     .await;
 
-    // Lifecycle event: execution starting.
     let _ = send_response(
         framed,
         &DaemonResponse::JobProgress {
@@ -1120,7 +1102,6 @@ async fn handle_execute(
         Err(e) => (JobState::Failed, format!("{action_name} failed: {e}")),
     };
 
-    // Lifecycle event: action completed with exit code or error.
     let completion_line = match &output {
         Ok(out) => format!("{action_name} completed with exit code {}", out.exit_code),
         Err(e) => format!("{action_name} completed with error: {e}"),
@@ -1858,6 +1839,151 @@ mod tests {
         let out = handle.await.unwrap();
         assert_eq!(out.exit_code, 0);
         assert!(out.stdout.contains("hello from stream"));
+    }
+
+    // ------------------------------------------------------------------
+    // vsock token auth gate
+    // ------------------------------------------------------------------
+
+    #[cfg(target_os = "linux")]
+    mod vsock_auth {
+        use super::*;
+        use std::sync::Arc;
+
+        fn executor() -> Arc<dyn ActionExecutor> {
+            Arc::new(crate::executor::RealActionExecutor)
+        }
+
+        /// Send a valid auth frame then a `query_state` — connection must succeed.
+        #[tokio::test]
+        async fn valid_token_grants_access() {
+            let dir = tempdir().unwrap();
+            let token_path = dir.path().join("token");
+            std::fs::write(&token_path, "test-secret").unwrap();
+
+            let (client, server) = tokio::io::duplex(4 * 1024 * 1024);
+            let state = test_state(&dir);
+
+            tokio::spawn(async move {
+                let mut framed = FramedStream::new(server);
+                let role = authenticate_vsock_token(&mut framed, &token_path).await;
+                if let Some(r) = role {
+                    dispatch_loop(&mut framed, state, runner(), executor(), r).await;
+                }
+            });
+
+            let mut framed = FramedStream::new(client);
+            let auth = serde_json::json!({"type": "auth", "token": "test-secret"});
+            framed
+                .send(&serde_json::to_vec(&auth).unwrap())
+                .await
+                .unwrap();
+            let req = serde_json::json!({"type": "query_state", "request_id": "vsock-r1"});
+            framed
+                .send(&serde_json::to_vec(&req).unwrap())
+                .await
+                .unwrap();
+            let raw = framed.recv().await.unwrap();
+            let resp: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+            assert_eq!(resp["type"], "state_response");
+        }
+
+        /// Wrong token — connection must be closed immediately (EOF on client).
+        #[tokio::test]
+        async fn wrong_token_closes_connection() {
+            let dir = tempdir().unwrap();
+            let token_path = dir.path().join("token");
+            std::fs::write(&token_path, "correct").unwrap();
+
+            let (client, server) = tokio::io::duplex(4 * 1024 * 1024);
+            let state = test_state(&dir);
+
+            tokio::spawn(async move {
+                let mut framed = FramedStream::new(server);
+                let _ = authenticate_vsock_token(&mut framed, &token_path).await;
+                // None returned — handler closes connection (drops framed)
+                drop(state);
+            });
+
+            let mut framed = FramedStream::new(client);
+            let auth = serde_json::json!({"type": "auth", "token": "wrong"});
+            framed
+                .send(&serde_json::to_vec(&auth).unwrap())
+                .await
+                .unwrap();
+            // Server dropped the stream — recv must fail (EOF or reset)
+            let result = framed.recv().await;
+            assert!(
+                result.is_err(),
+                "expected EOF after wrong token, got {:?}",
+                result
+            );
+        }
+
+        /// EOF before any auth frame — connection must be closed without panic.
+        #[tokio::test]
+        async fn eof_before_auth_frame_closes_connection() {
+            let dir = tempdir().unwrap();
+            let token_path = dir.path().join("token");
+            std::fs::write(&token_path, "secret").unwrap();
+
+            let (client, server) = tokio::io::duplex(4 * 1024 * 1024);
+
+            tokio::spawn(async move {
+                let mut framed = FramedStream::new(server);
+                let result = authenticate_vsock_token(&mut framed, &token_path).await;
+                assert!(result.is_none());
+            });
+
+            // Close write side immediately (sends EOF)
+            drop(client);
+        }
+
+        /// Malformed JSON as first frame — must return None without panic.
+        #[tokio::test]
+        async fn malformed_json_frame_closes_connection() {
+            let dir = tempdir().unwrap();
+            let token_path = dir.path().join("token");
+            std::fs::write(&token_path, "secret").unwrap();
+
+            let (client, server) = tokio::io::duplex(4 * 1024 * 1024);
+
+            let handle = tokio::spawn(async move {
+                let mut framed = FramedStream::new(server);
+                let result = authenticate_vsock_token(&mut framed, &token_path).await;
+                assert!(result.is_none());
+            });
+
+            let mut framed = FramedStream::new(client);
+            framed.send(b"not json at all {{{{").await.unwrap();
+            drop(framed);
+            handle.await.unwrap();
+        }
+
+        /// Wrong `type` field — must return None.
+        #[tokio::test]
+        async fn wrong_msg_type_closes_connection() {
+            let dir = tempdir().unwrap();
+            let token_path = dir.path().join("token");
+            std::fs::write(&token_path, "secret").unwrap();
+
+            let (client, server) = tokio::io::duplex(4 * 1024 * 1024);
+
+            let handle = tokio::spawn(async move {
+                let mut framed = FramedStream::new(server);
+                let result = authenticate_vsock_token(&mut framed, &token_path).await;
+                assert!(result.is_none());
+            });
+
+            let mut framed = FramedStream::new(client);
+            let bad = serde_json::json!({"type": "query_state", "token": "secret"});
+            framed
+                .send(&serde_json::to_vec(&bad).unwrap())
+                .await
+                .unwrap();
+            drop(framed);
+            handle.await.unwrap();
+        }
     }
 
     // ------------------------------------------------------------------

@@ -109,7 +109,7 @@ async fn unix_accept_loop(
 
 #[cfg(target_os = "linux")]
 async fn vsock_accept_loop(
-    mut listener: tokio_vsock::VsockListener,
+    listener: tokio_vsock::VsockListener,
     state: sysknife_daemon::state::DaemonState,
     runner: Arc<RealCommandRunner>,
     semaphore: Arc<Semaphore>,
@@ -140,8 +140,18 @@ async fn vsock_accept_loop(
                         }
                     }
                     Err(e) => {
-                        eprintln!("[sysknife-daemon] fatal vsock accept error, shutting down: {e}");
-                        break;
+                        use std::io::ErrorKind;
+                        match e.kind() {
+                            ErrorKind::ConnectionAborted | ErrorKind::ConnectionReset => {
+                                eprintln!("[sysknife-daemon] transient vsock accept error: {e}");
+                            }
+                            _ => {
+                                eprintln!(
+                                    "[sysknife-daemon] fatal vsock accept error, shutting down: {e}"
+                                );
+                                break;
+                            }
+                        }
                     }
                 }
             }

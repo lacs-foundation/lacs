@@ -277,7 +277,7 @@ impl DaemonClient {
     fn connect_sync(&self) -> Result<SyncStream, PlanningError> {
         match &self.target {
             SocketTarget::Unix(path) => {
-                let mut stream = UnixStream::connect(path)
+                let stream = UnixStream::connect(path)
                     .map_err(|e| PlanningError::StateUnavailable(format!("connect: {e}")))?;
                 stream
                     .set_read_timeout(Some(SOCKET_TIMEOUT))
@@ -297,11 +297,19 @@ impl DaemonClient {
                 stream
                     .set_write_timeout(Some(SOCKET_TIMEOUT))
                     .map_err(|e| PlanningError::StateUnavailable(format!("set timeout: {e}")))?;
-                if let Some(token) = vsock_token() {
-                    let auth = serde_json::json!({"type": "auth", "token": token});
-                    write_framed(&mut stream, &serde_json::to_vec(&auth).unwrap())
-                        .map_err(|e| PlanningError::StateUnavailable(format!("auth: {e}")))?;
-                }
+                let token = vsock_token().ok_or_else(|| {
+                    PlanningError::StateUnavailable(
+                        "SYSKNIFE_TOKEN is not set; vsock connections require a pre-shared token"
+                            .into(),
+                    )
+                })?;
+                let auth_bytes =
+                    serde_json::to_vec(&serde_json::json!({"type": "auth", "token": token}))
+                        .map_err(|e| {
+                            PlanningError::StateUnavailable(format!("serialize auth: {e}"))
+                        })?;
+                write_framed(&mut stream, &auth_bytes)
+                    .map_err(|e| PlanningError::StateUnavailable(format!("send auth: {e}")))?;
                 Ok(SyncStream::Vsock(stream))
             }
         }
@@ -326,12 +334,19 @@ impl DaemonClient {
                 let mut stream = VsockStream::connect(addr).await.map_err(|e| {
                     CliError::ConfigOrDaemon(format!("cannot connect to vsock {cid}:{port}: {e}"))
                 })?;
-                if let Some(token) = vsock_token() {
-                    let auth = serde_json::json!({"type": "auth", "token": token});
-                    write_framed_async(&mut stream, &serde_json::to_vec(&auth).unwrap())
-                        .await
-                        .map_err(|e| CliError::ConfigOrDaemon(format!("auth: {e}")))?;
-                }
+                let token = vsock_token().ok_or_else(|| {
+                    CliError::ConfigOrDaemon(
+                        "SYSKNIFE_TOKEN is not set; vsock connections require a pre-shared token"
+                            .into(),
+                    )
+                })?;
+                let auth_bytes =
+                    serde_json::to_vec(&serde_json::json!({"type": "auth", "token": token}))
+                        .map_err(|e| CliError::ConfigOrDaemon(format!("serialize auth: {e}")))?;
+                tokio::time::timeout(SOCKET_TIMEOUT, write_framed_async(&mut stream, &auth_bytes))
+                    .await
+                    .map_err(|_| CliError::ConfigOrDaemon("auth frame send timed out".into()))?
+                    .map_err(|e| CliError::ConfigOrDaemon(format!("send auth: {e}")))?;
                 Ok(AsyncStream::Vsock(stream))
             }
         }
