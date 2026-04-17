@@ -135,4 +135,80 @@ pub trait StateClient: Send + Sync {
         action_name: &str,
         params: &serde_json::Value,
     ) -> Result<String, PlanningError>;
+
+    /// Return the username of the process running the sysknife client.
+    ///
+    /// Reads the `USER` environment variable (set by PAM/login on all
+    /// standard Linux distros) and falls back to `LOGNAME`.  Both are set
+    /// by the login manager and are not user-controllable in a way that
+    /// could be used to escalate privilege — the daemon enforces its own
+    /// identity checks independently.
+    ///
+    /// Returns `Err(StateUnavailable)` only if neither env var is set,
+    /// which is abnormal and indicates a stripped or non-standard environment.
+    ///
+    /// The default implementation covers all production use cases.
+    /// Tests that need a fixed username should override this method.
+    fn current_user(&self) -> Result<String, PlanningError> {
+        std::env::var("USER")
+            .or_else(|_| std::env::var("LOGNAME"))
+            .map_err(|_| {
+                PlanningError::StateUnavailable(
+                    "cannot determine current user: USER and LOGNAME env vars are unset".into(),
+                )
+            })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::planner::PlanningError;
+
+    struct StubClient;
+
+    impl StateClient for StubClient {
+        fn curated_state(&self) -> Result<CuratedState, PlanningError> {
+            unimplemented!()
+        }
+
+        fn query_action(&self, _: &str, _: &serde_json::Value) -> Result<String, PlanningError> {
+            unimplemented!()
+        }
+    }
+
+    /// The default `current_user()` impl reads USER/LOGNAME.  In a normal
+    /// test environment these are set by the shell, so we get a non-empty
+    /// string back.
+    #[test]
+    fn current_user_returns_non_empty_string_in_normal_env() {
+        // This test requires that at least one of USER/LOGNAME is set —
+        // true for any standard Linux shell session and CI runner.
+        let result = StubClient.current_user();
+        assert!(result.is_ok(), "expected Ok, got {result:?}");
+        assert!(!result.unwrap().is_empty(), "username must not be empty");
+    }
+
+    /// Overriding `current_user()` in a test double works — the default
+    /// impl is not sealed.
+    #[test]
+    fn current_user_can_be_overridden_in_test_double() {
+        struct FixedUser;
+        impl StateClient for FixedUser {
+            fn curated_state(&self) -> Result<CuratedState, PlanningError> {
+                unimplemented!()
+            }
+            fn query_action(
+                &self,
+                _: &str,
+                _: &serde_json::Value,
+            ) -> Result<String, PlanningError> {
+                unimplemented!()
+            }
+            fn current_user(&self) -> Result<String, PlanningError> {
+                Ok("testuser".into())
+            }
+        }
+        assert_eq!(FixedUser.current_user().unwrap(), "testuser");
+    }
 }
