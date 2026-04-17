@@ -104,13 +104,49 @@ into the assistant's context on every turn.
 
 ## Setup
 
-### 1. Copy and configure `.mcp.json`
+### 1. Run the setup wizard
 
 ```sh
-cp .mcp.json.example .mcp.json
+npx sysknife-setup
 ```
 
-Edit `.mcp.json`:
+The wizard detects your installed `sysknife` binary, asks for the daemon
+socket and LLM provider, and writes `.mcp.json` plus the Claude Code
+approval hook. No manual file editing needed.
+
+`.mcp.json` is gitignored — it contains secrets and local paths.
+
+### 2. Connect to a daemon in a VM
+
+If the daemon runs inside a VM, two transports are available:
+
+**SSH socket tunnel** (works with any hypervisor):
+
+```sh
+ssh -fN -L /tmp/sysknife-vm.sock:/run/sysknife/daemon.sock \
+    <user>@<vm-host>
+```
+
+Set `SYSKNIFE_SOCKET=/tmp/sysknife-vm.sock` when the setup wizard asks for
+the socket path.
+
+**virtio-vsock** (KVM/QEMU only, no SSH required):
+
+```sh
+# Find the guest CID from the host
+virsh dumpxml <vm-name> | grep cid
+```
+
+Set `SYSKNIFE_SOCKET=vsock://<CID>:9734` and `SYSKNIFE_TOKEN=<hex>` when
+the wizard asks. The wizard detects the `vsock://` prefix and prompts for
+the token automatically.
+
+See [VM + Daemon Setup](vm-daemon-setup.md) for the complete walkthrough
+including token generation, libvirt XML, and troubleshooting.
+
+### 3. Manual configuration
+
+If you prefer to edit `.mcp.json` by hand:
 
 ```json
 {
@@ -119,9 +155,9 @@ Edit `.mcp.json`:
       "command": "/path/to/sysknife",
       "args": ["mcp-server"],
       "env": {
-        "SYSKNIFE_SOCKET": "/path/to/daemon.sock",
+        "SYSKNIFE_SOCKET": "/run/sysknife/daemon.sock",
         "SYSKNIFE_LLM_PROVIDER": "openai",
-        "OPENAI_API_KEY": "sk-...",
+        "OPENAI_API_KEY": "<your-api-key>",
         "SYSKNIFE_LLM_MODEL": "gpt-4.1"
       }
     }
@@ -129,28 +165,16 @@ Edit `.mcp.json`:
 }
 ```
 
-`.mcp.json` is gitignored — it contains secrets and local paths.
+For vsock add `SYSKNIFE_TOKEN` alongside `SYSKNIFE_SOCKET`.
 
-### 2. Connect to a remote daemon via SSH tunnel
-
-If the daemon runs on a VM or remote host, forward its Unix socket
-locally:
-
-```sh
-ssh -fN -L /tmp/sysknife-vm.sock:/run/sysknife/daemon.sock \
-    -p <port> <user>@<host>
-```
-
-Then set `SYSKNIFE_SOCKET=/tmp/sysknife-vm.sock` in `.mcp.json`.
-
-### 3. Build the binary
+### 4. Build the binary
 
 ```sh
 cargo build -p sysknife-cli --release
 # binary at target/release/sysknife
 ```
 
-### 4. Reload the MCP server in your client
+### 5. Reload the MCP server in your client
 
 In Claude Code: run `/reload-plugins`.
 
