@@ -15,8 +15,8 @@ use crate::runner::{Logger, RunOpts};
 async fn main() {
     let cli = Cli::parse();
 
-    // Resolve socket path once for all subcommands.
-    let socket = runner::resolve_socket();
+    // Resolve socket target once for all subcommands.
+    let socket = runner::resolve_socket_target();
 
     // Set up logger (tee to file when --log-to is present).
     let log = match Logger::new(cli.log_to.as_deref()) {
@@ -55,7 +55,7 @@ async fn main() {
 
 async fn dispatch(
     cli: &Cli,
-    socket: std::path::PathBuf,
+    socket: crate::client::SocketTarget,
     log: &Logger,
 ) -> Result<(), crate::error::CliError> {
     match &cli.command {
@@ -94,7 +94,7 @@ async fn dispatch(
     }
 }
 
-fn build_run_opts(cli: &Cli, socket: std::path::PathBuf) -> RunOpts {
+fn build_run_opts(cli: &Cli, socket: crate::client::SocketTarget) -> RunOpts {
     RunOpts {
         socket,
         yes: cli.yes,

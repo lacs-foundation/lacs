@@ -45,6 +45,69 @@ pub(crate) fn role_rank(role: &CallerRole) -> u8 {
 }
 
 // ---------------------------------------------------------------------------
+// Token authentication (vsock connections)
+// ---------------------------------------------------------------------------
+
+/// Validate `presented_token` against the token stored in `token_path`.
+///
+/// Returns the role the token holder is granted (read from the
+/// `SYSKNIFE_TOKEN_ROLE` env var, defaulting to `Dev`) on success, or `None`
+/// if the token file is absent, unreadable, or the token does not match.
+///
+/// Whitespace (including trailing newlines written by `echo`) is stripped from
+/// the stored token before comparison, so `echo TOKEN > ~/.config/sysknife/token`
+/// works without modification.
+pub fn validate_token_against_file(
+    presented_token: &str,
+    token_path: &std::path::Path,
+) -> Option<CallerRole> {
+    if presented_token.is_empty() {
+        return None;
+    }
+    let stored = match std::fs::read_to_string(token_path) {
+        Ok(s) => s,
+        Err(_) => return None,
+    };
+    let stored = stored.trim();
+    if stored.is_empty() || stored != presented_token {
+        return None;
+    }
+    Some(token_role())
+}
+
+/// Return the `CallerRole` granted to token-authenticated vsock connections.
+///
+/// Reads `SYSKNIFE_TOKEN_ROLE` env var; defaults to `Dev`. Invalid values
+/// fall back to `Dev` with a warning.
+pub fn token_role() -> CallerRole {
+    match std::env::var("SYSKNIFE_TOKEN_ROLE")
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "observer" => CallerRole::Observer,
+        "admin" => CallerRole::Admin,
+        "boot" => CallerRole::Boot,
+        "dev" | "" => CallerRole::Dev,
+        other => {
+            eprintln!(
+                "[sysknife-daemon] WARNING: unknown SYSKNIFE_TOKEN_ROLE={other:?}; \
+                 defaulting to Dev"
+            );
+            CallerRole::Dev
+        }
+    }
+}
+
+/// Default path for the daemon token file.
+pub fn default_token_path() -> std::path::PathBuf {
+    sysknife_core::config::prefs_path()
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("/tmp"))
+        .join("token")
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -108,5 +171,61 @@ mod tests {
     #[test]
     fn mixed_known_and_unknown_groups_returns_highest_known() {
         assert_eq!(role(&["plugdev", DEV_GROUP, "audio"]), CallerRole::Dev);
+    }
+
+    // --- token auth ---
+
+    #[test]
+    fn valid_token_matches_and_returns_dev_by_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("token");
+        std::fs::write(&path, "secret123").unwrap();
+        assert_eq!(
+            validate_token_against_file("secret123", &path),
+            Some(CallerRole::Dev)
+        );
+    }
+
+    #[test]
+    fn token_file_with_trailing_newline_still_matches() {
+        // `echo TOKEN > file` appends a newline — must still work.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("token");
+        std::fs::write(&path, "secret123\n").unwrap();
+        assert_eq!(
+            validate_token_against_file("secret123", &path),
+            Some(CallerRole::Dev)
+        );
+    }
+
+    #[test]
+    fn wrong_token_returns_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("token");
+        std::fs::write(&path, "correct\n").unwrap();
+        assert_eq!(validate_token_against_file("wrong", &path), None);
+    }
+
+    #[test]
+    fn absent_token_file_returns_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nonexistent");
+        assert_eq!(validate_token_against_file("any", &path), None);
+    }
+
+    #[test]
+    fn empty_presented_token_is_always_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("token");
+        std::fs::write(&path, "").unwrap();
+        assert_eq!(validate_token_against_file("", &path), None);
+    }
+
+    #[test]
+    fn empty_stored_token_is_rejected_even_with_matching_presented() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("token");
+        std::fs::write(&path, "\n").unwrap();
+        assert_eq!(validate_token_against_file("", &path), None);
     }
 }

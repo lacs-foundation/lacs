@@ -26,6 +26,8 @@ serde_json = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "signal", "net", "io-util", "io-std", "sync"] }
 thiserror = { workspace = true }
+vsock = "0.5.4"
+tokio-vsock = "0.7.2"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "net", "io-util"] }

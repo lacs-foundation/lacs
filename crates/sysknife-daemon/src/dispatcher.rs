@@ -1,19 +1,21 @@
 //! IPC connection handler for the daemon.
 //!
-//! Each accepted Unix socket connection runs in its own Tokio task.
-//! `connection_handler` authenticates the caller (the accept loop resolves
-//! the `CallerRole` from `SO_PEERCRED` before spawning the task), then
-//! processes a stream of length-prefixed JSON requests in a loop until the
-//! connection closes.
+//! Accepts both Unix socket and vsock connections. The caller role is resolved
+//! before entering the handler:
+//!
+//! - **Unix**: `SO_PEERCRED` → Linux group membership → `CallerRole`
+//! - **Vsock**: first frame must be `{"type":"auth","token":"<hex>"}` validated
+//!   against `~/.config/sysknife/token`; valid token → configured role.
 //!
 //! # Security model
 //!
-//! - The caller role is derived from the peer process's Linux group membership
+//! - Unix role is derived from the peer process's Linux group membership
 //!   via `SO_PEERCRED` + `/proc/{pid}/status` + `/etc/group`. The shell never
 //!   supplies its own role.
+//! - Vsock role is derived from a pre-shared token validated against a file;
+//!   the token is generated at setup time and distributed out-of-band.
 //! - Every `execute` request must carry an `approval_hash` that exactly matches
-//!   the `request_hash` returned in the preceding `preview` response. A hash
-//!   mismatch or missing prior preview returns `stale_approval`.
+//!   the `request_hash` returned in the preceding `preview` response.
 //! - Role is checked against the per-action allowlist (see `policy.rs`) before
 //!   preview and again before execute.
 
@@ -23,7 +25,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, BufReader};
 use tokio::net::UnixStream;
 use uuid::Uuid;
 
@@ -325,36 +327,121 @@ fn canonical_json(v: &Value) -> String {
 
 /// Handle a single accepted connection until the peer closes it.
 ///
-/// `caller_role` MUST be resolved from `SO_PEERCRED` by the accept loop
-/// before this function is called. This keeps the handler testable without
-/// needing a real peer process.
+/// Works with any `AsyncRead + AsyncWrite + Unpin + Send` stream — Unix sockets,
+/// vsock streams, or duplex streams used in tests.
 ///
-/// Framing-level failures (too-large messages, malformed JSON frame) close
-/// the connection. All application-level errors return an `error_response`
-/// and keep the connection open.
-pub async fn connection_handler(
-    stream: UnixStream,
+/// `caller_role` MUST be resolved before this function is called:
+/// - Unix: via `SO_PEERCRED` in the accept loop.
+/// - Vsock: via `vsock_connection_handler`, which validates the token first.
+pub async fn connection_handler<S>(
+    stream: S,
     state: DaemonState,
     runner: Arc<dyn CommandRunner + Send + Sync>,
     caller_role: CallerRole,
-) {
+) where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
     let executor: Arc<dyn ActionExecutor> = Arc::new(crate::executor::RealActionExecutor);
     connection_handler_with_executor(stream, state, runner, executor, caller_role).await;
 }
 
+/// Handle a vsock connection: validate token from first frame, then dispatch.
+///
+/// The first frame must be `{"type":"auth","token":"<hex>"}`. On failure the
+/// connection is closed silently to prevent oracle attacks.
+#[cfg(target_os = "linux")]
+pub async fn vsock_connection_handler<S>(
+    stream: S,
+    state: DaemonState,
+    runner: Arc<dyn CommandRunner + Send + Sync>,
+) where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let executor: Arc<dyn ActionExecutor> = Arc::new(crate::executor::RealActionExecutor);
+    vsock_connection_handler_with_executor(stream, state, runner, executor).await;
+}
+
+/// Vsock handler with explicit executor (used by integration tests).
+#[cfg(target_os = "linux")]
+pub async fn vsock_connection_handler_with_executor<S>(
+    stream: S,
+    state: DaemonState,
+    runner: Arc<dyn CommandRunner + Send + Sync>,
+    executor: Arc<dyn ActionExecutor>,
+) where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let mut framed = FramedStream::new(stream);
+
+    let token_path = crate::auth::default_token_path();
+    let caller_role = match authenticate_vsock_token(&mut framed, &token_path).await {
+        Some(role) => role,
+        None => {
+            eprintln!("[sysknife-daemon] vsock auth failed; closing connection");
+            return;
+        }
+    };
+
+    dispatch_loop(&mut framed, state, runner, executor, caller_role).await;
+}
+
 /// Inner handler that accepts an explicit [`ActionExecutor`].
 ///
-/// Production code enters via [`connection_handler`], which injects a
-/// [`RealActionExecutor`](crate::executor::RealActionExecutor). Integration
-/// tests call this directly with a mock executor to control command outcomes.
-pub async fn connection_handler_with_executor(
-    stream: UnixStream,
+/// Production code enters via [`connection_handler`] or
+/// [`vsock_connection_handler`]; tests call this directly with a mock executor.
+pub async fn connection_handler_with_executor<S>(
+    stream: S,
     state: DaemonState,
     runner: Arc<dyn CommandRunner + Send + Sync>,
     executor: Arc<dyn ActionExecutor>,
     caller_role: CallerRole,
-) {
+) where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
     let mut framed = FramedStream::new(stream);
+    dispatch_loop(&mut framed, state, runner, executor, caller_role).await;
+}
+
+// ---------------------------------------------------------------------------
+// Vsock token authentication
+// ---------------------------------------------------------------------------
+
+/// Receive the first frame, parse the auth message, and validate the token.
+///
+/// Returns the granted `CallerRole` on success, or `None` if the frame is
+/// malformed or the token does not match the stored value.
+async fn authenticate_vsock_token(
+    framed: &mut FramedStream<impl AsyncRead + AsyncWrite + Unpin>,
+    token_path: &std::path::Path,
+) -> Option<CallerRole> {
+    #[derive(serde::Deserialize)]
+    struct AuthFrame {
+        #[serde(rename = "type")]
+        msg_type: String,
+        token: String,
+    }
+
+    let raw = framed.recv().await.ok()?;
+    let auth: AuthFrame = serde_json::from_slice(&raw).ok()?;
+    if auth.msg_type != "auth" {
+        return None;
+    }
+    crate::auth::validate_token_against_file(&auth.token, token_path)
+}
+
+// ---------------------------------------------------------------------------
+// Main dispatch loop (shared by Unix and vsock paths)
+// ---------------------------------------------------------------------------
+
+async fn dispatch_loop<S>(
+    framed: &mut FramedStream<S>,
+    state: DaemonState,
+    runner: Arc<dyn CommandRunner + Send + Sync>,
+    executor: Arc<dyn ActionExecutor>,
+    caller_role: CallerRole,
+) where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
     loop {
         let raw = match framed.recv().await {
             Ok(bytes) => bytes,
@@ -374,7 +461,7 @@ pub async fn connection_handler_with_executor(
             Ok(r) => r,
             Err(e) => {
                 if let Err(send_err) = send_error(
-                    &mut framed,
+                    framed,
                     "",
                     "validation_failure",
                     format!("unknown message type: {e}"),
@@ -391,7 +478,7 @@ pub async fn connection_handler_with_executor(
 
         let result = match &request {
             DaemonRequest::QueryState { request_id } => {
-                handle_query_state(&mut framed, Arc::clone(&runner), request_id).await
+                handle_query_state(framed, Arc::clone(&runner), request_id).await
             }
             DaemonRequest::Preview {
                 request_id,
@@ -399,7 +486,7 @@ pub async fn connection_handler_with_executor(
                 params,
             } => {
                 handle_preview(
-                    &mut framed,
+                    framed,
                     &state,
                     Arc::clone(&runner),
                     &caller_role,
@@ -416,7 +503,7 @@ pub async fn connection_handler_with_executor(
                 approval_hash,
             } => {
                 handle_execute(
-                    &mut framed,
+                    framed,
                     &state,
                     Arc::clone(&executor),
                     &caller_role,
@@ -433,7 +520,7 @@ pub async fn connection_handler_with_executor(
                 params,
             } => {
                 handle_query_action(
-                    &mut framed,
+                    framed,
                     Arc::clone(&executor),
                     &state.transactions,
                     &caller_role,
@@ -447,11 +534,11 @@ pub async fn connection_handler_with_executor(
                 request_id,
                 action_name,
                 params,
-            } => handle_describe(&mut framed, action_name, params, request_id).await,
+            } => handle_describe(framed, action_name, params, request_id).await,
             DaemonRequest::Cancel { job_id } => {
                 // MVP: cancel acknowledgement only. Active-job signaling is a follow-up.
                 send_error(
-                    &mut framed,
+                    framed,
                     job_id,
                     "not_implemented",
                     "cancel not yet implemented",
@@ -473,7 +560,7 @@ pub async fn connection_handler_with_executor(
 // ---------------------------------------------------------------------------
 
 async fn handle_query_state(
-    framed: &mut FramedStream<UnixStream>,
+    framed: &mut FramedStream<impl AsyncRead + AsyncWrite + Unpin>,
     runner: Arc<dyn CommandRunner + Send + Sync>,
     request_id: &str,
 ) -> Result<(), HandlerError> {
@@ -499,7 +586,7 @@ async fn handle_query_state(
 }
 
 async fn handle_query_action(
-    framed: &mut FramedStream<UnixStream>,
+    framed: &mut FramedStream<impl AsyncRead + AsyncWrite + Unpin>,
     executor: Arc<dyn ActionExecutor>,
     transactions: &crate::transactions::TransactionStore,
     caller_role: &CallerRole,
@@ -705,7 +792,7 @@ async fn handle_query_action(
 /// `ActionMechanism` as a shell-style string so callers can show the user
 /// exactly what will run.
 async fn handle_describe(
-    framed: &mut FramedStream<UnixStream>,
+    framed: &mut FramedStream<impl AsyncRead + AsyncWrite + Unpin>,
     action_name: &str,
     params: &Value,
     request_id: &str,
@@ -771,7 +858,7 @@ async fn handle_describe(
 }
 
 async fn handle_preview(
-    framed: &mut FramedStream<UnixStream>,
+    framed: &mut FramedStream<impl AsyncRead + AsyncWrite + Unpin>,
     state: &DaemonState,
     runner: Arc<dyn CommandRunner + Send + Sync>,
     caller_role: &CallerRole,
@@ -881,7 +968,7 @@ async fn handle_preview(
 
 #[allow(clippy::too_many_arguments)]
 async fn handle_execute(
-    framed: &mut FramedStream<UnixStream>,
+    framed: &mut FramedStream<impl AsyncRead + AsyncWrite + Unpin>,
     state: &DaemonState,
     executor: Arc<dyn ActionExecutor>,
     caller_role: &CallerRole,
@@ -1098,7 +1185,7 @@ async fn handle_execute(
 /// Stderr is read concurrently via a spawned task to prevent deadlock when
 /// the OS stderr buffer fills before stdout is exhausted.
 async fn stream_command_with_progress(
-    framed: &mut FramedStream<UnixStream>,
+    framed: &mut FramedStream<impl AsyncRead + AsyncWrite + Unpin>,
     job_id: &str,
     program: &'static str,
     args: &[String],
@@ -1167,7 +1254,7 @@ async fn stream_command_with_progress(
 /// Sends `JobProgress` frames announcing the attempt and its outcome.
 /// Send failures are logged but do not abort the rollback.
 async fn attempt_rollback_if_needed(
-    framed: &mut FramedStream<UnixStream>,
+    framed: &mut FramedStream<impl AsyncRead + AsyncWrite + Unpin>,
     executor: &Arc<dyn ActionExecutor>,
     job_id: &str,
     action_name: &str,
@@ -1279,7 +1366,7 @@ fn format_job_history(records: &[sysknife_types::TransactionRecord]) -> String {
 }
 
 async fn send_response(
-    framed: &mut FramedStream<UnixStream>,
+    framed: &mut FramedStream<impl AsyncRead + AsyncWrite + Unpin>,
     response: &DaemonResponse,
 ) -> Result<(), HandlerError> {
     let json = serde_json::to_vec(response)?;
@@ -1287,7 +1374,7 @@ async fn send_response(
 }
 
 async fn send_error(
-    framed: &mut FramedStream<UnixStream>,
+    framed: &mut FramedStream<impl AsyncRead + AsyncWrite + Unpin>,
     request_id: &str,
     category: &str,
     message: impl Into<String>,
@@ -1771,5 +1858,35 @@ mod tests {
         let out = handle.await.unwrap();
         assert_eq!(out.exit_code, 0);
         assert!(out.stdout.contains("hello from stream"));
+    }
+
+    // ------------------------------------------------------------------
+    // stream-type agnosticism (vsock / duplex)
+    // ------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn connection_handler_accepts_duplex_stream() {
+        // Proves the handler works with any AsyncRead+AsyncWrite stream,
+        // not only UnixStream. This is the key invariant enabling vsock support.
+        let (client, server) = tokio::io::duplex(4 * 1024 * 1024);
+        let dir = tempdir().unwrap();
+        let state = test_state(&dir);
+        tokio::spawn(connection_handler(
+            server,
+            state,
+            runner(),
+            CallerRole::Observer,
+        ));
+
+        let mut framed = FramedStream::new(client);
+        let req = json!({"type": "query_state", "request_id": "duplex-r1"});
+        framed
+            .send(&serde_json::to_vec(&req).unwrap())
+            .await
+            .unwrap();
+        let raw = framed.recv().await.unwrap();
+        let resp: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+        assert_eq!(resp["type"], "state_response");
+        assert_eq!(resp["request_id"], "duplex-r1");
     }
 }

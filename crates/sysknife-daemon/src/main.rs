@@ -7,7 +7,7 @@ use sysknife_core::{
 use sysknife_daemon::dispatcher::{connection_handler, resolve_caller_role};
 use sysknife_daemon::state::{DaemonConfig, DaemonState};
 use sysknife_daemon::state_collector::RealCommandRunner;
-use sysknife_daemon::transport::grpc::ListenTarget;
+use sysknife_daemon::transport::grpc::{bind_unix_listener, ListenTarget};
 use tokio::net::UnixListener;
 use tokio::sync::Semaphore;
 
@@ -30,20 +30,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|_| DEFAULT_DATABASE_PATH.to_string());
 
     let listen_target = ListenTarget::try_from_uri(&listen_uri)?;
-    let config = DaemonConfig::new(listen_target, &database_path);
-    let runtime = DaemonState::bootstrap(config)?;
-
-    // Convert the std UnixListener from bootstrap into a tokio UnixListener.
-    let std_listener = runtime.listener;
-    std_listener.set_nonblocking(true)?;
-    let listener = UnixListener::from_std(std_listener)?;
+    let config = DaemonConfig::new(listen_target.clone(), &database_path);
+    let state = DaemonState::open(config)?;
 
     let runner = Arc::new(RealCommandRunner);
-    let state = runtime.state;
     let semaphore = Arc::new(Semaphore::new(MAX_CONNECTIONS));
 
     eprintln!("[sysknife-daemon] listening on {listen_uri}");
 
+    match listen_target {
+        ListenTarget::Unix(path) => {
+            let std_listener = bind_unix_listener(&ListenTarget::Unix(path))?;
+            std_listener.set_nonblocking(true)?;
+            let listener = UnixListener::from_std(std_listener)?;
+            unix_accept_loop(listener, state, runner, semaphore).await;
+        }
+        #[cfg(target_os = "linux")]
+        ListenTarget::Vsock { port } => {
+            use sysknife_daemon::transport::grpc::bind_vsock_listener;
+            let listener = bind_vsock_listener(port)?;
+            vsock_accept_loop(listener, state, runner, semaphore).await;
+        }
+    }
+
+    Ok(())
+}
+
+async fn unix_accept_loop(
+    listener: UnixListener,
+    state: sysknife_daemon::state::DaemonState,
+    runner: Arc<RealCommandRunner>,
+    semaphore: Arc<Semaphore>,
+) {
     loop {
         tokio::select! {
             accept = listener.accept() => {
@@ -56,7 +74,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 let runner = Arc::clone(&runner);
                                 tokio::spawn(async move {
                                     connection_handler(stream, state, runner, role).await;
-                                    drop(permit); // release slot when handler finishes
+                                    drop(permit);
                                 });
                             }
                             Err(_) => {
@@ -64,19 +82,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     "[sysknife-daemon] connection limit ({MAX_CONNECTIONS}) reached; \
                                      dropping new connection"
                                 );
-                                // Dropping stream closes the connection immediately.
                             }
                         }
                     }
                     Err(e) => {
                         use std::io::ErrorKind;
                         match e.kind() {
-                            // Transient: connection aborted before accept completed.
                             ErrorKind::ConnectionAborted | ErrorKind::ConnectionReset => {
                                 eprintln!("[sysknife-daemon] transient accept error: {e}");
                             }
-                            // Permanent: file descriptor exhaustion or bad socket.
-                            // Continuing would spin at 100 % CPU; shut down instead.
                             _ => {
                                 eprintln!("[sysknife-daemon] fatal accept error, shutting down: {e}");
                                 break;
@@ -91,8 +105,52 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+}
 
-    Ok(())
+#[cfg(target_os = "linux")]
+async fn vsock_accept_loop(
+    mut listener: tokio_vsock::VsockListener,
+    state: sysknife_daemon::state::DaemonState,
+    runner: Arc<RealCommandRunner>,
+    semaphore: Arc<Semaphore>,
+) {
+    use sysknife_daemon::dispatcher::vsock_connection_handler;
+
+    loop {
+        tokio::select! {
+            accept = listener.accept() => {
+                match accept {
+                    Ok((stream, addr)) => {
+                        eprintln!("[sysknife-daemon] vsock connection from cid={}", addr.cid());
+                        match Arc::clone(&semaphore).try_acquire_owned() {
+                            Ok(permit) => {
+                                let state = state.clone();
+                                let runner = Arc::clone(&runner);
+                                tokio::spawn(async move {
+                                    vsock_connection_handler(stream, state, runner).await;
+                                    drop(permit);
+                                });
+                            }
+                            Err(_) => {
+                                eprintln!(
+                                    "[sysknife-daemon] connection limit ({MAX_CONNECTIONS}) reached; \
+                                     dropping vsock connection"
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[sysknife-daemon] fatal vsock accept error, shutting down: {e}");
+                        break;
+                    }
+                }
+            }
+            _ = tokio::signal::ctrl_c() => {
+                eprintln!("[sysknife-daemon] shutting down");
+                break;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
