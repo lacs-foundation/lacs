@@ -53,7 +53,7 @@ impl TransactionStore {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, TransactionStoreError> {
         let path = path.as_ref().to_path_buf();
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+            ensure_private_dir(parent)?;
         }
 
         let store = Self { path };
@@ -408,6 +408,23 @@ impl TransactionStore {
     }
 }
 
+/// Create `dir` and any missing parents with mode `0o700` (rwx owner only).
+///
+/// If the directory already exists, its mode is left untouched — the operator
+/// or packaging spec (`sysknife-tmpfiles.conf`) owns existing-directory policy.
+/// If the directory must be created here (e.g. dev contributor's first daemon
+/// run), we never produce a world-readable audit-log directory.
+fn ensure_private_dir(dir: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    if dir.exists() {
+        return Ok(());
+    }
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir)
+}
+
 fn row_to_record(row: &rusqlite::Row) -> Result<TransactionRecord, TransactionStoreError> {
     Ok(TransactionRecord {
         transaction_id: row.get(0)?,
@@ -433,7 +450,40 @@ fn deserialize_field<T: DeserializeOwned>(value: &str) -> Result<T, serde_json::
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
     use tempfile::tempdir;
+
+    #[test]
+    fn ensure_private_dir_creates_with_0700_mode() {
+        let root = tempdir().unwrap();
+        let target = root.path().join("a/b/c");
+        ensure_private_dir(&target).unwrap();
+        assert!(target.is_dir());
+        let mode = std::fs::metadata(&target).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "leaf dir must be 0o700, got {mode:o}");
+    }
+
+    #[test]
+    fn ensure_private_dir_is_idempotent_and_does_not_widen_existing_mode() {
+        let root = tempdir().unwrap();
+        let target = root.path().join("preexisting");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)).unwrap();
+        ensure_private_dir(&target).unwrap();
+        // Existing directory: we don't touch its mode.
+        let mode = std::fs::metadata(&target).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o755);
+    }
+
+    #[test]
+    fn open_creates_parent_with_private_mode() {
+        let root = tempdir().unwrap();
+        let db_path = root.path().join("nested/dirs/daemon.sqlite");
+        let _store = TransactionStore::open(&db_path).unwrap();
+        let parent = db_path.parent().unwrap();
+        let mode = std::fs::metadata(parent).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
+    }
 
     fn queued_transaction() -> NewTransaction {
         NewTransaction {

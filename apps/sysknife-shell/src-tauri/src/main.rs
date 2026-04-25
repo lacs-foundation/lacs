@@ -24,8 +24,7 @@ fn spawn_daemon_health_poller(app: tauri::AppHandle) {
 
     tauri::async_runtime::spawn(async move {
         let socket_path = {
-            let uri = std::env::var("SYSKNIFE_LISTEN_URI")
-                .unwrap_or_else(|_| sysknife_core::DEFAULT_LISTEN_URI.to_string());
+            let uri = sysknife_core::default_listen_uri();
             uri.strip_prefix("unix://").unwrap_or(&uri).to_string()
         };
 

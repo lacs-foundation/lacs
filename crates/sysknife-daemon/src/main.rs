@@ -1,9 +1,6 @@
 use std::sync::Arc;
 
-use sysknife_core::{
-    config::LacsConfig,
-    {DEFAULT_DATABASE_PATH, DEFAULT_LISTEN_URI},
-};
+use sysknife_core::{config::LacsConfig, default_database_path, default_listen_uri};
 use sysknife_daemon::dispatcher::{connection_handler, resolve_caller_role};
 use sysknife_daemon::state::{DaemonConfig, DaemonState};
 use sysknife_daemon::state_collector::RealCommandRunner;
@@ -24,10 +21,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Must run before the tokio runtime starts worker threads.
     LacsConfig::load().apply_defaults_to_env();
 
-    let listen_uri =
-        std::env::var("SYSKNIFE_LISTEN_URI").unwrap_or_else(|_| DEFAULT_LISTEN_URI.to_string());
-    let database_path = std::env::var("SYSKNIFE_DATABASE_PATH")
-        .unwrap_or_else(|_| DEFAULT_DATABASE_PATH.to_string());
+    let listen_uri = default_listen_uri();
+    let database_path = default_database_path();
 
     let listen_target = ListenTarget::try_from_uri(&listen_uri)?;
     let config = DaemonConfig::new(listen_target.clone(), &database_path);
