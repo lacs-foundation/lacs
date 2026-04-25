@@ -27,6 +27,7 @@ use crate::provider::{
 };
 use crate::providers::openai_adapter::AsyncOpenAiAdapter;
 use crate::providers::rig_adapter::RigCompletionAdapter;
+use crate::sanitize::sanitize_tool_output;
 use crate::state_client::StateClient;
 use rig::client::CompletionClient;
 use serde::Serialize;
@@ -812,7 +813,8 @@ impl LlmPlanner {
                                 tool_results.push(ToolResultBlock {
                                     tool_use_id: id.clone(),
                                     call_id: call_id.clone(),
-                                    content: state_json,
+                                    content: sanitize_tool_output("get_system_state", &state_json)
+                                        .into_inner(),
                                     is_error: false,
                                 });
                             }
@@ -925,15 +927,18 @@ impl LlmPlanner {
                             // query_current_user is served from the client env —
                             // no daemon round-trip needed.
                             "query_current_user" => {
-                                let content = match self.state_client.current_user() {
-                                    Ok(u) => format!("Current user: {u}"),
-                                    Err(e) => format!("Error: cannot determine current user: {e}"),
+                                let (content, is_error) = match self.state_client.current_user() {
+                                    Ok(u) => (format!("Current user: {u}"), false),
+                                    Err(e) => {
+                                        (format!("Error: cannot determine current user: {e}"), true)
+                                    }
                                 };
                                 tool_results.push(ToolResultBlock {
                                     tool_use_id: id.clone(),
                                     call_id: call_id.clone(),
-                                    content,
-                                    is_error: false,
+                                    content: sanitize_tool_output("query_current_user", &content)
+                                        .into_inner(),
+                                    is_error,
                                 });
                             }
                             other_name => {
@@ -946,15 +951,27 @@ impl LlmPlanner {
                                                 tool_results.push(ToolResultBlock {
                                                     tool_use_id: id.clone(),
                                                     call_id: call_id.clone(),
-                                                    content: output,
+                                                    content: sanitize_tool_output(
+                                                        other_name, &output,
+                                                    )
+                                                    .into_inner(),
                                                     is_error: false,
                                                 });
                                             }
                                             Err(e) => {
+                                                // Daemon errors are trusted (they come from us
+                                                // and don't include attacker-controlled bytes
+                                                // beyond the action name they reflect back), but
+                                                // wrap anyway: it's a uniform contract for the
+                                                // model and costs nothing.
                                                 tool_results.push(ToolResultBlock {
                                                     tool_use_id: id.clone(),
                                                     call_id: call_id.clone(),
-                                                    content: format!("Query failed: {e}"),
+                                                    content: sanitize_tool_output(
+                                                        other_name,
+                                                        &format!("Query failed: {e}"),
+                                                    )
+                                                    .into_inner(),
                                                     is_error: true,
                                                 });
                                             }
