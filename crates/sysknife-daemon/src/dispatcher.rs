@@ -45,6 +45,33 @@ use crate::{
 };
 
 // ---------------------------------------------------------------------------
+// Tunable constants
+// ---------------------------------------------------------------------------
+
+/// Maximum wait for the first auth frame on a vsock connection, in seconds.
+///
+/// A peer that opens the socket but never writes is either firewalled,
+/// confused, or hostile.  Ten seconds is comfortably longer than any sane
+/// auth round-trip (~ms) and short enough that a stuck guest does not
+/// sit on a connection slot indefinitely under [`MAX_CONNECTIONS`] backpressure.
+const VSOCK_AUTH_FRAME_TIMEOUT_SECS: u64 = 10;
+
+/// Default number of history rows returned by `query_history` when the
+/// caller does not specify `limit`.
+///
+/// 20 is a single-screenful of recent activity that mirrors the CLI's
+/// `sysknife history` default — large enough to be useful for triage,
+/// small enough to keep the response under the IPC frame budget.
+const DEFAULT_HISTORY_LIMIT: u32 = 20;
+
+/// How many leading characters of a transaction UUID to render in the
+/// human-readable history listing.  UUID v4 has 122 bits of entropy; even
+/// at 80,000 entries the chance of collision in the first 8 hex chars
+/// (32 bits) is < 1%, which is fine for a forensic-only display where the
+/// full ID is also recorded.
+const TRANSACTION_ID_DISPLAY_PREFIX_LEN: usize = 8;
+
+// ---------------------------------------------------------------------------
 // Wire types — Shell → Daemon
 // ---------------------------------------------------------------------------
 
@@ -449,10 +476,13 @@ async fn authenticate_vsock_token(
         token: String,
     }
 
-    let raw = tokio::time::timeout(std::time::Duration::from_secs(10), framed.recv())
-        .await
-        .ok()? // timeout expired
-        .ok()?; // framing error
+    let raw = tokio::time::timeout(
+        std::time::Duration::from_secs(VSOCK_AUTH_FRAME_TIMEOUT_SECS),
+        framed.recv(),
+    )
+    .await
+    .ok()? // timeout expired
+    .ok()?; // framing error
     let auth: AuthFrame = serde_json::from_slice(&raw).ok()?;
     if auth.msg_type != "auth" {
         return None;
@@ -668,7 +698,7 @@ async fn handle_query_action(
                     .await;
                 }
             },
-            None => 20,
+            None => DEFAULT_HISTORY_LIMIT,
         };
         let status_filter = params
             .get("status_filter")
@@ -1490,7 +1520,10 @@ fn format_job_history(records: &[sysknife_types::TransactionRecord]) -> String {
     for r in records {
         output.push_str(&format!(
             "  {}  {:30}  {:12}  {}\n",
-            r.transaction_id.chars().take(8).collect::<String>(),
+            r.transaction_id
+                .chars()
+                .take(TRANSACTION_ID_DISPLAY_PREFIX_LEN)
+                .collect::<String>(),
             r.action_name,
             format!("{:?}", r.status).to_lowercase(),
             r.summary,
