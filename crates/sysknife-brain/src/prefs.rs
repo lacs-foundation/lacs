@@ -56,6 +56,29 @@ const SENSITIVE_PREFIXES: &[&str] = &[
     "pypi-", // PyPI API token
 ];
 
+/// Async wrapper for [`read_prefs`] that runs the file read on the blocking
+/// pool — call from `async fn` paths so the executor reactor is not parked on
+/// a slow filesystem.
+pub async fn read_prefs_async(path: std::path::PathBuf) -> Result<Option<String>, io::Error> {
+    tokio::task::spawn_blocking(move || read_prefs(&path))
+        .await
+        .map_err(|e| io::Error::other(format!("spawn_blocking join failed: {e}")))?
+}
+
+/// Async wrapper for [`append_pref`].
+pub async fn append_pref_async(path: std::path::PathBuf, fact: String) -> Result<(), io::Error> {
+    tokio::task::spawn_blocking(move || append_pref(&path, &fact))
+        .await
+        .map_err(|e| io::Error::other(format!("spawn_blocking join failed: {e}")))?
+}
+
+/// Async wrapper for [`remove_pref`].
+pub async fn remove_pref_async(path: std::path::PathBuf, fact: String) -> Result<bool, io::Error> {
+    tokio::task::spawn_blocking(move || remove_pref(&path, &fact))
+        .await
+        .map_err(|e| io::Error::other(format!("spawn_blocking join failed: {e}")))?
+}
+
 /// Read the user preferences file. Returns `Ok(None)` if the file does not
 /// exist or is empty; returns `Ok(Some(content))` on success; propagates I/O
 /// errors other than `NotFound`.

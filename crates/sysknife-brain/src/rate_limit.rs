@@ -84,12 +84,33 @@ impl RateLimiter {
         }
     }
 
+    /// Async wrapper that runs [`check_and_consume`] on the blocking pool.
+    ///
+    /// Use this from `async fn` paths.  The body holds a `Mutex` guard while
+    /// reading and writing the on-disk timestamp file; on a slow or contended
+    /// filesystem (NFS, encrypted home) this can take long enough that
+    /// blocking the tokio reactor would stall every other in-flight task.
+    pub async fn check_and_consume_async(self: std::sync::Arc<Self>) -> Result<(), u64> {
+        tokio::task::spawn_blocking(move || self.check_and_consume())
+            .await
+            .unwrap_or_else(|e| {
+                // Join error means the blocking thread panicked. Fail open —
+                // the rate limit is a soft guard, not a security boundary.
+                eprintln!(
+                    "[sysknife-brain] rate-limit: blocking task panicked: {e} — failing open"
+                );
+                Ok(())
+            })
+    }
+
     /// Check whether the caller is within the rate window and, if so, record
     /// this call.
     ///
     /// Returns `Ok(())` when the call is allowed, or `Err(retry_after_secs)`
     /// when the window is full. `retry_after_secs` is the number of seconds
     /// until the oldest call in the current window ages out (always >= 1).
+    ///
+    /// Prefer [`check_and_consume_async`] from `async fn` call sites.
     pub fn check_and_consume(&self) -> Result<(), u64> {
         let _guard = self.lock.lock().unwrap_or_else(|e| {
             eprintln!(

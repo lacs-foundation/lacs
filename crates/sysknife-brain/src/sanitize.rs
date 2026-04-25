@@ -54,7 +54,52 @@ pub const MAX_OUTPUT_BYTES: usize = 8 * 1024;
 pub struct SanitizedToolOutput(String);
 
 impl SanitizedToolOutput {
+    /// Consume the envelope and produce a `ToolResultBlock` ready to feed
+    /// back to the LLM.
+    ///
+    /// This is the **only** sanctioned way to turn a `SanitizedToolOutput`
+    /// into a wire-bound message — the conversion is fused with the
+    /// envelope unwrap so a caller cannot accidentally pass the raw
+    /// `String` somewhere else (logging, persistence, a different role's
+    /// content) where the spotlighting envelope would be lost.
+    pub fn into_tool_result(
+        self,
+        tool_use_id: String,
+        call_id: Option<String>,
+    ) -> crate::provider::ToolResultBlock {
+        self.into_tool_result_with_error(tool_use_id, call_id, false)
+    }
+
+    /// As [`into_tool_result`], but flagged with `is_error = true` so the
+    /// LLM treats the message as a failure response.
+    pub fn into_error_tool_result(
+        self,
+        tool_use_id: String,
+        call_id: Option<String>,
+    ) -> crate::provider::ToolResultBlock {
+        self.into_tool_result_with_error(tool_use_id, call_id, true)
+    }
+
+    fn into_tool_result_with_error(
+        self,
+        tool_use_id: String,
+        call_id: Option<String>,
+        is_error: bool,
+    ) -> crate::provider::ToolResultBlock {
+        crate::provider::ToolResultBlock {
+            tool_use_id,
+            call_id,
+            content: self.0,
+            is_error,
+        }
+    }
+
     /// Consume the envelope and return the wrapped string.
+    ///
+    /// **Prefer [`into_tool_result`].**  The raw string lacks any compile-
+    /// time guarantee that it will be re-wrapped in a `ToolResultBlock`;
+    /// this method exists only for tests and one-off interop with code that
+    /// genuinely needs the unwrapped envelope (e.g. snapshot tests).
     pub fn into_inner(self) -> String {
         self.0
     }

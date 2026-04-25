@@ -35,13 +35,21 @@ pub const DEFAULT_MAX_TURNS: usize = 10;
 // Types
 // ---------------------------------------------------------------------------
 
-#[derive(Clone)]
+/// Configuration for the planning LLM.
+///
+/// **Not `Clone`.**  The inner [`ProviderConfig`] holds the API key in
+/// plaintext (rig's client builders take `String`, not `SecretString`), so
+/// every clone would silently materialise an extra copy of the secret in
+/// memory.  Keeping `BrainConfig` move-only forces every consumer to think
+/// about who owns the key — the planner consumes it once in
+/// `LlmPlanner::from_config` and the value is dropped immediately afterwards.
 pub struct BrainConfig {
     pub(crate) provider: ProviderConfig,
     pub max_turns: usize,
 }
 
-#[derive(Clone)]
+/// Per-provider client configuration.  See [`BrainConfig`] for why this is
+/// not `Clone`.
 #[allow(clippy::upper_case_acronyms)]
 pub(crate) enum ProviderConfig {
     Anthropic {

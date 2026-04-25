@@ -675,6 +675,56 @@ mod tests {
     }
 
     #[test]
+    fn inserted_forged_row_breaks_chain() {
+        // Counterpart to `deleted_middle_row_…`. An attacker who managed to
+        // insert a fabricated row between two genuine ones still cannot
+        // produce a `chain_hash` that links the insertion back to the prior
+        // row's hash, so verification must flag the forgery at the inserted
+        // row (or at the immediately following genuine row whose
+        // `prev_chain_hash` no longer matches its real predecessor).
+        let key = fixed_key();
+        let mut rows = build_chain(&key, 3);
+
+        // Splice in a new row between seq=1 and seq=2 with a fabricated hash.
+        let forged = ChainRow {
+            seq: 2,
+            key_id: CURRENT_KEY_ID.to_string(),
+            transaction_id: "tx-forged".to_string(),
+            request_id: "req-forged".to_string(),
+            request_hash: "hash-forged".to_string(),
+            action_name: "InstallFlatpak".to_string(),
+            risk_level: RiskLevel::Medium,
+            summary: "Forged row".to_string(),
+            approval_id: None,
+            warnings_json: "[]".to_string(),
+            created_at: "2026-04-25T13:00:00Z".to_string(),
+            // Plausible prev_chain_hash chosen to look intact at boundary.
+            prev_chain_hash: rows[0].chain_hash.clone(),
+            // Not a real HMAC — verification must reject this.
+            chain_hash: "0".repeat(HASH_HEX_LEN),
+        };
+
+        // Renumber the genuine seq=2/3 rows so seq is still 1..=4.
+        let mut rest: Vec<ChainRow> = rows.split_off(1);
+        for r in rest.iter_mut() {
+            r.seq += 1;
+        }
+        rows.push(forged);
+        rows.extend(rest);
+
+        let outcome = verify_chain(&key, &rows);
+        match outcome {
+            VerifyOutcome::Broken {
+                first_broken_seq, ..
+            } => assert!(
+                first_broken_seq == 2 || first_broken_seq == 3,
+                "verifier must flag the inserted row or the row that follows it (got {first_broken_seq})"
+            ),
+            other => panic!("expected Broken, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn wrong_key_id_yields_cannot_verify() {
         let key = fixed_key();
         let mut rows = build_chain(&key, 2);

@@ -317,6 +317,18 @@ impl TransactionStore {
 
     /// Cancel all `Queued` transactions whose `created_at` timestamp is older
     /// than the 15-minute TTL window.  Returns the number of rows affected.
+    ///
+    /// **State-machine safety:** the WHERE clause pins `status = Queued`
+    /// before applying `Queued → Canceled`, which is the only legal
+    /// transition reachable from `Queued` other than `Running`. A row that
+    /// has progressed to `Running` (or any terminal state) in between the
+    /// TTL match and our UPDATE is skipped because the predicate no longer
+    /// matches it. This makes the bulk SQL semantically equivalent to
+    /// fetching each candidate, building a `JobStateMachine`, and calling
+    /// `cancel()` on it — but in a single statement so we don't race ourselves
+    /// when many rows expire at once. The
+    /// `cleanup_stale_queued_does_not_clobber_running_rows` regression test
+    /// in `tests/coverage_gaps.rs` pins this guarantee.
     pub fn cleanup_stale_queued(&self) -> Result<u64, TransactionStoreError> {
         let conn = self.connection()?;
         let canceled_json = serialize_field(&JobState::Canceled)?;
