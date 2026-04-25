@@ -160,21 +160,6 @@ impl AuditKey {
     }
 }
 
-/// Default path for the audit key in dev / non-systemd runs.
-///
-/// Resolution mirrors [`sysknife_core::default_database_path`]:
-/// `$XDG_STATE_HOME/sysknife/audit-key` then `$HOME/.local/state/sysknife/audit-key`.
-/// Production deployments override with `SYSKNIFE_AUDIT_KEY_PATH` (set by the
-/// systemd unit to `/etc/sysknife/audit-key`).
-pub fn default_audit_key_path() -> PathBuf {
-    if let Ok(env_path) = std::env::var("SYSKNIFE_AUDIT_KEY_PATH") {
-        return PathBuf::from(env_path);
-    }
-    let parent = sysknife_core::default_database_path();
-    let dir = parent.parent().unwrap_or_else(|| Path::new("."));
-    dir.join("audit-key")
-}
-
 /// Generate a 32-byte random key and write it to `path` with mode `0o600`.
 /// Parent directory is created with mode `0o700` if missing.
 fn generate_key_at(path: &Path) -> Result<(), AuditKeyError> {
@@ -282,12 +267,29 @@ impl<'a> ChainContent<'a> {
     }
 }
 
-/// Append `tag\x1Evalue\x1F` to `buf`, escaping NUL bytes in `value`.
+/// Append `tag<RS>value<US>` to `buf`, escaping any byte that could otherwise
+/// alias one of the framing characters or another escape sequence.
+///
+/// The escape table is **prefix-free**: every escape starts with `\` (0x5C)
+/// followed by a tag that cannot itself be the start of a different escape.
+/// Concretely:
+///
+/// | Raw byte | Escape       |
+/// |---------:|--------------|
+/// | `\\`     | `\\\\`       |
+/// | `\x00`   | `\\0`        |
+/// | `\x1E`   | `\\1E`       |
+/// | `\x1F`   | `\\1F`       |
+///
+/// The `\\` escape MUST come first: without it, a field value containing the
+/// literal two-byte sequence `\` + `0` would canonicalise to the same bytes
+/// as a raw NUL and produce an HMAC collision.
 fn push_field(buf: &mut Vec<u8>, tag: &str, value: &str) {
     buf.extend_from_slice(tag.as_bytes());
     buf.push(0x1E); // RS — record separator between tag and value
     for b in value.bytes() {
         match b {
+            b'\\' => buf.extend_from_slice(b"\\\\"),
             0x00 => buf.extend_from_slice(b"\\0"),
             0x1E => buf.extend_from_slice(b"\\1E"),
             0x1F => buf.extend_from_slice(b"\\1F"),
@@ -502,6 +504,42 @@ mod tests {
         // Raw NUL must NOT appear; escape sequence must.
         assert!(!bytes.contains(&0x00));
         assert!(String::from_utf8_lossy(&bytes).contains("before\\0after"));
+    }
+
+    /// Red-team finding F1: an attacker who could craft a row with
+    /// `summary = "before\\0after"` (literal backslash + zero) must NOT
+    /// produce the same canonical bytes as one with raw `\x00`. Without
+    /// the `\\` → `\\\\` escape, the two collide and the attacker can
+    /// substitute one for the other while the chain hash matches.
+    #[test]
+    fn literal_backslash_zero_does_not_collide_with_raw_nul_escape() {
+        let mut a = sample_content(1, "txa");
+        a.summary = "before\\0after"; // literal backslash + '0'
+        let mut b = sample_content(1, "txa");
+        b.summary = "before\0after"; // raw NUL
+        assert_ne!(
+            a.canonical_bytes(),
+            b.canonical_bytes(),
+            "F1 collision: backslash escape must run before NUL escape"
+        );
+    }
+
+    fn key_for_collision_test() -> AuditKey {
+        AuditKey::from_bytes(vec![0xab; 32])
+    }
+
+    #[test]
+    fn literal_backslash_zero_chain_hash_differs_from_raw_nul() {
+        let key = key_for_collision_test();
+        let mut a = sample_content(1, "txa");
+        a.summary = "before\\0after";
+        let mut b = sample_content(1, "txa");
+        b.summary = "before\0after";
+        assert_ne!(
+            key.chain_hash(&a, ""),
+            key.chain_hash(&b, ""),
+            "F1: HMAC must distinguish escape from raw byte"
+        );
     }
 
     // ── verify_chain ──────────────────────────────────────────────────────
