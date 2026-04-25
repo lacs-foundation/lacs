@@ -1,3 +1,4 @@
+use crate::policy::PolicyTable;
 use crate::transactions::{TransactionStore, TransactionStoreError};
 use crate::transport::grpc::{bind_unix_listener, ListenTarget, ListenTargetError};
 use std::os::unix::net::UnixListener;
@@ -22,6 +23,7 @@ impl DaemonConfig {
 pub struct DaemonState {
     pub config: DaemonConfig,
     pub transactions: TransactionStore,
+    pub policy: PolicyTable,
 }
 
 #[derive(Debug)]
@@ -40,11 +42,24 @@ pub enum DaemonStateError {
 }
 
 impl DaemonState {
+    /// Open the daemon state with no policy overrides (compile-time baseline).
+    /// Suitable for tests and dev runs.
     pub fn open(config: DaemonConfig) -> Result<Self, DaemonStateError> {
+        Self::open_with_policy(config, PolicyTable::empty())
+    }
+
+    /// Open the daemon state with an explicit policy table.
+    /// Production callers (`main.rs`) build the table from
+    /// `[policy.risk_overrides]` in `config.toml`.
+    pub fn open_with_policy(
+        config: DaemonConfig,
+        policy: PolicyTable,
+    ) -> Result<Self, DaemonStateError> {
         let transactions = TransactionStore::open(&config.database_path)?;
         Ok(Self {
             config,
             transactions,
+            policy,
         })
     }
 

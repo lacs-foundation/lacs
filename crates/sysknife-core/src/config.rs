@@ -39,6 +39,7 @@
 //! # ollama_think = false
 //! ```
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use serde::Deserialize;
@@ -54,6 +55,7 @@ use serde::Deserialize;
 pub struct LacsConfig {
     pub daemon: Option<DaemonSection>,
     pub llm: Option<LlmSection>,
+    pub policy: Option<PolicySection>,
 }
 
 /// `[daemon]` section.
@@ -64,6 +66,28 @@ pub struct DaemonSection {
     pub socket: Option<String>,
     /// SQLite database path. Maps to `SYSKNIFE_DATABASE_PATH`.
     pub database: Option<String>,
+}
+
+/// `[policy]` section. Currently holds per-action risk-level overrides.
+///
+/// See [`PolicySection::risk_overrides`] for semantics. Absent → no overrides
+/// (the daemon uses compile-time defaults from `sysknife-daemon::policy`).
+#[derive(Debug, Default, Deserialize)]
+pub struct PolicySection {
+    /// Per-action risk-level overrides. Map from action name → risk level
+    /// (`"Low"` | `"Medium"` | `"High"`). The daemon validates this map at
+    /// startup and rejects unknown action names or attempted downgrades.
+    ///
+    /// Overrides may only **raise** the minimum role required for an action
+    /// — never lower it. The compile-time default is a floor.
+    ///
+    /// Example:
+    ///
+    /// ```toml
+    /// [policy.risk_overrides]
+    /// InstallFlatpak = "High"   # require Admin in this org (default: Medium/Dev)
+    /// ```
+    pub risk_overrides: Option<HashMap<String, String>>,
 }
 
 /// `[llm]` section.

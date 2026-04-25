@@ -260,8 +260,12 @@ fn groups_for_pid(pid: u32, gid_map: &std::collections::HashMap<u32, String>) ->
 // Authorization helpers
 // ---------------------------------------------------------------------------
 
-fn authorize_action(caller: &CallerRole, action_name: &str) -> bool {
-    crate::policy::action_allowed(caller, action_name)
+fn authorize_action(
+    policy: &crate::policy::PolicyTable,
+    caller: &CallerRole,
+    action_name: &str,
+) -> bool {
+    policy.action_allowed(caller, action_name)
 }
 
 // ---------------------------------------------------------------------------
@@ -525,7 +529,7 @@ async fn dispatch_loop<S>(
                 handle_query_action(
                     framed,
                     Arc::clone(&executor),
-                    &state.transactions,
+                    &state,
                     action_name,
                     params,
                     request_id,
@@ -590,15 +594,17 @@ async fn handle_query_state(
 async fn handle_query_action(
     framed: &mut FramedStream<impl AsyncRead + AsyncWrite + Unpin>,
     executor: Arc<dyn ActionExecutor>,
-    transactions: &crate::transactions::TransactionStore,
+    state: &DaemonState,
     action_name: &str,
     params: &Value,
     request_id: &str,
 ) -> Result<(), HandlerError> {
-    use crate::policy::min_role_for_action;
+    let transactions = &state.transactions;
 
-    // Only allow Low-risk (Observer-level) actions.
-    let min_role = match min_role_for_action(action_name) {
+    // Honour `[policy.risk_overrides]`: an operator can RAISE a previously
+    // Low-risk action above Observer, in which case the unprivileged query
+    // path must reject it (matching the preview+execute path).
+    let min_role = match state.policy.min_role_for_action(action_name) {
         Some(role) => role,
         None => {
             return send_error(
@@ -862,7 +868,7 @@ async fn handle_preview(
         }
     };
 
-    if !authorize_action(caller_role, action_name) {
+    if !authorize_action(&state.policy, caller_role, action_name) {
         return send_error(
             framed,
             request_id,
@@ -971,7 +977,7 @@ async fn handle_execute(
         }
     };
 
-    if !authorize_action(caller_role, action_name) {
+    if !authorize_action(&state.policy, caller_role, action_name) {
         return send_error(
             framed,
             request_id,
