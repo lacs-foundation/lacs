@@ -47,7 +47,7 @@ export default function App() {
         setNeedsSetup(!status.providerConfigured);
       })
       .catch((err: unknown) => {
-        console.warn("[LACS] checkSetupStatus failed:", err);
+        console.warn("[sysknife-shell] checkSetupStatus failed:", err);
         dispatch({ type: "timeline_event", text: `Setup check failed: ${String(err)}`, kind: "warning" });
         // If the check fails (e.g. not running in Tauri), skip the wizard
         setNeedsSetup(false);
@@ -68,7 +68,7 @@ export default function App() {
         }
       })
       .catch((err: unknown) => {
-        console.warn("[LACS] getBrainConfig failed:", err);
+        console.warn("[sysknife-shell] getBrainConfig failed:", err);
         dispatch({ type: "timeline_event", text: `Config load failed: ${String(err)}`, kind: "warning" });
       });
   }, []);
@@ -98,7 +98,7 @@ export default function App() {
               }
             })
             .catch((err: unknown) => {
-              console.warn("[LACS] reviewExecution failed:", err);
+              console.warn("[sysknife-shell] reviewExecution failed:", err);
             });
           return;
         }
@@ -123,7 +123,7 @@ export default function App() {
         // Tauri event listener registration failed — log but don't mark the
         // daemon as unreachable; this is a local IPC setup error, not a sign
         // that the daemon process is down.
-        console.warn("[LACS] subscribeDaemonEvents setup failed:", err);
+        console.warn("[sysknife-shell] subscribeDaemonEvents setup failed:", err);
       });
 
     return () => {
@@ -182,7 +182,7 @@ export default function App() {
       try {
         await cancelJob(state.activeJobId);
       } catch (err: unknown) {
-        console.warn("[LACS] cancelJob failed:", err);
+        console.warn("[sysknife-shell] cancelJob failed:", err);
         dispatch({ type: "timeline_event", text: "Cancellation request failed — daemon will resolve the job eventually", kind: "warning" });
       }
     }
@@ -202,7 +202,7 @@ export default function App() {
       <main className="app-shell">
         <header className="app-header">
           <div>
-            <p className="eyebrow">LACS</p>
+            <p className="eyebrow">SysKnife</p>
             <h1>Linux Agent Control Standard</h1>
           </div>
         </header>
@@ -237,7 +237,7 @@ export default function App() {
     <main className="app-shell">
       <header className="app-header">
         <div>
-          <p className="eyebrow">LACS</p>
+          <p className="eyebrow">SysKnife</p>
           <h1>Linux Agent Control Standard</h1>
         </div>
         <div className="app-header__right">

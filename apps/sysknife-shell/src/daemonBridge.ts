@@ -113,7 +113,7 @@ export async function subscribeDaemonEvents(
 function requireTauriRuntime(): void {
   if (!isTauriRuntime()) {
     throw new Error(
-      "LACS Shell is not running inside a Tauri runtime. The daemon bridge is unavailable.",
+      "SysKnife Shell is not running inside a Tauri runtime. The daemon bridge is unavailable.",
     );
   }
 }

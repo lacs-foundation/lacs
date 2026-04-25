@@ -370,7 +370,7 @@ export function shellReducer(state: ShellState, action: ShellAction): ShellState
 
     default: {
       const exhaustiveCheck: never = action;
-      console.warn("[LACS] shellReducer received unknown action:", exhaustiveCheck);
+      console.warn("[sysknife-shell] shellReducer received unknown action:", exhaustiveCheck);
       return state;
     }
   }
