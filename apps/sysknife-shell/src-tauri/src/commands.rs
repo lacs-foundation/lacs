@@ -138,11 +138,11 @@ impl StateClient for DemoStateClient {
 // Shell command state
 // ---------------------------------------------------------------------------
 
-/// Read the daemon socket path from the environment (set by config.toml
-/// via `apply_defaults_to_env()`), falling back to the compile-time default.
+/// Read the daemon socket path. Honours `$SYSKNIFE_LISTEN_URI` (set by
+/// `apply_defaults_to_env()` from config.toml), then `$XDG_RUNTIME_DIR`, then
+/// a per-UID `/tmp` fallback. See [`sysknife_core::default_listen_uri`].
 fn resolve_socket_path() -> String {
-    let uri = std::env::var("SYSKNIFE_LISTEN_URI")
-        .unwrap_or_else(|_| sysknife_core::DEFAULT_LISTEN_URI.to_string());
+    let uri = sysknife_core::default_listen_uri();
     uri.strip_prefix("unix://").unwrap_or(&uri).to_string()
 }
 
