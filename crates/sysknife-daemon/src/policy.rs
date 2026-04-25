@@ -315,34 +315,18 @@ pub enum ApprovalError {
     },
 }
 
+/// Constant-time hash compare.
+///
+/// Internally constructs [`sysknife_types::RequestHash`] and
+/// [`ApprovalHash`] and forwards to `sysknife_types::approval_matches_request`
+/// — the canonical comparison.  The `&str` shape is kept because the
+/// dispatcher and a few tests hold raw strings; new code should construct
+/// the newtypes directly and skip this wrapper.
 pub fn approval_matches_request(request_hash: &str, approval_hash: &str) -> bool {
-    // Constant-time comparison to prevent timing oracles on credentials.
-    // The approval hash binds an Admin's signature to a specific request;
-    // a non-constant `==` would let a caller probe an oracle and forge a
-    // matching prefix byte-by-byte. The `is_empty` guard stays first so
-    // a missing/blank hash is rejected without further work; from there
-    // we require equal length, then run `ct_eq` over the bytes.
-    if request_hash.is_empty() || request_hash.len() != approval_hash.len() {
-        return false;
-    }
-    use subtle::ConstantTimeEq;
-    request_hash
-        .as_bytes()
-        .ct_eq(approval_hash.as_bytes())
-        .unwrap_u8()
-        == 1
-}
-
-/// Typed counterpart to [`approval_matches_request`] — takes
-/// [`RequestHash`](sysknife_types::RequestHash) and
-/// [`ApprovalHash`](sysknife_types::ApprovalHash) so the caller cannot swap
-/// the two arguments by mistake. New callers should prefer this; the
-/// `&str` form is kept for legacy daemon paths that still hold raw strings.
-pub fn approval_matches_request_typed(
-    request_hash: &sysknife_types::RequestHash,
-    approval_hash: &sysknife_types::ApprovalHash,
-) -> bool {
-    sysknife_types::approval_matches_request(request_hash, approval_hash)
+    sysknife_types::approval_matches_request(
+        &sysknife_types::RequestHash::new(request_hash.to_string()),
+        &sysknife_types::ApprovalHash::new(approval_hash.to_string()),
+    )
 }
 
 pub fn require_fresh_approval(
@@ -355,22 +339,6 @@ pub fn require_fresh_approval(
         Err(ApprovalError::StaleApproval {
             request_hash: request_hash.to_string(),
             approval_hash: approval_hash.to_string(),
-        })
-    }
-}
-
-/// Typed counterpart to [`require_fresh_approval`].  See
-/// [`approval_matches_request_typed`] for the rationale.
-pub fn require_fresh_approval_typed(
-    request_hash: &sysknife_types::RequestHash,
-    approval_hash: &sysknife_types::ApprovalHash,
-) -> Result<(), ApprovalError> {
-    if approval_matches_request_typed(request_hash, approval_hash) {
-        Ok(())
-    } else {
-        Err(ApprovalError::StaleApproval {
-            request_hash: request_hash.as_str().to_string(),
-            approval_hash: approval_hash.as_str().to_string(),
         })
     }
 }

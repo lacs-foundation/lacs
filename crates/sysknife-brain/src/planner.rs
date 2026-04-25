@@ -471,10 +471,13 @@ impl LlmPlanner {
 
     /// Attach a [`RateLimiter`] to cap LLM requests per 60-second window.
     ///
-    /// When set, `plan_intent` and `summarize` call `check_and_consume` before
-    /// forwarding the request to the LLM provider. If the window is full, they
-    /// return [`PlanningError::RateLimitExceeded`] with the number of seconds
-    /// until a slot opens.
+    /// When set, `plan_intent` and `summarize` call
+    /// [`check_and_consume_async`] before forwarding the request to the LLM
+    /// provider. If the window is full, they return
+    /// [`PlanningError::RateLimitExceeded`] with the number of seconds until
+    /// a slot opens.
+    ///
+    /// [`check_and_consume_async`]: crate::rate_limit::RateLimiter::check_and_consume_async
     ///
     /// [`RateLimiter`]: crate::rate_limit::RateLimiter
     pub fn with_rate_limiter(mut self, rl: crate::rate_limit::RateLimiter) -> Self {
