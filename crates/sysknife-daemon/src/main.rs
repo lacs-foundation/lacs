@@ -66,7 +66,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let listen_target = ListenTarget::try_from_uri(&listen_uri)?;
     let config = DaemonConfig::new(listen_target.clone(), &database_path);
-    let state = DaemonState::open_full(config, policy, forwarder)?;
+
+    // Storage backend selection (#147). Default: SQLite at the database path.
+    // `[storage] backend = "postgres"` connects to a managed Postgres (RDS,
+    // Cloud SQL, Azure Flexible, Supabase, Neon, CockroachDB Cloud, or
+    // self-hosted) — strongly recommended for production.
+    let state = match build_postgres_audit(lacs_config.storage.as_ref()).await {
+        Ok(Some(audit)) => {
+            eprintln!("[sysknife-daemon] storage: using Postgres backend (URL hidden)");
+            DaemonState::open_with_audit(config, policy, forwarder, audit)
+        }
+        Ok(None) => {
+            eprintln!(
+                "[sysknife-daemon] storage: using SQLite at {} \
+                 (production deployments should switch to [storage] backend = \"postgres\")",
+                database_path.display()
+            );
+            DaemonState::open_full(config, policy, forwarder)?
+        }
+        Err(e) => {
+            eprintln!("[sysknife-daemon] FATAL: postgres backend init failed: {e}");
+            return Err(e.into());
+        }
+    };
 
     let runner = Arc::new(RealCommandRunner);
     let semaphore = Arc::new(Semaphore::new(MAX_CONNECTIONS));
@@ -226,6 +248,79 @@ fn build_forwarder(
         host,
         facility: syslog.facility,
     })))
+}
+
+/// Construct the Postgres audit backend if `[storage] backend = "postgres"`.
+/// Returns `Ok(None)` if Postgres is not configured (caller falls back to SQLite).
+///
+/// All cloud providers (RDS, Cloud SQL, Azure Flexible, Supabase, Neon,
+/// CockroachDB Cloud, self-hosted) work through the same code path — the
+/// only knobs are URL, pool size, acquire timeout, and statement-cache
+/// capacity. See `docs/storage-cloud.md` for provider URL examples.
+async fn build_postgres_audit(
+    storage: Option<&sysknife_core::config::StorageSection>,
+) -> Result<Option<std::sync::Arc<dyn sysknife_daemon::store::AuditStore>>, std::io::Error> {
+    use sysknife_daemon::audit_chain;
+    use sysknife_daemon::store::postgres::PostgresConfig;
+    use sysknife_daemon::store::PostgresStore;
+
+    let Some(storage) = storage else {
+        return Ok(None);
+    };
+    if storage.backend.eq_ignore_ascii_case("sqlite") {
+        return Ok(None);
+    }
+    if !storage.backend.eq_ignore_ascii_case("postgres") {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "[storage] backend = {:?} unsupported; use \"sqlite\" or \"postgres\"",
+                storage.backend
+            ),
+        ));
+    }
+
+    let url = storage.url.as_deref().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "[storage] backend = \"postgres\" requires url = \"postgres://...\"",
+        )
+    })?;
+
+    let mut cfg = PostgresConfig {
+        url: url.to_string(),
+        ..PostgresConfig::default()
+    };
+    if let Some(pool) = storage.pool.as_ref() {
+        if let Some(n) = pool.max_connections {
+            cfg.max_connections = n;
+        }
+        if let Some(s) = pool.acquire_timeout_secs {
+            cfg.acquire_timeout = std::time::Duration::from_secs(s);
+        }
+        if let Some(c) = pool.statement_cache_capacity {
+            cfg.statement_cache_capacity = c;
+        }
+    }
+
+    // The Postgres backend uses the same on-disk audit key as SQLite for
+    // chain HMAC computation. Resolution mirrors `TransactionStore::open`:
+    // env var > sibling of `database_path` > production default.
+    let key_path = std::env::var("SYSKNIFE_AUDIT_KEY_PATH")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            sysknife_core::default_database_path()
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .join("audit-key")
+        });
+    let key = audit_chain::AuditKey::load_or_generate(&key_path)
+        .map_err(|e| std::io::Error::other(format!("audit key load failed: {e}")))?;
+
+    let store = PostgresStore::connect(&cfg, std::sync::Arc::new(key))
+        .await
+        .map_err(|e| std::io::Error::other(format!("postgres connect failed: {e}")))?;
+    Ok(Some(std::sync::Arc::new(store)))
 }
 
 #[cfg(test)]

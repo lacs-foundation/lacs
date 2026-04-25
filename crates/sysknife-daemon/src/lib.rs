@@ -10,6 +10,7 @@ pub mod policy;
 pub mod preview;
 pub mod state;
 pub mod state_collector;
+pub mod store;
 pub mod transactions;
 pub mod transport {
     pub mod framing;

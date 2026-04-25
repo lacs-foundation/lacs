@@ -200,7 +200,7 @@ async fn list_job_history_returns_recorded_transactions() {
 
     // Insert a transaction directly before spawning the handler.
     state
-        .transactions
+        .audit
         .record(NewTransaction {
             request_id: "req-history".into(),
             request_hash: "hash-history".into(),
@@ -210,6 +210,7 @@ async fn list_job_history_returns_recorded_transactions() {
             summary: "Stage system update".into(),
             warnings: vec![],
         })
+        .await
         .expect("record tx");
 
     let mut framed = spawn_handler_with_role(state, CallerRole::Observer).await;

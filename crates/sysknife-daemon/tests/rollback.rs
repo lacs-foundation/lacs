@@ -245,7 +245,7 @@ async fn failed_update_system_triggers_automatic_rollback() {
 async fn rollback_updates_transaction_store_to_rolled_back() {
     let dir = tempdir().unwrap();
     let state = test_state(&dir);
-    let store = state.transactions.clone();
+    let store = std::sync::Arc::clone(&state.audit);
     let executor: Arc<dyn ActionExecutor> = Arc::new(FailThenRollbackExecutor);
     let mut framed = spawn_handler_with_executor(state, executor).await;
 
@@ -260,7 +260,7 @@ async fn rollback_updates_transaction_store_to_rolled_back() {
         .to_string();
 
     // Verify the store records the final status as RolledBack.
-    let tx = store.get(&transaction_id).unwrap().unwrap();
+    let tx = store.get(&transaction_id).await.unwrap().unwrap();
     assert_eq!(
         tx.status,
         sysknife_types::JobState::RolledBack,
