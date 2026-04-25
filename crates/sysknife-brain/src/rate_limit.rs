@@ -170,3 +170,161 @@ impl RateLimiter {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    // Serialise env-var mutations so parallel test threads don't interfere.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn now_secs() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    }
+
+    #[test]
+    fn first_call_succeeds() {
+        let dir = tempfile::tempdir().unwrap();
+        let rl = RateLimiter::new(dir.path().join("rl.txt"), 10);
+        assert!(rl.check_and_consume().is_ok());
+    }
+
+    #[test]
+    fn calls_up_to_limit_all_succeed() {
+        let dir = tempfile::tempdir().unwrap();
+        let rl = RateLimiter::new(dir.path().join("rl.txt"), 3);
+        for i in 0..3 {
+            assert!(
+                rl.check_and_consume().is_ok(),
+                "call {i} should be within limit"
+            );
+        }
+    }
+
+    #[test]
+    fn call_over_limit_returns_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let rl = RateLimiter::new(dir.path().join("rl.txt"), 2);
+        rl.check_and_consume().unwrap();
+        rl.check_and_consume().unwrap();
+        let result = rl.check_and_consume();
+        assert!(
+            result.is_err(),
+            "third call on limit-2 limiter must return Err"
+        );
+    }
+
+    #[test]
+    fn retry_after_is_at_least_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let rl = RateLimiter::new(dir.path().join("rl.txt"), 1);
+        rl.check_and_consume().unwrap();
+        let retry = rl.check_and_consume().unwrap_err();
+        assert!(retry >= 1, "retry_after must be >= 1, got {retry}");
+    }
+
+    #[test]
+    fn absent_file_treated_as_empty() {
+        // Path in temp dir but never created — should succeed as if no prior calls.
+        let dir = tempfile::tempdir().unwrap();
+        let rl = RateLimiter::new(dir.path().join("nonexistent.txt"), 5);
+        assert!(rl.check_and_consume().is_ok());
+    }
+
+    #[test]
+    fn expired_timestamps_do_not_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rl.txt");
+        // Write timestamps from 90 seconds ago — all outside the 60-s window.
+        let stale = now_secs().saturating_sub(90);
+        let content = format!("{stale}\n{stale}\n{stale}\n");
+        std::fs::write(&path, &content).unwrap();
+
+        let rl = RateLimiter::new(path, 1);
+        // The 3 stale entries must not count; first fresh call should succeed.
+        assert!(
+            rl.check_and_consume().is_ok(),
+            "stale timestamps must not consume quota"
+        );
+    }
+
+    #[test]
+    fn in_window_timestamps_count_toward_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rl.txt");
+        // Write 2 timestamps from 5 seconds ago — both inside the window.
+        let recent = now_secs().saturating_sub(5);
+        let content = format!("{recent}\n{recent}\n");
+        std::fs::write(&path, &content).unwrap();
+
+        let rl = RateLimiter::new(path, 2);
+        // Already at limit — next call must fail.
+        let result = rl.check_and_consume();
+        assert!(
+            result.is_err(),
+            "pre-filled in-window timestamps must count"
+        );
+    }
+
+    #[test]
+    fn env_var_overrides_constructor_limit() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe { std::env::set_var("SYSKNIFE_MAX_RPM", "1") };
+        let dir = tempfile::tempdir().unwrap();
+        let rl = RateLimiter::new(dir.path().join("rl.txt"), 100);
+        // Effective limit is 1 (from env), not 100.
+        rl.check_and_consume().unwrap();
+        let result = rl.check_and_consume();
+        unsafe { std::env::remove_var("SYSKNIFE_MAX_RPM") };
+        assert!(result.is_err(), "env var SYSKNIFE_MAX_RPM=1 must cap at 1");
+    }
+
+    #[test]
+    fn zero_env_var_falls_back_to_constructor() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe { std::env::set_var("SYSKNIFE_MAX_RPM", "0") };
+        let dir = tempfile::tempdir().unwrap();
+        let rl = RateLimiter::new(dir.path().join("rl.txt"), 5);
+        // 0 is rejected; effective limit is 5.
+        unsafe { std::env::remove_var("SYSKNIFE_MAX_RPM") };
+        for i in 0..5 {
+            assert!(
+                rl.check_and_consume().is_ok(),
+                "call {i} must be within limit-5"
+            );
+        }
+        assert!(
+            rl.check_and_consume().is_err(),
+            "6th call must exceed limit-5"
+        );
+    }
+
+    #[test]
+    fn invalid_env_var_falls_back_to_constructor() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe { std::env::set_var("SYSKNIFE_MAX_RPM", "not_a_number") };
+        let dir = tempfile::tempdir().unwrap();
+        let rl = RateLimiter::new(dir.path().join("rl.txt"), 3);
+        unsafe { std::env::remove_var("SYSKNIFE_MAX_RPM") };
+        // Effective limit is 3 (constructor fallback).
+        for i in 0..3 {
+            assert!(rl.check_and_consume().is_ok(), "call {i} within limit-3");
+        }
+        assert!(
+            rl.check_and_consume().is_err(),
+            "4th call must exceed limit-3"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "max_per_minute must be at least 1")]
+    fn zero_max_per_minute_panics() {
+        let dir = tempfile::tempdir().unwrap();
+        RateLimiter::new(dir.path().join("rl.txt"), 0);
+    }
+}

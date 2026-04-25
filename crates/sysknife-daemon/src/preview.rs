@@ -217,3 +217,284 @@ fn preview_summary(action_name: &str, risk_level: &RiskLevel) -> String {
 
     format!("{action_name} preview ({risk})")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sysknife_types::{CallerRole, RiskLevel};
+
+    fn req(action: &str) -> RequestEnvelope {
+        RequestEnvelope {
+            action_name: action.to_string(),
+            request_id: "test-req".to_string(),
+            params: serde_json::Value::Null,
+            caller_role: CallerRole::Dev,
+            request_hash: "hash".to_string(),
+        }
+    }
+
+    #[test]
+    fn all_low_risk_actions() {
+        let actions = [
+            "GetSystemState",
+            "CollectDiagnostics",
+            "GetDeploymentHistory",
+            "ListDeployments",
+            "GetKernelArguments",
+            "GetPendingUpdates",
+            "SearchFlatpakApps",
+            "ListFlatpakRemotes",
+            "ListInstalledFlatpaks",
+            "GetFlatpakAppInfo",
+            "ListToolboxes",
+            "ListServices",
+            "GetServiceLogs",
+            "GetServiceStatus",
+            "ListTimers",
+            "GetFirewallState",
+            "ListUsers",
+            "ListGroups",
+            "ListPackageRepositories",
+            "ListContainers",
+            "GetContainerInfo",
+            "GetLayeredPackages",
+            "GetDiskUsage",
+            "ListProcesses",
+            "GetMemoryInfo",
+            "GetNetworkStatus",
+            "GetAuthorizedKeys",
+            "GetDateTime",
+            "ListJobHistory",
+        ];
+
+        for action in &actions {
+            let envelope = preview_action(
+                &req(action),
+                serde_json::Value::Null,
+                serde_json::Value::Null,
+            );
+            assert_eq!(
+                envelope.risk_level,
+                RiskLevel::Low,
+                "{action} should be Low risk"
+            );
+            assert!(
+                !envelope.reboot_required,
+                "{action} should not require reboot"
+            );
+            assert!(
+                !envelope.rollback_available,
+                "{action} should not have rollback available"
+            );
+        }
+    }
+
+    #[test]
+    fn reload_service_is_medium_risk() {
+        let envelope = preview_action(
+            &req("ReloadService"),
+            serde_json::Value::Null,
+            serde_json::Value::Null,
+        );
+        assert_eq!(envelope.risk_level, RiskLevel::Medium);
+        assert_eq!(envelope.warnings.len(), 2);
+        assert!(!envelope.reboot_required);
+        assert!(!envelope.rollback_available);
+    }
+
+    #[test]
+    fn medium_risk_actions() {
+        let actions = [
+            "RestartService",
+            "StopService",
+            "StartService",
+            "MaskService",
+            "SetHostname",
+            "SetTimezone",
+            "SetLocale",
+            "SetNtp",
+            "ConfigureFirewall",
+            "InstallFlatpak",
+            "RemoveFlatpak",
+            "CreateToolbox",
+            "RemoveToolbox",
+            "CreateUser",
+            "CreateContainer",
+            "StartContainer",
+            "StopContainer",
+            "RemoveContainer",
+            "AddPackageRepository",
+            "RemovePackageRepository",
+        ];
+
+        for action in &actions {
+            let envelope = preview_action(
+                &req(action),
+                serde_json::Value::Null,
+                serde_json::Value::Null,
+            );
+            assert_eq!(
+                envelope.risk_level,
+                RiskLevel::Medium,
+                "{action} should be Medium risk"
+            );
+        }
+    }
+
+    #[test]
+    fn high_risk_access_control_actions() {
+        let actions = [
+            "AddUserToGroup",
+            "RemoveUserFromGroup",
+            "DeleteUser",
+            "AddAuthorizedKey",
+            "RemoveAuthorizedKey",
+        ];
+
+        for action in &actions {
+            let envelope = preview_action(
+                &req(action),
+                serde_json::Value::Null,
+                serde_json::Value::Null,
+            );
+            assert_eq!(
+                envelope.risk_level,
+                RiskLevel::High,
+                "{action} should be High risk"
+            );
+            assert!(
+                envelope
+                    .expected_side_effects
+                    .iter()
+                    .any(|e| e.contains("access control will change")),
+                "{action} should have 'access control will change' in expected_side_effects"
+            );
+        }
+    }
+
+    #[test]
+    fn high_risk_system_reboot_actions() {
+        let actions = [
+            "UpdateSystem",
+            "InstallPackages",
+            "RemovePackages",
+            "RebaseSystem",
+            "RollbackDeployment",
+            "AddLayeredPackage",
+            "RemoveLayeredPackage",
+            "SetKernelArguments",
+        ];
+
+        for action in &actions {
+            let envelope = preview_action(
+                &req(action),
+                serde_json::Value::Null,
+                serde_json::Value::Null,
+            );
+            assert_eq!(
+                envelope.risk_level,
+                RiskLevel::High,
+                "{action} should be High risk"
+            );
+            assert!(envelope.reboot_required, "{action} should require reboot");
+            assert!(
+                envelope.rollback_available,
+                "{action} should have rollback available"
+            );
+        }
+    }
+
+    #[test]
+    fn reboot_system_no_rollback() {
+        let envelope = preview_action(
+            &req("RebootSystem"),
+            serde_json::Value::Null,
+            serde_json::Value::Null,
+        );
+        assert_eq!(envelope.risk_level, RiskLevel::High);
+        assert!(envelope.reboot_required);
+        assert!(!envelope.rollback_available);
+    }
+
+    #[test]
+    fn cleanup_deployments_is_high_no_reboot() {
+        let envelope = preview_action(
+            &req("CleanupDeployments"),
+            serde_json::Value::Null,
+            serde_json::Value::Null,
+        );
+        assert_eq!(envelope.risk_level, RiskLevel::High);
+        assert!(!envelope.reboot_required);
+    }
+
+    #[test]
+    fn pin_unpin_deployment_are_high() {
+        for action in &["PinDeployment", "UnpinDeployment"] {
+            let envelope = preview_action(
+                &req(action),
+                serde_json::Value::Null,
+                serde_json::Value::Null,
+            );
+            assert_eq!(
+                envelope.risk_level,
+                RiskLevel::High,
+                "{action} should be High risk"
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_action_defaults_to_high() {
+        let envelope = preview_action(
+            &req("DefinitelyNotRealAction"),
+            serde_json::Value::Null,
+            serde_json::Value::Null,
+        );
+        assert_eq!(envelope.risk_level, RiskLevel::High);
+        assert!(
+            envelope
+                .warnings
+                .iter()
+                .any(|w| w.contains("action profile not recognized")),
+            "warnings should contain 'action profile not recognized'"
+        );
+        assert!(
+            envelope
+                .expected_side_effects
+                .iter()
+                .any(|e| e.contains("unclassified action")),
+            "expected_side_effects should contain 'unclassified action'"
+        );
+    }
+
+    #[test]
+    fn preview_action_summary_format() {
+        let envelope = preview_action(
+            &req("GetDiskUsage"),
+            serde_json::Value::Null,
+            serde_json::Value::Null,
+        );
+        assert_eq!(envelope.summary, "GetDiskUsage preview (low-risk)");
+    }
+
+    #[test]
+    fn preview_action_passes_current_and_proposed_state() {
+        let current = serde_json::json!({"disk": "80%"});
+        let proposed = serde_json::json!({"action": "cleanup"});
+        let envelope = preview_action(
+            &req("CleanupDeployments"),
+            current.clone(),
+            proposed.clone(),
+        );
+        assert_eq!(envelope.current_state, current);
+        assert_eq!(envelope.proposed_change, proposed);
+    }
+
+    #[test]
+    fn preview_action_preserves_request_hash() {
+        let mut r = req("GetDiskUsage");
+        r.request_hash = "deadbeef".to_string();
+        let envelope = preview_action(&r, serde_json::Value::Null, serde_json::Value::Null);
+        assert_eq!(envelope.request_hash, "deadbeef");
+    }
+}
