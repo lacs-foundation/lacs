@@ -10,9 +10,12 @@
 //!
 //! ## Wire protocols
 //!
-//! Phase 1 ships **RFC 5424 syslog over UDP** because it has the broadest SIEM
-//! support (Splunk, Elastic, IBM QRadar, Microsoft Sentinel) and the simplest
-//! transport (no framing). CEF and NDJSON-over-TCP are designed-for in
+//! Phase 1 ships **RFC 5424 syslog over UDP**, the de-facto on-host
+//! log-forwarding format. Direct ingestion works with Splunk, Elastic,
+//! IBM QRadar, and rsyslog; vendors that require a forwarder agent
+//! (Microsoft Sentinel via the Azure Monitor Agent on a Linux VM,
+//! Datadog/Chronicle via their own collectors) consume the same stream
+//! through that agent. CEF and NDJSON-over-TCP are designed-for in
 //! [`AuditSinkSpec`] and arrive in follow-up PRs.
 //!
 //! ## Reliability vs durability
@@ -267,9 +270,10 @@ pub fn format_rfc5424(event: &AuditEvent, facility: u8) -> String {
 ///
 /// RFC 5424 §6 names PRINTUSASCII (`0x21..=0x7E`) as the preferred SD form;
 /// UTF-8 is technically allowed but every strict SIEM ingest pipeline we
-/// have surveyed (Splunk in strict mode, IBM QRadar, AWS Sentinel) rejects
-/// non-ASCII bytes inside SD-VALUE. We therefore drop **every** byte
-/// outside the printable-ASCII range and escape the three characters
+/// have surveyed (Splunk in strict mode, IBM QRadar, Microsoft Sentinel via
+/// the Azure Monitor Agent) rejects non-ASCII bytes inside SD-VALUE. We
+/// therefore drop **every** byte outside the printable-ASCII range and
+/// escape the three characters
 /// `]`, `"`, `\` per §6.3.3.
 ///
 /// This also covers DEL (`0x7F`) and C1 controls (`0x80..=0x9F`).

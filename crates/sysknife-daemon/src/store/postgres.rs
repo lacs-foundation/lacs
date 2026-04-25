@@ -13,9 +13,10 @@
 //!
 //! On first connect, the schema is created via [`PostgresStore::initialize`]
 //! using `CREATE TABLE IF NOT EXISTS`. The schema mirrors the SQLite version
-//! field-for-field; the only dialect differences are the `TIMESTAMPTZ`
-//! column for `created_at` and `BIGINT` (manual `seq`) instead of SQLite's
-//! `INTEGER NOT NULL UNIQUE`.
+//! field-for-field; the only dialect difference is `BIGINT NOT NULL UNIQUE`
+//! for `seq` instead of SQLite's `INTEGER NOT NULL UNIQUE`. `created_at` is
+//! stored as `TEXT` (RFC 3339 with `Z` suffix) in both backends; Postgres
+//! reads cast to `timestamptz` at query time so `INTERVAL` arithmetic works.
 //!
 //! ## Concurrency
 //!

@@ -251,11 +251,9 @@ fn strip_dangerous_unicode(s: &str) -> String {
     out
 }
 
-/// NFC-normalise so visually-identical strings hash the same way and
-/// adversarial decompositions can't be used to evade later inspection.
-///
-/// We do this without pulling `unicode-normalization` (one more dep) by
-/// using `String::nfc` from `std`... which doesn't exist. Pull the crate.
+/// NFC-normalise via the `unicode-normalization` crate so visually-identical
+/// strings hash identically and adversarial decompositions can't be used to
+/// evade later inspection or downstream regex checks.
 fn nfc_normalise(s: &str) -> String {
     use unicode_normalization::UnicodeNormalization as _;
     s.nfc().collect()

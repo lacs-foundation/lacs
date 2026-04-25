@@ -254,10 +254,10 @@ impl AuditStore for SqliteStore {
         &self,
         key: &AuditKey,
     ) -> Result<VerifyOutcome, TransactionStoreError> {
-        // verify_audit_chain takes &AuditKey; we can't move it across the
-        // spawn_blocking boundary by value because AuditKey contains
-        // borrowed fields. Run the read inline (no I/O blocking risk —
-        // verify_audit_chain just calls fetch_chain_rows internally).
+        // `key` is borrowed from the caller; we can't move it into a
+        // `'static` `spawn_blocking` closure. Verifying is a CPU-only HMAC
+        // walk over rows already fetched, so doing the work on the async
+        // thread (after the blocking fetch) is fine — no I/O risk.
         let rows = self.fetch_chain_rows().await?;
         Ok(crate::audit_chain::verify_chain(key, &rows))
     }
