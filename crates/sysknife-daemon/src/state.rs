@@ -1,3 +1,4 @@
+use crate::audit_forward::AuditForwarder;
 use crate::policy::PolicyTable;
 use crate::transactions::{TransactionStore, TransactionStoreError};
 use crate::transport::grpc::{bind_unix_listener, ListenTarget, ListenTargetError};
@@ -24,6 +25,10 @@ pub struct DaemonState {
     pub config: DaemonConfig,
     pub transactions: TransactionStore,
     pub policy: PolicyTable,
+    /// Optional external audit-log forwarder. `None` when no `[audit.forward]`
+    /// sink is configured; events recorded by the dispatcher are then only
+    /// written to the local hash-chained store.
+    pub forwarder: Option<AuditForwarder>,
 }
 
 #[derive(Debug)]
@@ -42,24 +47,34 @@ pub enum DaemonStateError {
 }
 
 impl DaemonState {
-    /// Open the daemon state with no policy overrides (compile-time baseline).
+    /// Open the daemon state with no policy overrides and no forwarding.
     /// Suitable for tests and dev runs.
     pub fn open(config: DaemonConfig) -> Result<Self, DaemonStateError> {
         Self::open_with_policy(config, PolicyTable::empty())
     }
 
-    /// Open the daemon state with an explicit policy table.
-    /// Production callers (`main.rs`) build the table from
-    /// `[policy.risk_overrides]` in `config.toml`.
+    /// Open the daemon state with an explicit policy table and no forwarding.
     pub fn open_with_policy(
         config: DaemonConfig,
         policy: PolicyTable,
+    ) -> Result<Self, DaemonStateError> {
+        Self::open_full(config, policy, None)
+    }
+
+    /// Open the daemon state with full configuration. Production callers
+    /// (`main.rs`) build the policy table from `[policy.risk_overrides]` and
+    /// the forwarder from `[audit.forward]`.
+    pub fn open_full(
+        config: DaemonConfig,
+        policy: PolicyTable,
+        forwarder: Option<AuditForwarder>,
     ) -> Result<Self, DaemonStateError> {
         let transactions = TransactionStore::open(&config.database_path)?;
         Ok(Self {
             config,
             transactions,
             policy,
+            forwarder,
         })
     }
 

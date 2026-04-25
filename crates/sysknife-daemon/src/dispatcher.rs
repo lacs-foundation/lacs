@@ -948,6 +948,12 @@ async fn handle_preview(
         }
     };
 
+    // External SIEM forwarding (#150). Best-effort, never blocks the preview
+    // response — if the forwarder queue is full or its task is gone, the
+    // event is dropped (with a counter + WARN). The local hash-chained log
+    // is always written first; the SIEM receives a copy.
+    forward_audit_event(state, &recorded.transaction.transaction_id, caller_role);
+
     send_response(
         framed,
         &DaemonResponse::PreviewResponse {
@@ -957,6 +963,44 @@ async fn handle_preview(
         },
     )
     .await
+}
+
+/// Look up the just-inserted row's chain metadata and submit an
+/// `AuditEvent` to the configured forwarder, if any.
+///
+/// Failures here are non-fatal — the local audit log is the durable record.
+fn forward_audit_event(state: &DaemonState, transaction_id: &str, caller: &CallerRole) {
+    let Some(forwarder) = &state.forwarder else {
+        return;
+    };
+    match state.transactions.fetch_chain_row(transaction_id) {
+        Ok(Some(row)) => {
+            forwarder.submit(crate::audit_forward::AuditEvent {
+                seq: row.seq,
+                transaction_id: row.transaction_id,
+                action_name: row.action_name,
+                risk_level: row.risk_level,
+                summary: row.summary,
+                approval_id: row.approval_id,
+                created_at: row.created_at,
+                chain_hash: row.chain_hash,
+                key_id: row.key_id,
+                caller_role: Some(format!("{caller:?}")),
+            });
+        }
+        Ok(None) => {
+            eprintln!(
+                "[sysknife-daemon] audit-forward: transaction {transaction_id} \
+                 not found just after insert (race?)"
+            );
+        }
+        Err(e) => {
+            eprintln!(
+                "[sysknife-daemon] audit-forward: chain row fetch failed for \
+                 {transaction_id}: {e}"
+            );
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
