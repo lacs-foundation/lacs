@@ -997,12 +997,70 @@ fn forward_audit_event(state: &DaemonState, transaction_id: &str, caller: &Calle
                     chain_hash: row.chain_hash,
                     key_id: row.key_id,
                     caller_role: Some(caller_label),
+                    final_status: None,
                 });
             }
             Ok(None) => {
                 eprintln!(
                     "[sysknife-daemon] audit-forward: transaction {transaction_id} \
                      not found just after insert (race?)"
+                );
+            }
+            Err(e) => {
+                eprintln!(
+                    "[sysknife-daemon] audit-forward: chain row fetch failed for \
+                     {transaction_id}: {e}"
+                );
+            }
+        }
+    });
+}
+
+/// Submit a status-change `AuditEvent` to the configured forwarder after
+/// `update_status` records the terminal `JobState`.
+///
+/// Without this, SOC analysts watching the SIEM see the preview event but
+/// never see whether the action ran, succeeded, failed, or was rolled back —
+/// the local hash-chained log carries the terminal status, but the SIEM does
+/// not. Mirrors [`forward_audit_event`]: bails when no forwarder is wired,
+/// looks up the chain row in a background task, and sets `final_status` to
+/// the lowercase Debug rendering of the terminal `JobState` so the
+/// `terminal_status` SD-PARAM appears in the emitted RFC 5424 frame.
+fn forward_status_change_event(
+    state: &DaemonState,
+    transaction_id: &str,
+    caller: &CallerRole,
+    final_status: JobState,
+) {
+    if state.forwarder.is_none() {
+        return;
+    }
+    let audit = std::sync::Arc::clone(&state.audit);
+    let forwarder = state.forwarder.clone().expect("checked above");
+    let transaction_id = transaction_id.to_string();
+    let caller_label = format!("{caller:?}");
+    let final_status_label = format!("{final_status:?}").to_lowercase();
+    tokio::spawn(async move {
+        match audit.fetch_chain_row(&transaction_id).await {
+            Ok(Some(row)) => {
+                forwarder.submit(crate::audit_forward::AuditEvent {
+                    seq: row.seq,
+                    transaction_id: row.transaction_id,
+                    action_name: row.action_name,
+                    risk_level: row.risk_level,
+                    summary: row.summary,
+                    approval_id: row.approval_id,
+                    created_at: row.created_at,
+                    chain_hash: row.chain_hash,
+                    key_id: row.key_id,
+                    caller_role: Some(caller_label),
+                    final_status: Some(final_status_label),
+                });
+            }
+            Ok(None) => {
+                eprintln!(
+                    "[sysknife-daemon] audit-forward: transaction {transaction_id} \
+                     not found for status-change forward (race?)"
                 );
             }
             Err(e) => {
@@ -1193,16 +1251,25 @@ async fn handle_execute(
     // log it and surface it as a warning in the job result so the client is
     // aware of the gap.
     let mut warnings = Vec::new();
-    if let Err(e) = state
+    match state
         .audit
         .update_status(&transaction_id, final_status)
         .await
     {
-        eprintln!(
-            "[sysknife-daemon] failed to update transaction {transaction_id} to \
-             {final_status:?}: {e}"
-        );
-        warnings.push(format!("audit trail update failed: {e}"));
+        Ok(()) => {
+            // Forward a status-change event to the SIEM so analysts see the
+            // terminal outcome of the action, not just the preview. Best-effort
+            // and fire-and-forget — the local hash-chained log is the durable
+            // record.
+            forward_status_change_event(state, &transaction_id, caller_role, final_status);
+        }
+        Err(e) => {
+            eprintln!(
+                "[sysknife-daemon] failed to update transaction {transaction_id} to \
+                 {final_status:?}: {e}"
+            );
+            warnings.push(format!("audit trail update failed: {e}"));
+        }
     }
 
     send_response(
@@ -1443,7 +1510,7 @@ mod tests {
     use super::*;
     use crate::{
         state::{DaemonConfig, DaemonState},
-        transport::grpc::ListenTarget,
+        transport::listen::ListenTarget,
     };
     use std::io;
     use tempfile::tempdir;

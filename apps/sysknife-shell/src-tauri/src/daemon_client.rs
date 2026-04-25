@@ -539,10 +539,13 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn execute_step_timeout_is_reasonable() {
         // Must be long enough for slow package operations (rpm-ostree update on
         // a slow mirror can take 5-10 minutes) but bounded enough that a stuck
-        // daemon surfaces within a predictable window.
+        // daemon surfaces within a predictable window. The bounds are constants —
+        // clippy flags the assert as constant-valued; suppression is intentional
+        // because the *purpose* is a regression guard against future edits.
         assert!(
             EXECUTE_STEP_TIMEOUT_SECS >= 300,
             "timeout {EXECUTE_STEP_TIMEOUT_SECS}s too short; rpm-ostree can take 5+ minutes"

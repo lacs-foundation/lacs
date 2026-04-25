@@ -811,10 +811,15 @@ mod tests {
                 program: "sudo",
                 args: vec![
                     "runuser".to_string(),
-                    "-l".to_string(),
+                    "-u".to_string(),
                     "alice".to_string(),
-                    "-c".to_string(),
-                    "flatpak install --user -y 'flathub' 'org.mozilla.firefox'".to_string(),
+                    "--".to_string(),
+                    "flatpak".to_string(),
+                    "install".to_string(),
+                    "--user".to_string(),
+                    "-y".to_string(),
+                    "flathub".to_string(),
+                    "org.mozilla.firefox".to_string(),
                 ],
             }
         );
@@ -838,10 +843,15 @@ mod tests {
                 program: "sudo",
                 args: vec![
                     "runuser".to_string(),
-                    "-l".to_string(),
+                    "-u".to_string(),
                     "alice".to_string(),
-                    "-c".to_string(),
-                    "flatpak install --user -y 'flathub' 'org.mozilla.firefox'".to_string(),
+                    "--".to_string(),
+                    "flatpak".to_string(),
+                    "install".to_string(),
+                    "--user".to_string(),
+                    "-y".to_string(),
+                    "flathub".to_string(),
+                    "org.mozilla.firefox".to_string(),
                 ],
             }
         );

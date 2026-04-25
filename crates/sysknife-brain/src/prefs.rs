@@ -34,7 +34,7 @@ const SENSITIVE_PATTERNS: &[&str] = &[
 /// All entries are lowercase; matched against the lowercased input so casing variants
 /// (e.g. "SK-" or "GHP_") are caught.
 const SENSITIVE_PREFIXES: &[&str] = &[
-    "sk-",         // Anthropic / OpenAI
+    "sk-",         // OpenAI (also matches Anthropic's sk-ant-... prefix)
     "ghp_",        // GitHub personal access token
     "github_pat_", // GitHub fine-grained PAT
     "gho_",        // GitHub OAuth token
@@ -46,9 +46,14 @@ const SENSITIVE_PREFIXES: &[&str] = &[
     "eyj",         // JWT (base64url header starts with eyJ — case-folded to eyj)
     "hvs.",        // HashiCorp Vault service token (v1.10+)
     "hvb.",        // HashiCorp Vault batch token
-    "s.",          // HashiCorp Vault legacy token prefix
-    "npm_",        // npm access token
-    "pypi-",       // PyPI API token
+    // NOTE: "s." (the Vault pre-1.10 legacy token prefix) is intentionally
+    // omitted. It collides with extremely common English phrases such as
+    // "show services.", "list users." or "from my services.io account",
+    // producing false-positive blocks every time a user mentions a service
+    // in their preferences. Vault deployments still using the legacy format
+    // can opt into a stricter filter via env in the future if anyone asks.
+    "npm_",  // npm access token
+    "pypi-", // PyPI API token
 ];
 
 /// Read the user preferences file. Returns `Ok(None)` if the file does not
@@ -268,6 +273,17 @@ mod tests {
         assert!(!contains_sensitive(
             "skip large downloads on metered connections"
         ));
+    }
+
+    #[test]
+    fn contains_sensitive_allows_phrases_with_dot_s_substrings() {
+        // Regression: the Vault legacy "s." prefix used to collide with these
+        // perfectly normal phrases and produce false-positive sensitive flags.
+        assert!(!contains_sensitive("show services."));
+        assert!(!contains_sensitive("list users."));
+        assert!(!contains_sensitive("from my services.io account"));
+        assert!(!contains_sensitive("connect to news.ycombinator.com"));
+        assert!(!contains_sensitive("disable systemd timers."));
     }
 
     #[test]

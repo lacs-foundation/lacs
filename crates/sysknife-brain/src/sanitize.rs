@@ -20,7 +20,7 @@
 //! the LLM-boundary layer that lowers the probability of the attack succeeding
 //! in the first place.
 //!
-//! ## Approach (April 2026 best practice)
+//! ## Approach
 //!
 //! 1. **Spotlighting** (Microsoft Build 2025; OWASP LLM01:2025 cheat sheet) —
 //!    wrap untrusted text in a delimited envelope (`<untrusted_tool_output>`)
@@ -221,7 +221,7 @@ fn next_char_boundary(s: &str, i: usize) -> usize {
 ///
 /// - **Tag block** `U+E0000..=U+E007F` — invisible carriers used by 2024–2025
 ///   "Unicode tag" injection attacks.
-/// - **Private Use Area** `U+E080..=U+F8FF`, `U+F0000..=U+FFFFD`, `U+100000..=U+10FFFD` —
+/// - **Private Use Area** `U+E000..=U+F8FF`, `U+F0000..=U+FFFFD`, `U+100000..=U+10FFFD` —
 ///   no agreed semantics; an attacker can encode anything.
 /// - **Bidirectional and zero-width formatting** controls
 ///   (`U+200B..=U+200F`, `U+202A..=U+202E`, `U+2066..=U+2069`, `U+FEFF`) —

@@ -22,7 +22,20 @@ pub fn specs() -> Vec<ActionSpec> {
 /// system store. The daemon runs as the `sysknife` system user whose container
 /// namespace is empty; we must switch to `username` to reach their containers.
 /// `runuser -l` establishes a full login context including XDG_RUNTIME_DIR and
-/// the sub-UID/GID ranges required by the kernel namespace code.
+/// the sub-UID/GID ranges required by the kernel namespace code — those env
+/// vars are populated by `pam_systemd` which only fires for a login shell.
+///
+/// **Shell-injection safety:** the `-c "<podman_cmd>"` form passes a string to
+/// `/bin/sh`, so any metacharacter in an interpolated value would be expanded
+/// by the shell. Defence-in-depth:
+///   1. `username` flows through `validated_username` (`[A-Za-z0-9._-]`, no
+///      leading dash, ≤32 bytes).
+///   2. Container `name` and `image` flow through `validated_safe_arg`, which
+///      enforces `[A-Za-z0-9._:/+@-]`, no leading dash, ≤254 bytes — every
+///      shell metacharacter (`;`, `&`, `|`, `$`, backtick, quotes, whitespace,
+///      glob, brace, `\`, etc.) is rejected at the boundary.
+///   3. The format!-interpolated values are wrapped in single quotes so even
+///      a future validator regression cannot escape the surrounding quotes.
 fn podman_as(username: &str, podman_cmd: &str) -> ActionMechanism {
     ActionMechanism::Command {
         program: "sudo",

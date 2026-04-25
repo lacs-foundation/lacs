@@ -6,7 +6,7 @@
 //!
 //! # Worked examples — do not remove
 //!
-//! The prompt contains five worked examples (A, B, C, D, and E). They are load-bearing.
+//! The prompt contains six worked examples (A through F). They are load-bearing.
 //! Without examples the model defaults to querying state first for every intent, which
 //! either crashes the planner (when `get_system_state` is called and the daemon is
 //! unavailable) or produces incorrect fallback plans.
@@ -18,9 +18,9 @@
 //! | With examples (A+B) | 7 / 7                    |
 //! | Without examples    | 3 / 7                    |
 //!
-//! Examples C, D, and E were added after this measurement. No re-measurement has been
-//! recorded for the current A+B+C+D+E configuration, but the requirement to keep
-//! all five examples is unchanged.
+//! Examples C, D, E, and F were added after this measurement. No re-measurement has been
+//! recorded for the current A+B+C+D+E+F configuration, but the requirement to keep
+//! all six examples is unchanged.
 //!
 //! Example A ("check disk usage") was removed — it is a strict subset of the
 //! general rule stated in prose and adds no coverage beyond Example B.

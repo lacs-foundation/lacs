@@ -304,8 +304,11 @@ fn parse_risk_level(s: &str) -> Option<RiskLevel> {
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
-#[error("stale approval")]
 pub enum ApprovalError {
+    #[error(
+        "stale approval: approval_hash={approval_hash} does not match \
+         current request_hash={request_hash} — re-prompt the operator"
+    )]
     StaleApproval {
         request_hash: String,
         approval_hash: String,
@@ -313,7 +316,21 @@ pub enum ApprovalError {
 }
 
 pub fn approval_matches_request(request_hash: &str, approval_hash: &str) -> bool {
-    !request_hash.is_empty() && request_hash == approval_hash
+    // Constant-time comparison to prevent timing oracles on credentials.
+    // The approval hash binds an Admin's signature to a specific request;
+    // a non-constant `==` would let a caller probe an oracle and forge a
+    // matching prefix byte-by-byte. The `is_empty` guard stays first so
+    // a missing/blank hash is rejected without further work; from there
+    // we require equal length, then run `ct_eq` over the bytes.
+    if request_hash.is_empty() || request_hash.len() != approval_hash.len() {
+        return false;
+    }
+    use subtle::ConstantTimeEq;
+    request_hash
+        .as_bytes()
+        .ct_eq(approval_hash.as_bytes())
+        .unwrap_u8()
+        == 1
 }
 
 pub fn require_fresh_approval(
@@ -781,5 +798,38 @@ mod tests {
         assert_eq!(role_for_risk_level(RiskLevel::Low), CallerRole::Observer);
         assert_eq!(role_for_risk_level(RiskLevel::Medium), CallerRole::Dev);
         assert_eq!(role_for_risk_level(RiskLevel::High), CallerRole::Admin);
+    }
+
+    /// Regression test for the constant-time approval-hash compare.
+    ///
+    /// We can't measure timing variance in CI, so this test documents
+    /// behavior across the equal-length non-matching paths — the same
+    /// paths that would leak under a non-constant-time `==`. The empty
+    /// `request_hash` guard is also exercised so the freshness check
+    /// can never accept a blank approval against a blank request.
+    #[test]
+    fn approval_compare_handles_equal_length_wrong_prefix_and_wrong_suffix() {
+        // 64 hex chars = the shape of a real SHA-256 digest. All four
+        // candidate hashes below have identical length, so the
+        // length-mismatch shortcut does not apply and the comparator
+        // genuinely traverses the constant-time path.
+        let request = "0000000000000000000000000000000000000000000000000000000000000001";
+        let exact = request;
+        let wrong_prefix = "f000000000000000000000000000000000000000000000000000000000000001";
+        let wrong_suffix = "000000000000000000000000000000000000000000000000000000000000000f";
+        let totally_different = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+
+        // Exact match → accepted.
+        assert!(approval_matches_request(request, exact));
+        // Equal-length, wrong first byte → rejected.
+        assert!(!approval_matches_request(request, wrong_prefix));
+        // Equal-length, wrong last byte → rejected.
+        assert!(!approval_matches_request(request, wrong_suffix));
+        // Equal-length, completely different → rejected.
+        assert!(!approval_matches_request(request, totally_different));
+        // Empty request_hash → rejected even if approval is also empty.
+        assert!(!approval_matches_request("", ""));
+        // Length mismatch → rejected.
+        assert!(!approval_matches_request(request, "deadbeef"));
     }
 }

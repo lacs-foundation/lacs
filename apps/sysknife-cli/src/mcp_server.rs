@@ -1,9 +1,12 @@
 //! MCP server entry point for `sysknife mcp-server`.
 //!
-//! Exposes two tools:
+//! Exposes five tools:
 //!
-//! - `sysknife_plan`    — turn a natural-language intent into a risk-labelled plan.
-//! - `sysknife_execute` — execute a plan returned by `sysknife_plan`.
+//! - `sysknife_plan`         — turn a natural-language intent into a risk-labelled plan.
+//! - `sysknife_execute`      — execute a plan returned by `sysknife_plan`.
+//! - `sysknife_history`      — list past audit-log entries (read-only).
+//! - `sysknife_doctor`       — daemon connectivity + config diagnostics (read-only).
+//! - `sysknife_audit_verify` — verify the audit-log hash chain (read-only).
 //!
 //! Typical agentic loop:
 //!
@@ -11,6 +14,10 @@
 //! 2. **STOP** — wait for explicit user approval before doing anything else.
 //! 3. Call `sysknife_execute { steps, max_risk }` — daemon runs each step and
 //!    streams output back as collected lines.
+//!
+//! The three read-only tools (`sysknife_history`, `sysknife_doctor`,
+//! `sysknife_audit_verify`) are safe to call without going through the
+//! plan/approve/execute loop — they only inspect state.
 //!
 //! The server uses stdio transport so any MCP client (Claude Desktop,
 //! Cursor, …) can launch it as a local subprocess.
@@ -25,6 +32,8 @@
 //! }
 //! ```
 
+use std::path::PathBuf;
+
 use rmcp::{
     handler::server::wrapper::{Json, Parameters},
     schemars, tool, tool_router,
@@ -36,10 +45,11 @@ use sysknife_types::RiskLevel;
 
 use sysknife_brain::config::BrainConfig;
 use sysknife_brain::planner::LlmPlanner;
+use sysknife_brain::state_client::StateClient as _;
 
 use crate::client::{DaemonClient, DescribeInfo};
 use crate::error::CliError;
-use crate::runner::resolve_socket_target;
+use crate::runner::{build_history_params, resolve_socket_target, verify_postgres, verify_sqlite};
 
 // ---------------------------------------------------------------------------
 // sysknife_plan — input / output types
@@ -68,7 +78,7 @@ pub struct PlanStepOutput {
     pub command: String,
 }
 
-/// The full plan returned by `lacs_plan`.
+/// The full plan returned by `sysknife_plan`.
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PlanOutput {
     /// The original natural-language intent.
@@ -85,7 +95,7 @@ pub struct PlanOutput {
 // sysknife_execute — input / output types
 // ---------------------------------------------------------------------------
 
-/// A single step to execute, taken verbatim from `lacs_plan` output.
+/// A single step to execute, taken verbatim from `sysknife_plan` output.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct StepToExecute {
     /// Canonical action name from the SysKnife catalogue, e.g. `"GetDiskUsage"`.
@@ -127,13 +137,116 @@ pub struct StepResult {
     pub transaction_id: String,
 }
 
-/// Output of `lacs_execute`.
+/// Output of `sysknife_execute`.
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct ExecuteOutput {
     /// Results for each executed step, in order.
     pub steps: Vec<StepResult>,
     /// True if any step requires a reboot to take effect.
     pub needs_reboot: bool,
+}
+
+// ---------------------------------------------------------------------------
+// sysknife_history — input / output types
+// ---------------------------------------------------------------------------
+
+/// Input to `sysknife_history`. All fields optional; mirrors the CLI flags
+/// on `sysknife history`.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct HistoryInput {
+    /// Filter by job status (e.g. `"succeeded"`, `"failed"`, `"canceled"`).
+    pub status: Option<String>,
+    /// Filter by action name (e.g. `"InstallPackages"`).
+    pub action: Option<String>,
+    /// Show only entries after this UTC RFC 3339 timestamp
+    /// (e.g. `"2026-01-15T10:30:00Z"`).
+    pub since: Option<String>,
+    /// Maximum number of entries to return. Defaults to 20.
+    pub limit: Option<u32>,
+}
+
+/// One row in the history listing.
+///
+/// `created_at` and `risk_level` are `None` until the daemon's
+/// `ListJobHistory` IPC is extended to return structured rows. Today the
+/// daemon serialises history as a formatted text block; the MCP wrapper
+/// parses what it can — transaction ID prefix, action name, status, and
+/// summary — and leaves the structured-only fields empty.
+#[derive(Debug, Default, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
+#[serde(default)]
+pub struct HistoryEntry {
+    /// Daemon transaction ID (or its short prefix when only that is available).
+    pub transaction_id: String,
+    /// Canonical action name from the SysKnife catalogue.
+    pub action: String,
+    /// Final job status (`"succeeded"`, `"failed"`, etc.).
+    pub status: String,
+    /// Human-readable summary from the daemon.
+    pub summary: String,
+    /// UTC RFC 3339 timestamp when the transaction was created.
+    /// Currently always `None` — see struct-level docs.
+    pub created_at: Option<String>,
+    /// Risk level the daemon assigned (`"low"` | `"medium"` | `"high"`).
+    /// Currently always `None` — see struct-level docs.
+    pub risk_level: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// sysknife_doctor — output types
+// ---------------------------------------------------------------------------
+
+/// Output of `sysknife_doctor`. Snapshot of daemon connectivity, brain
+/// provider, and audit-chain health at the moment the tool was called.
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
+pub struct DoctorReport {
+    /// Resolved daemon socket target, e.g. `"Unix(\"/run/sysknife/daemon.sock\")"`.
+    pub daemon_socket: String,
+    /// `true` iff the daemon answered `query_state` within the socket timeout.
+    pub daemon_reachable: bool,
+    /// Configured brain provider (`"anthropic"`, `"openai"`, `"ollama"`, …).
+    pub brain_provider: String,
+    /// Configured brain model identifier.
+    pub brain_model: String,
+    /// Resolved audit DB path. For Postgres deployments, the literal string
+    /// `"postgres"` instead of a filesystem path.
+    pub audit_db_path: String,
+    /// `"intact"` | `"broken"` | `"unknown"`. `"unknown"` covers all
+    /// `CannotVerify` cases (missing key file, unreachable DB, etc.).
+    pub audit_chain_status: String,
+    /// Non-fatal warnings collected during the diagnostic run. Anything
+    /// that could not be checked (state, brain config, audit chain, …)
+    /// adds one entry here so the operator sees what was skipped and why.
+    pub warnings: Vec<String>,
+}
+
+// ---------------------------------------------------------------------------
+// sysknife_audit_verify — output types
+// ---------------------------------------------------------------------------
+
+/// Output of `sysknife_audit_verify`. Mirrors the JSON shape produced by
+/// the CLI's `sysknife audit verify --json` command.
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
+pub struct AuditVerifyReport {
+    /// One of `"intact"`, `"broken"`, `"cannot_verify"`.
+    pub status: String,
+    /// Number of audit rows the verifier successfully checked. `0` for
+    /// `cannot_verify` outcomes that fail before the first row is read.
+    pub rows_checked: u64,
+    /// Sequence number of the first row that broke the chain. Only set
+    /// when `status == "broken"`.
+    pub first_broken_seq: Option<u64>,
+    /// Transaction ID of the first broken row. Only set when
+    /// `status == "broken"`.
+    pub first_broken_transaction_id: Option<String>,
+    /// HMAC the verifier expected for the first broken row.
+    pub expected: Option<String>,
+    /// HMAC actually stored for the first broken row.
+    pub actual: Option<String>,
+    /// Human-readable explanation. Only set when `status == "cannot_verify"`.
+    pub reason: Option<String>,
+    /// Backend label: a filesystem path for SQLite, the literal `"postgres"`
+    /// for Postgres deployments.
+    pub backend: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -193,6 +306,46 @@ impl SysknifeMcpServer {
             .await
             .map(Json)
             .map_err(|e| ErrorData::internal_error(e, None))
+    }
+
+    /// List past SysKnife audit-log entries.
+    ///
+    /// Read-only and safe to call without first calling `sysknife_plan`;
+    /// it never mutates system state. Mirrors `sysknife history`.
+    #[tool(
+        description = "List past SysKnife audit-log entries. Read-only and safe to call without prior sysknife_plan. Filters: status (succeeded/failed/canceled/...), action (canonical action name), since (UTC RFC 3339 timestamp), limit (default 20). Returns a list of HistoryEntry rows."
+    )]
+    async fn sysknife_history(
+        &self,
+        Parameters(input): Parameters<HistoryInput>,
+    ) -> Result<Json<Vec<HistoryEntry>>, ErrorData> {
+        history_inner(input)
+            .await
+            .map(Json)
+            .map_err(|e| ErrorData::internal_error(e, None))
+    }
+
+    /// Daemon connectivity + configuration diagnostics.
+    ///
+    /// Read-only and safe to call without first calling `sysknife_plan`;
+    /// it never mutates system state. Mirrors `sysknife doctor` plus an
+    /// audit-chain quick-check.
+    #[tool(
+        description = "Diagnose SysKnife: pings the daemon, reports the configured brain provider/model, the audit DB path, and a quick audit-chain status (intact/broken/unknown). Read-only and safe to call without prior sysknife_plan."
+    )]
+    async fn sysknife_doctor(&self) -> Result<Json<DoctorReport>, ErrorData> {
+        Ok(Json(doctor_inner().await))
+    }
+
+    /// Verify the audit-log hash chain.
+    ///
+    /// Read-only and safe to call without first calling `sysknife_plan`;
+    /// it never mutates system state. Mirrors `sysknife audit verify`.
+    #[tool(
+        description = "Verify the tamper-evident HMAC-SHA256 hash chain over the audit log. Returns status (intact/broken/cannot_verify), rows_checked, and — on broken — the first offending row. Read-only and safe to call without prior sysknife_plan."
+    )]
+    async fn sysknife_audit_verify(&self) -> Result<Json<AuditVerifyReport>, ErrorData> {
+        Ok(Json(audit_verify_inner().await))
     }
 }
 
@@ -338,15 +491,26 @@ fn truncate_output(mut lines: Vec<String>) -> Vec<String> {
     lines
 }
 
-/// Parse a `max_risk` string into an ordinal `u8` (0=low, 1=medium, 2=high).
-/// `None` defaults to medium (1).
+/// Parse a `max_risk` string into an ordinal `u8` (0=low, 1=medium).
+///
+/// `None` defaults to medium (1). High-risk actions cannot be auto-executed
+/// via the MCP entrypoint — that route exists for assistant-driven flows that
+/// must always have a human in the loop, so the `"high"` ceiling is rejected
+/// outright. Callers that need to run high-risk plans must use the CLI/GUI
+/// approval path. Comparison is case-insensitive so `"Low"`, `"MEDIUM"`, etc.
+/// are all accepted.
 fn parse_max_risk(s: Option<&str>) -> Result<u8, String> {
-    match s.unwrap_or("medium") {
+    let raw = s.unwrap_or("medium");
+    match raw.to_ascii_lowercase().as_str() {
         "low" => Ok(0),
         "medium" => Ok(1),
-        "high" => Ok(2),
-        other => Err(format!(
-            "invalid max_risk {other:?}: expected \"low\", \"medium\", or \"high\""
+        "high" => Err(
+            "max_risk=\"high\" is not allowed via MCP — high-risk plans must \
+             be approved via the CLI or GUI confirmation flow"
+                .to_string(),
+        ),
+        _ => Err(format!(
+            "invalid max_risk {raw:?}: expected \"low\" or \"medium\""
         )),
     }
 }
@@ -366,6 +530,309 @@ fn check_risk_ceiling(risk: &RiskLevel, ceiling: u8) -> Result<(), ()> {
         Err(())
     } else {
         Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// sysknife_history helpers
+// ---------------------------------------------------------------------------
+
+/// Default history limit, matching the CLI's `HistoryArgs::limit` default.
+const HISTORY_DEFAULT_LIMIT: u32 = 20;
+
+async fn history_inner(input: HistoryInput) -> Result<Vec<HistoryEntry>, String> {
+    let HistoryInput {
+        status,
+        action,
+        since,
+        limit,
+    } = input;
+
+    let since_hours = match since.as_deref() {
+        None => None,
+        Some(s) => match crate::runner::since_to_hours(s) {
+            Some(h) => Some(h),
+            None => {
+                return Err(format!(
+                    "since: {s:?} is not a valid past UTC RFC 3339 timestamp \
+                     (accepted: 2026-01-15T10:30:00Z)"
+                ));
+            }
+        },
+    };
+
+    let params = build_history_params(
+        limit.unwrap_or(HISTORY_DEFAULT_LIMIT),
+        status.as_deref(),
+        action.as_deref(),
+        since_hours,
+    );
+
+    let client = DaemonClient::new(resolve_socket_target());
+    let raw = tokio::task::spawn_blocking(move || client.query_action("ListJobHistory", &params))
+        .await
+        .map_err(|e| format!("join: {e}"))?
+        .map_err(|e| format!("daemon error: {e}"))?;
+
+    Ok(parse_history_text(&raw))
+}
+
+/// Parse the daemon's formatted `ListJobHistory` output into structured rows.
+///
+/// The daemon currently returns a header line, a blank line, then one row per
+/// transaction in the format `  <8-char-prefix>  <action>  <status>  <summary>`,
+/// with action and status padded by `format_job_history` in the daemon. We
+/// split on at-least-two-spaces because the formatter uses field padding,
+/// not a delimiter character.
+///
+/// `created_at` and `risk_level` are not present in the formatted output and
+/// stay `None`. Extending the daemon-side IPC to return structured rows
+/// would let us populate them — see HistoryEntry's struct-level docs.
+fn parse_history_text(raw: &str) -> Vec<HistoryEntry> {
+    let mut entries = Vec::new();
+    for line in raw.lines() {
+        // Skip the header line ("Transaction history (N entries):"), blank
+        // lines, and the empty-result line ("No transactions found...").
+        let trimmed = line.trim_start();
+        if trimmed.is_empty()
+            || trimmed.starts_with("Transaction history")
+            || trimmed.starts_with("No transactions found")
+        {
+            continue;
+        }
+
+        // Split on runs of 2+ whitespace chars — robust to the daemon's
+        // padding without depending on exact column widths.
+        let parts: Vec<&str> = trimmed.split("  ").filter(|s| !s.is_empty()).collect();
+        if parts.len() < 4 {
+            // Malformed row — skip rather than panic. Better to drop one
+            // unparseable row than to fail the whole tool call.
+            continue;
+        }
+
+        entries.push(HistoryEntry {
+            transaction_id: parts[0].trim().to_string(),
+            action: parts[1].trim().to_string(),
+            status: parts[2].trim().to_string(),
+            summary: parts[3..].join("  ").trim().to_string(),
+            created_at: None,
+            risk_level: None,
+        });
+    }
+    entries
+}
+
+// ---------------------------------------------------------------------------
+// sysknife_doctor helpers
+// ---------------------------------------------------------------------------
+
+async fn doctor_inner() -> DoctorReport {
+    let mut warnings: Vec<String> = Vec::new();
+
+    let socket = resolve_socket_target();
+    let socket_label = format!("{socket:?}");
+
+    // Daemon connectivity — `curated_state` is sync, so spawn_blocking.
+    let client = DaemonClient::new(socket);
+    let daemon_reachable = match tokio::task::spawn_blocking(move || client.curated_state()).await {
+        Ok(Ok(_)) => true,
+        Ok(Err(e)) => {
+            warnings.push(format!("daemon unreachable: {e}"));
+            false
+        }
+        Err(e) => {
+            warnings.push(format!("daemon ping join error: {e}"));
+            false
+        }
+    };
+
+    // Brain provider/model — fall back to placeholders if config is missing
+    // (e.g. operator hasn't run `sysknife-setup` yet).
+    let (brain_provider, brain_model) = match BrainConfig::from_env() {
+        Ok(cfg) => (
+            cfg.provider_name().to_string(),
+            cfg.model_name().to_string(),
+        ),
+        Err(e) => {
+            warnings.push(format!("brain config unreadable: {e}"));
+            ("unknown".to_string(), "unknown".to_string())
+        }
+    };
+
+    // Audit DB path / chain status — same precedence rules as `run_audit_verify`.
+    let lacs_config = sysknife_core::config::LacsConfig::load();
+    let audit_db_path = match lacs_config.storage.as_ref() {
+        Some(s) if s.backend.eq_ignore_ascii_case("postgres") => "postgres".to_string(),
+        _ => sysknife_core::default_database_path().display().to_string(),
+    };
+
+    let audit_chain_status = match audit_chain_quick_check(&lacs_config, &mut warnings).await {
+        VerifyOutcomeKind::Intact => "intact",
+        VerifyOutcomeKind::Broken => "broken",
+        VerifyOutcomeKind::Unknown => "unknown",
+    }
+    .to_string();
+
+    DoctorReport {
+        daemon_socket: socket_label,
+        daemon_reachable,
+        brain_provider,
+        brain_model,
+        audit_db_path,
+        audit_chain_status,
+        warnings,
+    }
+}
+
+/// Compact summary of `VerifyOutcome` for doctor's `audit_chain_status` field.
+enum VerifyOutcomeKind {
+    Intact,
+    Broken,
+    Unknown,
+}
+
+/// Run a non-fatal audit chain check. Anything that prevents verification
+/// becomes `Unknown` plus a warning entry — the doctor must never hard-fail
+/// just because the audit key file is missing.
+async fn audit_chain_quick_check(
+    lacs_config: &sysknife_core::config::LacsConfig,
+    warnings: &mut Vec<String>,
+) -> VerifyOutcomeKind {
+    use sysknife_daemon::audit_chain::{AuditKey, VerifyOutcome};
+
+    let db_path = sysknife_core::default_database_path();
+    let key_path = std::env::var("SYSKNIFE_AUDIT_KEY_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            db_path
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .join("audit-key")
+        });
+
+    if !key_path.exists() {
+        warnings.push(format!("audit key not found at {}", key_path.display()));
+        return VerifyOutcomeKind::Unknown;
+    }
+
+    let key = match AuditKey::load_or_generate(&key_path) {
+        Ok(k) => k,
+        Err(e) => {
+            warnings.push(format!("audit key load failed: {e}"));
+            return VerifyOutcomeKind::Unknown;
+        }
+    };
+
+    let outcome = match lacs_config.storage.as_ref() {
+        Some(s) if s.backend.eq_ignore_ascii_case("postgres") => verify_postgres(s, &key).await,
+        _ => verify_sqlite(&db_path, &key).await,
+    };
+
+    match outcome {
+        VerifyOutcome::Intact { .. } => VerifyOutcomeKind::Intact,
+        VerifyOutcome::Broken { .. } => VerifyOutcomeKind::Broken,
+        VerifyOutcome::CannotVerify { reason } => {
+            warnings.push(format!("audit chain cannot be verified: {reason}"));
+            VerifyOutcomeKind::Unknown
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// sysknife_audit_verify helpers
+// ---------------------------------------------------------------------------
+
+async fn audit_verify_inner() -> AuditVerifyReport {
+    use sysknife_daemon::audit_chain::AuditKey;
+
+    let lacs_config = sysknife_core::config::LacsConfig::load();
+    let backend_label = match lacs_config.storage.as_ref() {
+        Some(s) if s.backend.eq_ignore_ascii_case("postgres") => "postgres".to_string(),
+        _ => sysknife_core::default_database_path().display().to_string(),
+    };
+
+    let db_path = sysknife_core::default_database_path();
+    let key_path = std::env::var("SYSKNIFE_AUDIT_KEY_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            db_path
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .join("audit-key")
+        });
+
+    if !key_path.exists() {
+        return cannot_verify_report(
+            backend_label,
+            format!(
+                "audit key not found at {}; the daemon generates this on first run, \
+                 or set $SYSKNIFE_AUDIT_KEY_PATH",
+                key_path.display()
+            ),
+        );
+    }
+
+    let key = match AuditKey::load_or_generate(&key_path) {
+        Ok(k) => k,
+        Err(e) => {
+            return cannot_verify_report(backend_label, format!("audit key load failed: {e}"));
+        }
+    };
+
+    let outcome = match lacs_config.storage.as_ref() {
+        Some(s) if s.backend.eq_ignore_ascii_case("postgres") => verify_postgres(s, &key).await,
+        _ => verify_sqlite(&db_path, &key).await,
+    };
+
+    outcome_to_report(outcome, backend_label)
+}
+
+fn outcome_to_report(
+    outcome: sysknife_daemon::audit_chain::VerifyOutcome,
+    backend: String,
+) -> AuditVerifyReport {
+    use sysknife_daemon::audit_chain::VerifyOutcome;
+    match outcome {
+        VerifyOutcome::Intact { rows_checked } => AuditVerifyReport {
+            status: "intact".to_string(),
+            rows_checked,
+            first_broken_seq: None,
+            first_broken_transaction_id: None,
+            expected: None,
+            actual: None,
+            reason: None,
+            backend,
+        },
+        VerifyOutcome::Broken {
+            rows_checked,
+            first_broken_seq,
+            first_broken_transaction_id,
+            expected,
+            actual,
+        } => AuditVerifyReport {
+            status: "broken".to_string(),
+            rows_checked,
+            first_broken_seq: Some(first_broken_seq),
+            first_broken_transaction_id: Some(first_broken_transaction_id),
+            expected: Some(expected),
+            actual: Some(actual),
+            reason: None,
+            backend,
+        },
+        VerifyOutcome::CannotVerify { reason } => cannot_verify_report(backend, reason),
+    }
+}
+
+fn cannot_verify_report(backend: String, reason: String) -> AuditVerifyReport {
+    AuditVerifyReport {
+        status: "cannot_verify".to_string(),
+        rows_checked: 0,
+        first_broken_seq: None,
+        first_broken_transaction_id: None,
+        expected: None,
+        actual: None,
+        reason: Some(reason),
+        backend,
     }
 }
 
@@ -415,15 +882,26 @@ mod tests {
     }
 
     #[test]
-    fn parse_max_risk_high() {
-        assert_eq!(parse_max_risk(Some("high")), Ok(2));
+    fn parse_max_risk_high_is_rejected() {
+        let err = parse_max_risk(Some("high")).unwrap_err();
+        assert!(err.contains("not allowed via MCP"), "got: {err}");
+    }
+
+    #[test]
+    fn parse_max_risk_is_case_insensitive() {
+        assert_eq!(parse_max_risk(Some("LOW")), Ok(0));
+        assert_eq!(parse_max_risk(Some("Low")), Ok(0));
+        assert_eq!(parse_max_risk(Some("Medium")), Ok(1));
+        assert_eq!(parse_max_risk(Some("MEDIUM")), Ok(1));
+        // "high" is rejected regardless of case
+        assert!(parse_max_risk(Some("HIGH")).is_err());
+        assert!(parse_max_risk(Some("High")).is_err());
     }
 
     #[test]
     fn parse_max_risk_unknown_returns_err() {
         assert!(parse_max_risk(Some("extreme")).is_err());
         assert!(parse_max_risk(Some("")).is_err());
-        assert!(parse_max_risk(Some("HIGH")).is_err()); // case-sensitive
     }
 
     // -----------------------------------------------------------------------

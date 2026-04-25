@@ -388,10 +388,7 @@ mod tests {
     #[test]
     fn query_authorized_keys_missing_username_returns_error() {
         assert!(
-            matches!(
-                query_tool_to_action("query_authorized_keys", &empty_input()),
-                Err(_)
-            ),
+            query_tool_to_action("query_authorized_keys", &empty_input()).is_err(),
             "query_authorized_keys with no 'username' param should return Err"
         );
     }
@@ -431,15 +428,15 @@ mod tests {
     fn parameterized_query_tools_return_error_when_required_param_missing() {
         let empty = empty_input();
         assert!(
-            matches!(query_tool_to_action("query_logs", &empty), Err(_)),
+            query_tool_to_action("query_logs", &empty).is_err(),
             "query_logs with no 'unit' param should return Err"
         );
         assert!(
-            matches!(query_tool_to_action("query_flatpak_info", &empty), Err(_)),
+            query_tool_to_action("query_flatpak_info", &empty).is_err(),
             "query_flatpak_info with no 'app_id' param should return Err"
         );
         assert!(
-            matches!(query_tool_to_action("query_container_info", &empty), Err(_)),
+            query_tool_to_action("query_container_info", &empty).is_err(),
             "query_container_info with no 'name' param should return Err"
         );
     }

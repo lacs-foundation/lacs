@@ -2,7 +2,7 @@ use crate::audit_forward::AuditForwarder;
 use crate::policy::PolicyTable;
 use crate::store::{AuditStore, SqliteStore};
 use crate::transactions::{TransactionStore, TransactionStoreError};
-use crate::transport::grpc::{bind_unix_listener, ListenTarget, ListenTargetError};
+use crate::transport::listen::{bind_unix_listener, ListenTarget, ListenTargetError};
 use std::os::unix::net::UnixListener;
 use std::path::PathBuf;
 use std::sync::Arc;

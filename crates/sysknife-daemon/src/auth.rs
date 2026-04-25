@@ -76,7 +76,25 @@ pub fn validate_token_against_file(
         }
     };
     let stored = stored.trim();
-    if stored.is_empty() || stored != presented_token {
+    if stored.is_empty() {
+        return None;
+    }
+    // Constant-time comparison to prevent timing oracles on credentials.
+    // Using `==` here would allow an attacker to learn the stored token
+    // byte-by-byte from response-time differences. `subtle::ConstantTimeEq`
+    // returns a `Choice` that takes the same time regardless of how many
+    // leading bytes match. Length mismatch short-circuits — that is fine,
+    // the secret is the bytes of the token, not its length class.
+    if stored.len() != presented_token.len() {
+        return None;
+    }
+    use subtle::ConstantTimeEq;
+    if stored
+        .as_bytes()
+        .ct_eq(presented_token.as_bytes())
+        .unwrap_u8()
+        != 1
+    {
         return None;
     }
     Some(token_role())
@@ -240,6 +258,36 @@ mod tests {
         let path = dir.path().join("token");
         std::fs::write(&path, "\n").unwrap();
         assert_eq!(validate_token_against_file("", &path), None);
+    }
+
+    /// Regression test for the constant-time comparison path.
+    ///
+    /// We can't measure timing variance reliably in CI, so this just
+    /// documents intent: the comparator must return the same boolean
+    /// answer for an exact match, a wrong-prefix-same-length token, and a
+    /// wrong-suffix-same-length token. Equal-length non-matching inputs
+    /// are the path that would leak timing under a non-constant-time
+    /// compare; this test exercises that path.
+    #[test]
+    fn token_compare_rejects_equal_length_wrong_prefix_and_wrong_suffix() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("token");
+        // Stored token is exactly 9 bytes; both candidates below are also
+        // exactly 9 bytes, so the length-mismatch shortcut does not apply
+        // and we genuinely traverse the constant-time `ct_eq` path.
+        std::fs::write(&path, "abcdefghi").unwrap();
+
+        // Exact match → accepted.
+        assert_eq!(
+            validate_token_against_file("abcdefghi", &path),
+            Some(CallerRole::Dev)
+        );
+        // Equal-length, wrong first byte → rejected.
+        assert_eq!(validate_token_against_file("Xbcdefghi", &path), None);
+        // Equal-length, wrong last byte → rejected.
+        assert_eq!(validate_token_against_file("abcdefghX", &path), None);
+        // Equal-length, completely different → rejected.
+        assert_eq!(validate_token_against_file("zzzzzzzzz", &path), None);
     }
 
     // --- token_role() ---

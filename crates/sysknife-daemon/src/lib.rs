@@ -14,5 +14,5 @@ pub mod store;
 pub mod transactions;
 pub mod transport {
     pub mod framing;
-    pub mod grpc;
+    pub mod listen;
 }

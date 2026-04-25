@@ -15,7 +15,7 @@ use sysknife_daemon::executor::{ActionExecutor, ExecutionOutput, ExecutorError};
 use sysknife_daemon::state::{DaemonConfig, DaemonState};
 use sysknife_daemon::state_collector::CommandRunner;
 use sysknife_daemon::transactions::{NewTransaction, TransactionStore};
-use sysknife_daemon::transport::{framing::FramedStream, grpc::ListenTarget};
+use sysknife_daemon::transport::{framing::FramedStream, listen::ListenTarget};
 use sysknife_types::{CallerRole, JobState, RiskLevel};
 use tempfile::tempdir;
 use tokio::net::UnixStream;

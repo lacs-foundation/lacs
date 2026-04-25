@@ -14,12 +14,13 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 async-trait = "0.1"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal"] }
-tonic = { version = "0.14", features = ["transport"] }
 tracing = "0.1"
 uuid = { version = "1", features = ["serde", "v4"] }
 sha2 = "0.11"
 hmac = "0.13"
 hex = "0.4"
+subtle = "2"
+zeroize = { version = "1", features = ["derive"] }
 tokio-vsock = "0.7.2"
 
 # Postgres backend (#147). Cloud-provider compatible via rustls + webpki-roots.

@@ -61,6 +61,11 @@ pub enum AuditSinkSpec {
 /// One audit event handed to the forwarder. Mirrors the chain content
 /// captured at INSERT time so SIEM rules can correlate by `transaction_id`
 /// and `request_hash` against the local hash-chained log.
+///
+/// `final_status` is `None` for the preview-time event (no terminal state yet)
+/// and `Some` for the execute-time event emitted after `update_status`. SOC
+/// analysts watching the SIEM can therefore tell from the same event stream
+/// whether an action ran, succeeded, failed, or was rolled back.
 #[derive(Clone, Debug)]
 pub struct AuditEvent {
     pub seq: u64,
@@ -73,6 +78,7 @@ pub struct AuditEvent {
     pub chain_hash: String,
     pub key_id: String,
     pub caller_role: Option<String>,
+    pub final_status: Option<String>,
 }
 
 /// A handle the daemon writes to. Cheap to clone (Arc-wrapped sender +
@@ -235,6 +241,13 @@ pub fn format_rfc5424(event: &AuditEvent, facility: u8) -> String {
     // RFC 5424 §6.3 — structured data. Use a private enterprise number 32473
     // (RFC 5612 reserved test PEN) for the SD-ID; production deployments
     // should change this to their org's PEN.
+    //
+    // `terminal_status` is appended ONLY for the execute-time forward, so
+    // preview frames remain byte-for-byte unchanged.
+    let terminal_status_param = match &event.final_status {
+        Some(s) => format!(" terminal_status=\"{}\"", sd_escape(s)),
+        None => String::new(),
+    };
     let sd = format!(
         "[sysknife@32473 \
          seq=\"{}\" \
@@ -244,7 +257,7 @@ pub fn format_rfc5424(event: &AuditEvent, facility: u8) -> String {
          approval=\"{}\" \
          role=\"{}\" \
          chain_hash=\"{}\" \
-         key_id=\"{}\"]",
+         key_id=\"{}\"{terminal_status_param}]",
         event.seq,
         sd_escape(&event.transaction_id),
         sd_escape(&event.action_name),
@@ -338,6 +351,7 @@ mod tests {
             chain_hash: "deadbeef".to_string(),
             key_id: "v1".to_string(),
             caller_role: Some("Dev".to_string()),
+            final_status: None,
         }
     }
 
@@ -457,6 +471,21 @@ mod tests {
         // facility=23 (local7), severity=5 → PRI = 189.
         let frame = format_rfc5424(&sample_event(), 23);
         assert!(frame.starts_with("<189>1 "));
+    }
+
+    #[test]
+    fn terminal_status_emitted_when_present() {
+        // Execute-time forward carries the terminal JobState. SOC analysts
+        // need the SD-PARAM in the same frame as the chain hash so they can
+        // pivot from "did the action run?" to "what happened?" without
+        // joining against a second log source.
+        let mut e = sample_event();
+        e.final_status = Some("succeeded".to_string());
+        let frame = format_rfc5424(&e, 1);
+        assert!(
+            frame.contains("terminal_status=\"succeeded\""),
+            "frame missing terminal_status: {frame}"
+        );
     }
 
     // ── AuditForwarder behaviour ─────────────────────────────────────────

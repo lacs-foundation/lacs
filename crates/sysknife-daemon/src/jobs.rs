@@ -78,6 +78,10 @@ mod tests {
     use super::*;
     use sysknife_types::JobState;
 
+    // Test-table aliases — clippy flags the inline tuple type as too complex.
+    type ValidTransitionCase = (&'static str, fn() -> JobStateMachine, JobState);
+    type InvalidTransitionCase = (&'static str, fn() -> JobStateMachine, JobState, JobState);
+
     // -------------------------------------------------------------------------
     // 1. new_starts_in_queued
     // -------------------------------------------------------------------------
@@ -95,7 +99,7 @@ mod tests {
     fn valid_transitions() {
         // (label, setup_fn, from, to)
         // Each closure receives a fresh machine and puts it into `from` state.
-        let cases: &[(&str, fn() -> JobStateMachine, JobState)] = &[
+        let cases: &[ValidTransitionCase] = &[
             // Queued → Running
             (
                 "Queued->Running",
@@ -173,7 +177,7 @@ mod tests {
     // -------------------------------------------------------------------------
     #[test]
     fn invalid_transitions_return_error() {
-        let cases: &[(&str, fn() -> JobStateMachine, JobState, JobState)] = &[
+        let cases: &[InvalidTransitionCase] = &[
             // Queued → Succeeded (skip Running)
             (
                 "Queued->Succeeded",

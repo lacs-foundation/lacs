@@ -159,7 +159,7 @@ pub fn highest_risk(plan: &sysknife_brain::planner::Plan) -> Option<&PlanRiskLev
 // build_history_params (private helper)
 // ---------------------------------------------------------------------------
 
-fn build_history_params(
+pub(crate) fn build_history_params(
     limit: u32,
     status: Option<&str>,
     action: Option<&str>,
@@ -461,7 +461,7 @@ pub async fn run_audit_verify(args: AuditVerifyArgs, log: &Logger) -> Result<(),
     }
 }
 
-async fn verify_sqlite(
+pub(crate) async fn verify_sqlite(
     db_path: &std::path::Path,
     key: &sysknife_daemon::audit_chain::AuditKey,
 ) -> sysknife_daemon::audit_chain::VerifyOutcome {
@@ -493,7 +493,7 @@ async fn verify_sqlite(
     }
 }
 
-async fn verify_postgres(
+pub(crate) async fn verify_postgres(
     storage: &sysknife_core::config::StorageSection,
     key: &sysknife_daemon::audit_chain::AuditKey,
 ) -> sysknife_daemon::audit_chain::VerifyOutcome {
@@ -623,7 +623,7 @@ pub async fn run_intent(intent: String, opts: &RunOpts, log: &Logger) -> Result<
 
     let planner = LlmPlanner::from_config(config, Box::new(plan_client))
         .map_err(CliError::ConfigOrDaemon)?
-        .with_prefs_path(prefs_path())
+        .with_prefs_path(sysknife_core::config::prefs_path())
         .with_progress(progress_tx);
 
     // Layer 1: spinner — auto-hidden by indicatif when stderr is not a TTY.
@@ -929,15 +929,6 @@ pub async fn run_repl(opts: &RunOpts, log: &Logger) -> Result<(), CliError> {
 // ---------------------------------------------------------------------------
 // Private helpers
 // ---------------------------------------------------------------------------
-
-/// Path to the user preferences file (`~/.config/sysknife/prefs.md`).
-fn prefs_path() -> PathBuf {
-    let mut base = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/root"));
-    base.push(".config/sysknife/prefs.md");
-    base
-}
 
 /// Ask the user a yes/no question on stderr; return `true` iff they answer "y"
 /// or "yes" (case-insensitive).

@@ -7,7 +7,7 @@ use sysknife_daemon::dispatcher::{connection_handler, resolve_caller_role};
 use sysknife_daemon::policy::PolicyTable;
 use sysknife_daemon::state::{DaemonConfig, DaemonState};
 use sysknife_daemon::state_collector::RealCommandRunner;
-use sysknife_daemon::transport::grpc::{bind_unix_listener, ListenTarget};
+use sysknife_daemon::transport::listen::{bind_unix_listener, ListenTarget};
 use tokio::net::UnixListener;
 use tokio::sync::Semaphore;
 
@@ -104,7 +104,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         #[cfg(target_os = "linux")]
         ListenTarget::Vsock { port } => {
-            use sysknife_daemon::transport::grpc::bind_vsock_listener;
+            use sysknife_daemon::transport::listen::bind_vsock_listener;
             let listener = bind_vsock_listener(port)?;
             vsock_accept_loop(listener, state, runner, semaphore).await;
         }
@@ -326,7 +326,11 @@ async fn build_postgres_audit(
 #[cfg(test)]
 mod tests {
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn max_connections_is_reasonable() {
+        // The bounds are constants so clippy flags the assert as constant-valued —
+        // suppress because the *intent* is a regression guard against a future
+        // edit that pushes MAX_CONNECTIONS out of the safe range.
         assert!(
             super::MAX_CONNECTIONS >= 4,
             "MAX_CONNECTIONS {} too low; need at least one connection per shell + headroom",

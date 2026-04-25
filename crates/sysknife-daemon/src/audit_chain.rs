@@ -70,10 +70,38 @@ pub const HASH_HEX_LEN: usize = 64;
 /// `Clone` is intentional: the audit-verify CLI needs to load the key once
 /// and share it between the SQLite read-only path and the Postgres pool.
 /// The clone is cheap (`Vec<u8>` of 32 bytes + a short `String`).
-#[derive(Debug, Clone)]
+///
+/// `Debug` is implemented manually to redact `key_bytes`. The derived
+/// `Debug` would dump the raw HMAC bytes via any `tracing::debug!("{key:?}")`
+/// or `dbg!(key)` site, which would leak the audit secret into journald.
+/// We keep `key_id` visible because operators need to identify which key
+/// generation a record belongs to when triaging chain breaks.
+#[derive(Clone)]
 pub struct AuditKey {
     key_id: String,
     key_bytes: Vec<u8>,
+}
+
+impl std::fmt::Debug for AuditKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuditKey")
+            .field("key_id", &self.key_id)
+            .field(
+                "key_bytes",
+                &format_args!("<redacted {} bytes>", self.key_bytes.len()),
+            )
+            .finish()
+    }
+}
+
+/// Zero `key_bytes` on drop so a freed allocation cannot be scraped from
+/// the heap. Pairs with the manual `Debug` impl above; together they keep
+/// the HMAC secret out of logs and out of post-free memory.
+impl Drop for AuditKey {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.key_bytes.zeroize();
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -227,7 +255,16 @@ fn fill_random(buf: &mut [u8]) -> std::io::Result<()> {
 ///
 /// The canonical serialisation is stable across SQLite/Postgres backends.
 /// Each field is emitted as `tag<RS>value<US>` where `RS = 0x1E` (record
-/// separator) and `US = 0x1F` (field separator). Inside a value, the four
+/// separator) and `US = 0x1F` (field separator).
+///
+/// **Note on RS/US semantics:** the byte names match ASCII RS (`0x1E`) and
+/// US (`0x1F`), but our usage swaps the conventional record/unit roles —
+/// here RS separates fields **within** a record (between the tag and its
+/// value) and US **terminates** the record (between successive fields).
+/// The names are kept for byte-level traceability against the canonical
+/// buffer, not as a claim about ASCII C0 conventions.
+///
+/// Inside a value, the four
 /// bytes `\\`, NUL, `RS`, `US` are escaped to `\\\\`, `\\0`, `\\1E`, `\\1F`
 /// respectively. The escape table is **prefix-free** (every escape starts
 /// with `\\`), so any value can be injected without ambiguity. See
@@ -714,5 +751,68 @@ mod tests {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
         let result = AuditKey::load_or_generate(&path);
         assert!(matches!(result, Err(AuditKeyError::KeyTooShort { .. })));
+    }
+
+    // ── Debug redaction (HI-17 secret hygiene) ────────────────────────────
+
+    /// `Debug` must never expose the HMAC key material — neither raw bytes,
+    /// nor their hex encoding. A derived `Debug` would dump the bytes the
+    /// moment anyone wrote `tracing::debug!("{key:?}")`.
+    #[test]
+    fn debug_redacts_key_bytes_and_their_hex_encoding() {
+        // Use a distinctive byte pattern so accidental leaks are obvious.
+        let raw = (0u8..32).collect::<Vec<u8>>();
+        let key = AuditKey::from_bytes(raw.clone());
+        let dbg = format!("{key:?}");
+
+        assert!(
+            dbg.contains("redacted"),
+            "Debug output must contain the literal 'redacted' marker, got: {dbg}"
+        );
+
+        // Hex encoding of the bytes must NOT appear, in either case.
+        let hex_lower = hex::encode(&raw);
+        let hex_upper = hex::encode_upper(&raw);
+        assert!(
+            !dbg.contains(&hex_lower),
+            "Debug output leaks lowercase hex of key bytes: {dbg}"
+        );
+        assert!(
+            !dbg.contains(&hex_upper),
+            "Debug output leaks uppercase hex of key bytes: {dbg}"
+        );
+
+        // Each individual byte's two-hex-char form must also be absent. This
+        // catches the case where a future change splits the bytes across the
+        // formatter and prints them piecewise.
+        for b in &raw {
+            let pair = format!("{b:02x}");
+            // 1-byte values 0x00..0x0f render as "00".."0f" — too short to
+            // assert against safely (collides with key_id "v1" etc.). Only
+            // check 2-char forms that cannot incidentally match the rest of
+            // the Debug output.
+            if *b >= 0x10 && pair != "1e" && pair != "1f" {
+                assert!(
+                    !dbg.contains(&pair),
+                    "Debug output leaks byte {b:#04x} as {pair:?}: {dbg}"
+                );
+            }
+        }
+    }
+
+    /// Operators triaging a chain break need to know which key generation
+    /// produced a row. `key_id` is not secret and must remain visible.
+    #[test]
+    fn debug_preserves_key_id() {
+        let key = AuditKey::from_bytes(vec![0xff; 32]);
+        let dbg = format!("{key:?}");
+        assert!(
+            dbg.contains("key_id"),
+            "Debug output must label the key_id field: {dbg}"
+        );
+        assert!(
+            dbg.contains(CURRENT_KEY_ID),
+            "Debug output must contain the key_id value {CURRENT_KEY_ID:?}: {dbg}"
+        );
     }
 }

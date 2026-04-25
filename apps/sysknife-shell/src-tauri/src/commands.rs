@@ -181,7 +181,7 @@ impl ShellCommandState {
         let env_result = BrainConfig::from_env();
         let fallback = env_result.is_err();
         let config = env_result.unwrap_or_else(|err| {
-            eprintln!("[LACS WARNING] Brain config error: {err}. Falling back to Ollama defaults.");
+            eprintln!("[sysknife-shell WARNING] Brain config error: {err}. Falling back to Ollama defaults.");
             BrainConfig::ollama_defaults()
         });
         let brain_config = BrainConfigResponse {
@@ -191,7 +191,7 @@ impl ShellCommandState {
         };
         let planner = LlmPlanner::from_config(config, build_state_client()).unwrap_or_else(|err| {
             eprintln!(
-                "[LACS WARNING] Failed to build LLM provider: {err}. \
+                "[sysknife-shell WARNING] Failed to build LLM provider: {err}. \
                  Check SYSKNIFE_LLM_PROVIDER and related env vars."
             );
             LlmPlanner::from_config(BrainConfig::ollama_defaults(), build_state_client())
@@ -379,13 +379,21 @@ pub async fn review_execution(
 }
 
 #[tauri::command]
-pub fn cancel_job(app: AppHandle, job_id: String) -> Result<(), ShellError> {
-    // Forward cancellation to daemon when daemon IPC wires cancellation support.
-    // For now emits a local event so the frontend can transition to idle.
-    if let Err(e) = app.emit("sysknife:job-canceled", job_id) {
-        eprintln!("[sysknife-shell] failed to emit sysknife:job-canceled: {e}");
-    }
-    Ok(())
+pub fn cancel_job(_app: AppHandle, _job_id: String) -> Result<(), ShellError> {
+    // The daemon does not yet expose a cancellation endpoint. Emitting a local
+    // `sysknife:job-canceled` event would have made the GUI *look* like the
+    // job stopped while the daemon kept executing — a particularly nasty
+    // failure mode for high-risk operations. Refuse explicitly until the
+    // daemon-side hook lands; the frontend can present "cancellation not
+    // supported yet" rather than silently desyncing from reality.
+    Err(ShellError {
+        code: "not_implemented".to_string(),
+        message: "cancel_job: daemon does not yet support job cancellation. \
+                  Wait for the running job to complete or terminate the daemon \
+                  process to abort it."
+            .to_string(),
+        system_changed: false,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -593,9 +601,15 @@ fn detect_ram_mb() -> Option<u64> {
 }
 
 /// Query Ollama API for available models.
+///
+/// Reads `SYSKNIFE_OLLAMA_URL` first (the canonical SysKnife-namespaced
+/// override), falling back to the upstream `OLLAMA_HOST` for users who already
+/// have it set system-wide for the `ollama` CLI. Defaults to localhost when
+/// neither is set.
 async fn query_ollama_tags() -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
-    let base_url =
-        std::env::var("OLLAMA_HOST").unwrap_or_else(|_| "http://localhost:11434".to_string());
+    let base_url = std::env::var("SYSKNIFE_OLLAMA_URL")
+        .or_else(|_| std::env::var("OLLAMA_HOST"))
+        .unwrap_or_else(|_| "http://localhost:11434".to_string());
     let url = format!("{}/api/tags", base_url);
 
     let client = reqwest::Client::builder()
