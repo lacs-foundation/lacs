@@ -20,7 +20,7 @@
 //! the LLM-boundary layer that lowers the probability of the attack succeeding
 //! in the first place.
 //!
-//! ## Approach (April 2026 best practice)
+//! ## Approach
 //!
 //! 1. **Spotlighting** (Microsoft Build 2025; OWASP LLM01:2025 cheat sheet) —
 //!    wrap untrusted text in a delimited envelope (`<untrusted_tool_output>`)
@@ -54,7 +54,52 @@ pub const MAX_OUTPUT_BYTES: usize = 8 * 1024;
 pub struct SanitizedToolOutput(String);
 
 impl SanitizedToolOutput {
+    /// Consume the envelope and produce a `ToolResultBlock` ready to feed
+    /// back to the LLM.
+    ///
+    /// This is the **only** sanctioned way to turn a `SanitizedToolOutput`
+    /// into a wire-bound message — the conversion is fused with the
+    /// envelope unwrap so a caller cannot accidentally pass the raw
+    /// `String` somewhere else (logging, persistence, a different role's
+    /// content) where the spotlighting envelope would be lost.
+    pub fn into_tool_result(
+        self,
+        tool_use_id: String,
+        call_id: Option<String>,
+    ) -> crate::provider::ToolResultBlock {
+        self.into_tool_result_with_error(tool_use_id, call_id, false)
+    }
+
+    /// As [`into_tool_result`], but flagged with `is_error = true` so the
+    /// LLM treats the message as a failure response.
+    pub fn into_error_tool_result(
+        self,
+        tool_use_id: String,
+        call_id: Option<String>,
+    ) -> crate::provider::ToolResultBlock {
+        self.into_tool_result_with_error(tool_use_id, call_id, true)
+    }
+
+    fn into_tool_result_with_error(
+        self,
+        tool_use_id: String,
+        call_id: Option<String>,
+        is_error: bool,
+    ) -> crate::provider::ToolResultBlock {
+        crate::provider::ToolResultBlock {
+            tool_use_id,
+            call_id,
+            content: self.0,
+            is_error,
+        }
+    }
+
     /// Consume the envelope and return the wrapped string.
+    ///
+    /// **Prefer [`into_tool_result`].**  The raw string lacks any compile-
+    /// time guarantee that it will be re-wrapped in a `ToolResultBlock`;
+    /// this method exists only for tests and one-off interop with code that
+    /// genuinely needs the unwrapped envelope (e.g. snapshot tests).
     pub fn into_inner(self) -> String {
         self.0
     }
@@ -221,7 +266,7 @@ fn next_char_boundary(s: &str, i: usize) -> usize {
 ///
 /// - **Tag block** `U+E0000..=U+E007F` — invisible carriers used by 2024–2025
 ///   "Unicode tag" injection attacks.
-/// - **Private Use Area** `U+E080..=U+F8FF`, `U+F0000..=U+FFFFD`, `U+100000..=U+10FFFD` —
+/// - **Private Use Area** `U+E000..=U+F8FF`, `U+F0000..=U+FFFFD`, `U+100000..=U+10FFFD` —
 ///   no agreed semantics; an attacker can encode anything.
 /// - **Bidirectional and zero-width formatting** controls
 ///   (`U+200B..=U+200F`, `U+202A..=U+202E`, `U+2066..=U+2069`, `U+FEFF`) —
@@ -452,6 +497,38 @@ mod tests {
         let normalised = normalise_free_text(&raw);
         // Must not panic — UTF-8 boundary respected. Marker present.
         assert!(normalised.ends_with("[...truncated]"));
+    }
+
+    #[test]
+    fn truncation_respects_4_byte_chars_at_every_boundary() {
+        // Emoji and ZWJ sequences are 4 bytes per scalar value. The truncation
+        // budget is `MAX_OUTPUT_BYTES - len("\n[...truncated]")` = 8177 bytes.
+        // We construct three inputs that place a 4-byte 😀 (U+1F600, bytes
+        // f0 9f 98 80) such that the budget falls exactly 1, 2, or 3 bytes
+        // INTO the emoji's 4-byte sequence. truncate_with_marker must walk
+        // back to the start of the emoji each time — never split it — so the
+        // resulting string stays valid UTF-8.
+        for offset in [1, 2, 3] {
+            let head =
+                "a".repeat(MAX_OUTPUT_BYTES.saturating_sub("\n[...truncated]".len() + offset));
+            let mut raw = head;
+            raw.push('😀'); // 4 bytes — first `offset` bytes fall inside budget
+            raw.push_str(&"b".repeat(MAX_OUTPUT_BYTES));
+
+            let normalised = normalise_free_text(&raw);
+            assert!(
+                normalised.is_char_boundary(normalised.len()),
+                "offset={offset}: truncation produced invalid UTF-8 length"
+            );
+            // Sanity: result must be valid UTF-8 (Rust strings already are,
+            // but assert it round-trips through bytes back to a String).
+            let bytes = normalised.as_bytes();
+            assert!(
+                std::str::from_utf8(bytes).is_ok(),
+                "offset={offset}: truncated string is not valid UTF-8"
+            );
+            assert!(normalised.ends_with("[...truncated]"));
+        }
     }
 
     // ------------------------------------------------------------------

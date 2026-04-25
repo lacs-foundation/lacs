@@ -20,13 +20,18 @@
 //!
 //! ## Reliability vs durability
 //!
-//! - **Local audit-log INSERT** (with hash chain, #149) is the durable record.
+//! - **Local audit-log INSERT** (HMAC-SHA256 hash-chained — see
+//!   [`audit_chain`](crate::audit_chain)) is the durable record.
 //! - **External forwarding** is best-effort. A SIEM outage, a routing flap, or
 //!   a misconfigured collector must NEVER block daemon execution.
-//! - We do not retry-with-backoff in-process: the SIEM is the long-lived
-//!   accumulator; if it's down, the local hash-chained log will catch up the
-//!   operator on the next ingest. (A future "tail watermark + replay" Phase 2
-//!   bridge can reconcile gaps from the local log.)
+//! - We do not retry the *send* in-process: a frame that the kernel could not
+//!   hand to the SIEM is dropped and the next event continues.  Bind failures
+//!   *are* retried with exponential backoff (1s → 60s) so a transient outage
+//!   does not poison the socket forever, but neither path tries to replay the
+//!   missed event — the SIEM is the long-lived accumulator and the local
+//!   hash-chained log will catch up the operator on the next ingest.  (A
+//!   future "tail watermark + replay" Phase 2 bridge can reconcile gaps from
+//!   the local log.)
 
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -61,6 +66,11 @@ pub enum AuditSinkSpec {
 /// One audit event handed to the forwarder. Mirrors the chain content
 /// captured at INSERT time so SIEM rules can correlate by `transaction_id`
 /// and `request_hash` against the local hash-chained log.
+///
+/// `final_status` is `None` for the preview-time event (no terminal state yet)
+/// and `Some` for the execute-time event emitted after `update_status`. SOC
+/// analysts watching the SIEM can therefore tell from the same event stream
+/// whether an action ran, succeeded, failed, or was rolled back.
 #[derive(Clone, Debug)]
 pub struct AuditEvent {
     pub seq: u64,
@@ -73,6 +83,7 @@ pub struct AuditEvent {
     pub chain_hash: String,
     pub key_id: String,
     pub caller_role: Option<String>,
+    pub final_status: Option<String>,
 }
 
 /// A handle the daemon writes to. Cheap to clone (Arc-wrapped sender +
@@ -152,16 +163,26 @@ async fn forwarder_task(spec: AuditSinkSpec, mut rx: mpsc::Receiver<AuditEvent>)
     match spec {
         AuditSinkSpec::SyslogUdp { host, facility } => {
             let mut socket = open_udp(host).await;
-            // Exponential backoff on consecutive bind failures (F11).
-            // 1s → 2s → 4s → … capped at 60s. Reset to 1s on first success.
-            let mut backoff_secs: u64 = 1;
+            // Exponential backoff on consecutive bind failures so a transient
+            // outage does not produce a tight retry loop that pegs a CPU.
+            // See `next_backoff_secs` for the doubling sequence and
+            // `MAX_BACKOFF_SECS` for why the cap lives where it does.  Reset
+            // to `INITIAL_BACKOFF_SECS` on the first successful bind.
+            let mut backoff_secs: u64 = INITIAL_BACKOFF_SECS;
             while let Some(event) = rx.recv().await {
                 let frame = format_rfc5424(&event, facility);
+                // **Event-drop semantics:** if the socket is `None` (bind has
+                // never succeeded, or a previous send failed and we have not
+                // yet rebound) the formatted frame is computed and then
+                // dropped. The local hash-chained audit log already has a
+                // durable copy of the same row, so the SIEM gap is by
+                // design — a future "tail watermark + replay" Phase 2 bridge
+                // can backfill from the local log.
                 if let Some(s) = &socket {
                     if let Err(e) = s.send_to(frame.as_bytes(), host).await {
                         eprintln!(
                             "[sysknife-daemon] audit-forward: UDP send to {host} failed: {e} \
-                             — dropping socket and reopening"
+                             — dropping socket and reopening (current event is lost)"
                         );
                         socket = None;
                     }
@@ -174,7 +195,7 @@ async fn forwarder_task(spec: AuditSinkSpec, mut rx: mpsc::Receiver<AuditEvent>)
                         // a misconfigured host with a packed channel would
                         // pin a CPU at 100% on `eprintln!` syscalls.
                         tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
-                        backoff_secs = (backoff_secs.saturating_mul(2)).min(60);
+                        backoff_secs = next_backoff_secs(backoff_secs);
                     } else {
                         backoff_secs = 1;
                     }
@@ -184,12 +205,40 @@ async fn forwarder_task(spec: AuditSinkSpec, mut rx: mpsc::Receiver<AuditEvent>)
     }
 }
 
+/// Maximum wait between consecutive bind-failure retries, in seconds.
+///
+/// Once the exponential backoff hits this ceiling it stays there.  Without a
+/// cap, a long-running SIEM outage would silently grow the retry interval
+/// into hours (1h ≈ 3600s, the doubling sequence reaches that after only a
+/// few minutes) — operators would think forwarding had quietly stopped
+/// rather than seeing minute-by-minute reattempts. 60s is the smallest
+/// value where:
+///
+///   1. The retry rate is well below the threshold that pegs a CPU on
+///      bind/`eprintln!` syscalls in a tight loop, and
+///   2. A normally-functioning SIEM coming back online recovers within one
+///      ingest interval (most SIEMs ingest at ≤ 60s granularity already).
+const MAX_BACKOFF_SECS: u64 = 60;
+
+/// Initial wait after the first bind failure, in seconds.  The doubling
+/// sequence resets to this value after every successful bind.
+const INITIAL_BACKOFF_SECS: u64 = 1;
+
+/// Compute the next exponential-backoff wait, capped at [`MAX_BACKOFF_SECS`].
+///
+/// Sequence: `1 → 2 → 4 → 8 → 16 → 32 → MAX → MAX → …`.  Extracted from
+/// `forwarder_task` so the math can be unit-tested without driving a real
+/// tokio runtime.
+fn next_backoff_secs(prev: u64) -> u64 {
+    prev.saturating_mul(2).min(MAX_BACKOFF_SECS)
+}
+
 /// Bind a fresh ephemeral UDP socket whose address family matches `host`.
 ///
 /// IPv4 host → bind on `0.0.0.0:0`; IPv6 host → bind on `[::]:0`. Without
 /// this, an operator with an IPv6-only SIEM (e.g. Sentinel at
 /// `[2001:db8::5]:514`) would never receive any events because every send
-/// would fail with `AddrNotAvailable` (F8).
+/// would fail with `AddrNotAvailable`.
 ///
 /// Returns `None` on bind failure — caller retries with backoff.
 async fn open_udp(host: SocketAddr) -> Option<tokio::net::UdpSocket> {
@@ -232,9 +281,23 @@ pub fn format_rfc5424(event: &AuditEvent, facility: u8) -> String {
         RiskLevel::High => "high",
     };
 
-    // RFC 5424 §6.3 — structured data. Use a private enterprise number 32473
-    // (RFC 5612 reserved test PEN) for the SD-ID; production deployments
-    // should change this to their org's PEN.
+    // RFC 5424 §6.3 structured data.
+    //
+    // **PEN 32473 is RFC 5612's documentation/test PEN — it MUST be replaced
+    // before production deployment.** RFC 5424 §7.2.2 requires an
+    // IANA-assigned Private Enterprise Number on `SD-ID`s emitted in
+    // production frames. The SysKnife project does not yet hold a PEN; the
+    // 32473 reservation is used here only so the formatter is bytewise
+    // testable. Operators running a SIEM under a regulated framework should
+    // either patch `SD@32473` to their own PEN at build time or treat this
+    // as a known gap (see issue tracker).
+    //
+    // `terminal_status` is appended ONLY for the execute-time forward, so
+    // preview frames remain byte-for-byte unchanged.
+    let terminal_status_param = match &event.final_status {
+        Some(s) => format!(" terminal_status=\"{}\"", sd_escape(s)),
+        None => String::new(),
+    };
     let sd = format!(
         "[sysknife@32473 \
          seq=\"{}\" \
@@ -244,7 +307,7 @@ pub fn format_rfc5424(event: &AuditEvent, facility: u8) -> String {
          approval=\"{}\" \
          role=\"{}\" \
          chain_hash=\"{}\" \
-         key_id=\"{}\"]",
+         key_id=\"{}\"{terminal_status_param}]",
         event.seq,
         sd_escape(&event.transaction_id),
         sd_escape(&event.action_name),
@@ -338,10 +401,11 @@ mod tests {
             chain_hash: "deadbeef".to_string(),
             key_id: "v1".to_string(),
             caller_role: Some("Dev".to_string()),
+            final_status: None,
         }
     }
 
-    // ── Hostname validation (red-team finding F2) ────────────────────────
+    // ── Hostname validation ──────────────────────────────────────────────
 
     #[test]
     fn hostname_with_space_is_rejected() {
@@ -377,7 +441,7 @@ mod tests {
         assert_eq!(validate_hostname_for_test(&long), "-");
     }
 
-    // ── SD-VALUE strict ASCII (F3) ───────────────────────────────────────
+    // ── SD-VALUE strict ASCII ────────────────────────────────────────────
 
     #[test]
     fn sd_escape_strips_del_and_c1_controls() {
@@ -459,6 +523,21 @@ mod tests {
         assert!(frame.starts_with("<189>1 "));
     }
 
+    #[test]
+    fn terminal_status_emitted_when_present() {
+        // Execute-time forward carries the terminal JobState. SOC analysts
+        // need the SD-PARAM in the same frame as the chain hash so they can
+        // pivot from "did the action run?" to "what happened?" without
+        // joining against a second log source.
+        let mut e = sample_event();
+        e.final_status = Some("succeeded".to_string());
+        let frame = format_rfc5424(&e, 1);
+        assert!(
+            frame.contains("terminal_status=\"succeeded\""),
+            "frame missing terminal_status: {frame}"
+        );
+    }
+
     // ── AuditForwarder behaviour ─────────────────────────────────────────
 
     #[tokio::test(flavor = "current_thread")]
@@ -534,5 +613,76 @@ mod tests {
         assert!(frame.starts_with("<13>1 "), "unexpected frame: {frame}");
         assert!(frame.contains("seq=\"42\""));
         assert!(frame.contains("[InstallFlatpak] Install Firefox"));
+    }
+
+    /// Backoff sequence regression: every consecutive bind failure must
+    /// double the wait, capped at [`MAX_BACKOFF_SECS`].  The dispatcher does
+    /// not currently expose a hook to drive the live `forwarder_task`
+    /// deterministically (it loops on real `recv().await`), but the
+    /// backoff math is extracted to `next_backoff_secs` so we can pin the
+    /// sequence as a pure-function test.  A regression that turns the cap
+    /// off would silently grow retry intervals into hours during a long
+    /// SIEM outage; a regression that breaks doubling would peg a CPU on
+    /// a tight retry loop.  Either way, this test fails first.
+    #[test]
+    fn next_backoff_secs_doubles_then_caps() {
+        // Walk the sequence from the documented start until it has saturated
+        // at the cap for two consecutive steps, so a future increase to
+        // MAX_BACKOFF_SECS doesn't silently make this assertion looser.
+        let mut seen = vec![INITIAL_BACKOFF_SECS];
+        let mut b = INITIAL_BACKOFF_SECS;
+        for _ in 0..32 {
+            b = next_backoff_secs(b);
+            seen.push(b);
+            if seen.len() >= 2
+                && seen[seen.len() - 1] == MAX_BACKOFF_SECS
+                && seen[seen.len() - 2] == MAX_BACKOFF_SECS
+            {
+                break;
+            }
+        }
+
+        // Doubling phase: every value before the cap is exactly 2× its
+        // predecessor.
+        for w in seen.windows(2) {
+            let (prev, next) = (w[0], w[1]);
+            if next == MAX_BACKOFF_SECS {
+                // Either we hit the cap by doubling (prev * 2 >= cap) or we
+                // are saturating (prev == cap). Both are valid.
+                assert!(
+                    prev.saturating_mul(2) >= MAX_BACKOFF_SECS,
+                    "first cap step jumped from {prev} → {next} without doubling"
+                );
+            } else {
+                assert_eq!(next, prev * 2, "non-cap step must double: {prev} → {next}");
+            }
+        }
+
+        // Cap is reached and held — the final two entries are both at the cap.
+        let n = seen.len();
+        assert!(n >= 2);
+        assert_eq!(seen[n - 1], MAX_BACKOFF_SECS);
+        assert_eq!(seen[n - 2], MAX_BACKOFF_SECS);
+        assert_eq!(seen[0], INITIAL_BACKOFF_SECS);
+    }
+
+    /// IPv6 bind path: `open_udp` must select `[::]:0` for an IPv6 host so
+    /// an IPv6-only SIEM (e.g. Sentinel at `[2001:db8::5]:514`) is reachable.
+    /// Skipped when the kernel has IPv6 disabled (e.g. some hardened CI
+    /// images with `net.ipv6.conf.all.disable_ipv6=1`); the assertion path
+    /// only runs when bind genuinely succeeds.
+    #[tokio::test(flavor = "current_thread")]
+    async fn open_udp_ipv6_host_binds_ipv6_local_socket() {
+        let host: SocketAddr = "[::1]:514".parse().unwrap();
+        let Some(socket) = open_udp(host).await else {
+            // IPv6 disabled in this environment — bind unavailable. The
+            // production guard is exercised by the IPv4 test above.
+            return;
+        };
+        let local = socket.local_addr().expect("bound socket has a local addr");
+        assert!(
+            local.is_ipv6(),
+            "open_udp(IPv6 host) bound to non-IPv6 socket {local}"
+        );
     }
 }

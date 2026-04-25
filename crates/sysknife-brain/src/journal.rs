@@ -22,8 +22,11 @@
 //! journalctl --setup-keys
 //! ```
 //!
-//! Verify log integrity with `journalctl --verify`. This provides the
-//! tamper-evident audit trail required for ISO/IEC 42001 and SOC 2.
+//! Verify log integrity with `journalctl --verify`. Forward Secure Sealing
+//! is one of the mechanisms operators commonly cite when meeting their
+//! tamper-evident audit-trail obligations under ISO/IEC 42001, SOC 2, and
+//! similar frameworks; the standards themselves do not mandate FSS
+//! specifically.
 
 use std::os::unix::net::UnixDatagram;
 use std::path::Path;

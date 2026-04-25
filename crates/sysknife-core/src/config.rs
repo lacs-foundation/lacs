@@ -4,7 +4,7 @@
 //!
 //! 1. Environment variables (always win — set by the caller or systemd unit)
 //! 2. Values in `~/.config/sysknife/config.toml`
-//! 3. Built-in defaults (defined in `sysknife-brain` and `sysknife-core`))
+//! 3. Built-in defaults (defined in `sysknife-brain` and `sysknife-core`)
 //!
 //! # Usage
 //!
@@ -109,8 +109,59 @@ fn default_storage_backend() -> String {
     "sqlite".to_string()
 }
 
+/// Type-state projection of [`StorageSection`] with cross-field invariants
+/// enforced.
+///
+/// `StorageSection` is deserialized from `config.toml` with relaxed shape so
+/// existing user configs continue to load — `backend: String`, `url:
+/// Option<String>`. That means a misconfigured `backend = "postgres"` with
+/// no `url` only fails at daemon startup with a string-mismatch error, and
+/// callers downstream of the parse have to keep re-checking the
+/// invariant.
+///
+/// `StorageBackend` is the parsed form: variants carry exactly the fields
+/// they require, so it is impossible to construct a `Postgres` variant
+/// without a URL or to ask for a pool configuration in a `Sqlite` variant.
+/// Use [`StorageSection::parsed`] at the boundary; downstream code
+/// matches on the enum.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StorageBackend {
+    Sqlite,
+    Postgres {
+        url: String,
+        pool: StoragePoolSection,
+    },
+}
+
+impl StorageSection {
+    /// Project the relaxed deserialised form into the type-state-checked
+    /// [`StorageBackend`] enum.  Returns a human-readable error when the
+    /// `(backend, url, pool)` tuple is inconsistent (unknown backend,
+    /// `postgres` without `url`, etc.).
+    pub fn parsed(&self) -> Result<StorageBackend, String> {
+        match self.backend.to_ascii_lowercase().as_str() {
+            "sqlite" => Ok(StorageBackend::Sqlite),
+            "postgres" => {
+                let url = self
+                    .url
+                    .as_ref()
+                    .ok_or_else(|| {
+                        "[storage] backend = \"postgres\" requires `url = \"postgres://...\"`"
+                            .to_string()
+                    })?
+                    .clone();
+                let pool = self.pool.clone().unwrap_or_default();
+                Ok(StorageBackend::Postgres { url, pool })
+            }
+            other => Err(format!(
+                "[storage] unknown backend {other:?}; expected \"sqlite\" or \"postgres\""
+            )),
+        }
+    }
+}
+
 /// `[storage.pool]` section.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize)]
 pub struct StoragePoolSection {
     /// Max connections in the pool. Default 8.
     pub max_connections: Option<u32>,
@@ -190,7 +241,9 @@ pub struct PolicySection {
 /// `[llm]` section.
 #[derive(Debug, Deserialize)]
 pub struct LlmSection {
-    /// LLM provider: `"ollama"` or `"anthropic"`. Maps to `SYSKNIFE_LLM_PROVIDER`.
+    /// LLM provider. One of: `"anthropic"`, `"ollama"`, `"openai"`,
+    /// `"gemini"`, `"groq"`, `"deepseek"`, `"mistral"`, `"xai"`.
+    /// Maps to `SYSKNIFE_LLM_PROVIDER`.
     pub provider: Option<String>,
     /// Model identifier. Maps to `SYSKNIFE_LLM_MODEL`.
     pub model: Option<String>,
@@ -371,6 +424,64 @@ fn set_if_absent(key: &str, value: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn storage_section_parses_sqlite_default() {
+        let s = StorageSection {
+            backend: "sqlite".to_string(),
+            url: None,
+            pool: None,
+        };
+        assert_eq!(s.parsed().unwrap(), StorageBackend::Sqlite);
+    }
+
+    #[test]
+    fn storage_section_parses_sqlite_case_insensitive() {
+        let s = StorageSection {
+            backend: "Sqlite".to_string(),
+            url: None,
+            pool: None,
+        };
+        assert_eq!(s.parsed().unwrap(), StorageBackend::Sqlite);
+    }
+
+    #[test]
+    fn storage_section_parses_postgres_with_url() {
+        let s = StorageSection {
+            backend: "postgres".to_string(),
+            url: Some("postgres://user@host/db".to_string()),
+            pool: None,
+        };
+        match s.parsed().unwrap() {
+            StorageBackend::Postgres { url, pool } => {
+                assert_eq!(url, "postgres://user@host/db");
+                assert_eq!(pool, StoragePoolSection::default());
+            }
+            other => panic!("expected Postgres, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn storage_section_rejects_postgres_without_url() {
+        let s = StorageSection {
+            backend: "postgres".to_string(),
+            url: None,
+            pool: None,
+        };
+        let err = s.parsed().unwrap_err();
+        assert!(err.contains("requires `url"), "got: {err}");
+    }
+
+    #[test]
+    fn storage_section_rejects_unknown_backend() {
+        let s = StorageSection {
+            backend: "sqlit".to_string(), // typo
+            url: None,
+            pool: None,
+        };
+        let err = s.parsed().unwrap_err();
+        assert!(err.contains("unknown backend"), "got: {err}");
+    }
 
     #[test]
     fn load_returns_default_when_file_absent() {
@@ -585,6 +696,48 @@ model = "qwen3:8b"
         let config = config_path();
         assert_eq!(prefs.parent(), config.parent());
         assert_eq!(prefs.file_name().unwrap(), "prefs.md");
+    }
+
+    /// XDG_CONFIG_HOME validation must reject obvious traversal attempts
+    /// (relative paths, `..` components).  The remaining attack surface is a
+    /// **symlink-based** redirect — an attacker who cannot write to
+    /// XDG_CONFIG_HOME but CAN create a symlink at the resolved path.  We
+    /// don't dereference symlinks today: this regression test pins that
+    /// behaviour so a future change either documents the trade-off or
+    /// upgrades to canonicalising the path.
+    #[test]
+    #[cfg(unix)]
+    fn xdg_config_home_does_not_follow_symlinks() {
+        use std::os::unix::fs::symlink;
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        let link = dir.path().join("link");
+        std::fs::create_dir_all(&real).unwrap();
+        symlink(&real, &link).unwrap();
+
+        let prev = std::env::var("XDG_CONFIG_HOME").ok();
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", &link);
+        }
+
+        let resolved = config_path();
+
+        // Restore env before asserting so a panic does not leak state.
+        match prev {
+            Some(v) => unsafe { std::env::set_var("XDG_CONFIG_HOME", v) },
+            None => unsafe { std::env::remove_var("XDG_CONFIG_HOME") },
+        }
+
+        // Today: symlinks ARE accepted (resolver only rejects relative + `..`),
+        // and the returned path keeps the symlink form. If a future change
+        // adds canonicalize(), this assert will need updating to point at
+        // `real` and the symlink-redirect threat will be neutralised.
+        assert!(
+            resolved.starts_with(&link),
+            "current resolver keeps the symlink path verbatim — got {resolved:?}"
+        );
     }
 
     use std::sync::Mutex;

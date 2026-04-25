@@ -1,5 +1,3 @@
-use std::convert::TryInto;
-
 use sysknife_proto::sysknife::v1 as proto;
 use sysknife_types::{
     BridgeError, CallerRole, FailureCategory, JobState, PreviewEnvelope, RequestEnvelope,
@@ -37,10 +35,10 @@ fn request_envelope_round_trips_through_proto() {
         request_id: "req-1".to_string(),
         params: serde_json::json!({"app_id": "org.mozilla.firefox"}),
         caller_role: CallerRole::Dev,
-        request_hash: "abc123".to_string(),
+        request_hash: sysknife_types::RequestHash::new("abc123".to_string()),
     };
 
-    let proto_value: proto::RequestEnvelope = value.clone().try_into().unwrap();
+    let proto_value: proto::RequestEnvelope = value.clone().into();
     let decoded = RequestEnvelope::try_from(proto_value).unwrap();
 
     assert_eq!(decoded, value);
@@ -57,10 +55,10 @@ fn preview_envelope_round_trips_through_proto() {
         reboot_required: false,
         rollback_available: true,
         warnings: vec!["network required".to_string()],
-        request_hash: "abc123".to_string(),
+        request_hash: sysknife_types::RequestHash::new("abc123".to_string()),
     };
 
-    let proto_value: proto::PreviewEnvelope = value.clone().try_into().unwrap();
+    let proto_value: proto::PreviewEnvelope = value.clone().into();
     let decoded = PreviewEnvelope::try_from(proto_value).unwrap();
 
     assert_eq!(decoded, value);
@@ -78,7 +76,7 @@ fn result_envelope_round_trips_through_proto() {
         transaction_id: "tx-42".to_string(),
     };
 
-    let proto_value: proto::ResultEnvelope = value.clone().try_into().unwrap();
+    let proto_value: proto::ResultEnvelope = value.clone().into();
     let decoded = ResultEnvelope::try_from(proto_value).unwrap();
 
     assert_eq!(decoded, value);
@@ -98,7 +96,7 @@ fn transaction_record_round_trips_through_proto() {
         warnings: vec!["restart recommended".to_string()],
     };
 
-    let proto_value: proto::TransactionRecord = value.clone().try_into().unwrap();
+    let proto_value: proto::TransactionRecord = value.clone().into();
     let decoded = TransactionRecord::try_from(proto_value).unwrap();
 
     assert_eq!(decoded, value);

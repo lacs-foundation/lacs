@@ -106,13 +106,12 @@ fn every_spec_action_is_recognised_by_executor() {
         if dispatcher_internal.contains(name) {
             continue;
         }
-        match build_action_spec(name, &json!({})) {
-            Err(sysknife_daemon::executor::ExecutorError::UnknownAction(_)) => {
-                missing.push(name);
-            }
-            // Ok, MissingParam, or InvalidParam all mean the name is recognised.
-            _ => {}
+        if let Err(sysknife_daemon::executor::ExecutorError::UnknownAction(_)) =
+            build_action_spec(name, &json!({}))
+        {
+            missing.push(name);
         }
+        // Ok, MissingParam, or InvalidParam all mean the name is recognised.
     }
     assert!(
         missing.is_empty(),

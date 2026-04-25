@@ -70,7 +70,7 @@ fn main() {
         .setup(|app| {
             #[cfg(any(test, feature = "demo"))]
             eprintln!(
-                "[LACS WARNING] Running with DemoStateClient — \
+                "[sysknife-shell WARNING] Running with DemoStateClient — \
                  system state is fabricated. \
                  Disable the 'demo' feature to query the live sysknife-daemon."
             );

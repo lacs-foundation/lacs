@@ -15,30 +15,41 @@ pub fn specs() -> Vec<ActionSpec> {
     ]
 }
 
-/// Run a Flatpak command as the target user via `sudo runuser -l`.
+/// Run a Flatpak command as the target user via `sudo runuser -u user -- flatpak <argv>`.
 ///
 /// Flatpak user installations live under `~/.local/share/flatpak/` and are
 /// accessed through the user's D-Bus session. The daemon runs as `sysknife`
-/// (a system user) with no user installation; `runuser -l` switches to the
-/// correct user environment so `--user` operations reach the right store.
-fn flatpak_as(username: &str, flatpak_cmd: &str) -> ActionMechanism {
+/// (a system user) with no user installation; `runuser -u` switches to the
+/// correct user UID without spawning a login shell, so each argv element is
+/// passed to `flatpak` verbatim.
+///
+/// **Shell-injection safety:** unlike `runuser -l user -c "<shell-string>"`,
+/// the `-u user -- argv` form bypasses the shell entirely. There is no string
+/// interpolation, no metacharacter expansion, and no quoting concern — every
+/// argument reaches `flatpak(1)` exactly as supplied. Callers must still pass
+/// arguments through `validated_safe_arg`/`validated_username` upstream so a
+/// hostile value cannot impersonate a flag (`-X`) or break out of the
+/// command's own option parser, but they no longer have to defend against
+/// shell metacharacters.
+fn flatpak_as(username: &str, args: &[&str]) -> ActionMechanism {
+    let mut argv: Vec<String> = vec![
+        "runuser".to_string(),
+        "-u".to_string(),
+        username.to_string(),
+        "--".to_string(),
+        "flatpak".to_string(),
+    ];
+    argv.extend(args.iter().map(|s| s.to_string()));
     ActionMechanism::Command {
         program: "sudo",
-        args: vec![
-            "runuser".to_string(),
-            "-l".to_string(),
-            username.to_string(),
-            "-c".to_string(),
-            flatpak_cmd.to_string(),
-        ],
+        args: argv,
     }
 }
 
 pub fn install_flatpak(username: &str, app_id: &str, remote: &str) -> ActionSpec {
-    let cmd = format!("flatpak install --user -y '{}' '{}'", remote, app_id);
     ActionSpec {
         action_name: "InstallFlatpak",
-        mechanism: flatpak_as(username, &cmd),
+        mechanism: flatpak_as(username, &["install", "--user", "-y", remote, app_id]),
         risk_level: RiskLevel::Medium,
         reboot_required: false,
         rollback_available: false,
@@ -46,10 +57,9 @@ pub fn install_flatpak(username: &str, app_id: &str, remote: &str) -> ActionSpec
 }
 
 pub fn remove_flatpak(username: &str, app_id: &str) -> ActionSpec {
-    let cmd = format!("flatpak uninstall --user -y '{}'", app_id);
     ActionSpec {
         action_name: "RemoveFlatpak",
-        mechanism: flatpak_as(username, &cmd),
+        mechanism: flatpak_as(username, &["uninstall", "--user", "-y", app_id]),
         risk_level: RiskLevel::Medium,
         reboot_required: false,
         rollback_available: false,
@@ -71,7 +81,7 @@ pub fn search_flatpak_apps(term: &str) -> ActionSpec {
 pub fn list_flatpak_remotes(username: &str) -> ActionSpec {
     ActionSpec {
         action_name: "ListFlatpakRemotes",
-        mechanism: flatpak_as(username, "flatpak remotes --user --columns=name,url"),
+        mechanism: flatpak_as(username, &["remotes", "--user", "--columns=name,url"]),
         risk_level: RiskLevel::Low,
         reboot_required: false,
         rollback_available: false,
@@ -79,13 +89,12 @@ pub fn list_flatpak_remotes(username: &str) -> ActionSpec {
 }
 
 pub fn add_flatpak_remote(username: &str, remote: &str, url: &str) -> ActionSpec {
-    let cmd = format!(
-        "flatpak remote-add --user --if-not-exists '{}' '{}'",
-        remote, url
-    );
     ActionSpec {
         action_name: "AddFlatpakRemote",
-        mechanism: flatpak_as(username, &cmd),
+        mechanism: flatpak_as(
+            username,
+            &["remote-add", "--user", "--if-not-exists", remote, url],
+        ),
         risk_level: RiskLevel::Medium,
         reboot_required: false,
         rollback_available: false,
@@ -93,10 +102,9 @@ pub fn add_flatpak_remote(username: &str, remote: &str, url: &str) -> ActionSpec
 }
 
 pub fn remove_flatpak_remote(username: &str, remote: &str) -> ActionSpec {
-    let cmd = format!("flatpak remote-delete --user '{}'", remote);
     ActionSpec {
         action_name: "RemoveFlatpakRemote",
-        mechanism: flatpak_as(username, &cmd),
+        mechanism: flatpak_as(username, &["remote-delete", "--user", remote]),
         risk_level: RiskLevel::Medium,
         reboot_required: false,
         rollback_available: false,
@@ -108,7 +116,12 @@ pub fn list_installed_flatpaks(username: &str) -> ActionSpec {
         action_name: "ListInstalledFlatpaks",
         mechanism: flatpak_as(
             username,
-            "flatpak list --user --app --columns=application,name,version,origin",
+            &[
+                "list",
+                "--user",
+                "--app",
+                "--columns=application,name,version,origin",
+            ],
         ),
         risk_level: RiskLevel::Low,
         reboot_required: false,
@@ -117,13 +130,13 @@ pub fn list_installed_flatpaks(username: &str) -> ActionSpec {
 }
 
 pub fn update_flatpak(username: &str, app_id: Option<&str>) -> ActionSpec {
-    let cmd = match app_id {
-        Some(id) => format!("flatpak update --user -y '{}'", id),
-        None => "flatpak update --user -y".to_string(),
+    let mechanism = match app_id {
+        Some(id) => flatpak_as(username, &["update", "--user", "-y", id]),
+        None => flatpak_as(username, &["update", "--user", "-y"]),
     };
     ActionSpec {
         action_name: "UpdateFlatpak",
-        mechanism: flatpak_as(username, &cmd),
+        mechanism,
         risk_level: RiskLevel::Medium,
         reboot_required: false,
         rollback_available: false,
@@ -131,10 +144,9 @@ pub fn update_flatpak(username: &str, app_id: Option<&str>) -> ActionSpec {
 }
 
 pub fn get_flatpak_app_info(username: &str, app_id: &str) -> ActionSpec {
-    let cmd = format!("flatpak info --user '{}'", app_id);
     ActionSpec {
         action_name: "GetFlatpakAppInfo",
-        mechanism: flatpak_as(username, &cmd),
+        mechanism: flatpak_as(username, &["info", "--user", app_id]),
         risk_level: RiskLevel::Low,
         reboot_required: false,
         rollback_available: false,

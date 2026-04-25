@@ -407,7 +407,7 @@ pub struct LlmPlanner {
     audit_log: Option<SafetyAuditLog>,
     prefs_path: Option<std::path::PathBuf>,
     progress_tx: Option<tokio::sync::mpsc::UnboundedSender<PlanEvent>>,
-    rate_limiter: Option<crate::rate_limit::RateLimiter>,
+    rate_limiter: Option<std::sync::Arc<crate::rate_limit::RateLimiter>>,
 }
 
 impl LlmPlanner {
@@ -471,14 +471,17 @@ impl LlmPlanner {
 
     /// Attach a [`RateLimiter`] to cap LLM requests per 60-second window.
     ///
-    /// When set, `plan_intent` and `summarize` call `check_and_consume` before
-    /// forwarding the request to the LLM provider. If the window is full, they
-    /// return [`PlanningError::RateLimitExceeded`] with the number of seconds
-    /// until a slot opens.
+    /// When set, `plan_intent` and `summarize` call
+    /// [`check_and_consume_async`] before forwarding the request to the LLM
+    /// provider. If the window is full, they return
+    /// [`PlanningError::RateLimitExceeded`] with the number of seconds until
+    /// a slot opens.
+    ///
+    /// [`check_and_consume_async`]: crate::rate_limit::RateLimiter::check_and_consume_async
     ///
     /// [`RateLimiter`]: crate::rate_limit::RateLimiter
     pub fn with_rate_limiter(mut self, rl: crate::rate_limit::RateLimiter) -> Self {
-        self.rate_limiter = Some(rl);
+        self.rate_limiter = Some(std::sync::Arc::new(rl));
         self
     }
 
@@ -600,10 +603,10 @@ impl LlmPlanner {
             };
             base.join("sysknife").join("rate-limit.log")
         };
-        planner.rate_limiter = Some(crate::rate_limit::RateLimiter::new(
+        planner.rate_limiter = Some(std::sync::Arc::new(crate::rate_limit::RateLimiter::new(
             rate_log_path,
             DEFAULT_MAX_RPM,
-        ));
+        )));
         Ok(planner)
     }
 
@@ -631,7 +634,8 @@ impl LlmPlanner {
             return Err(PlanningError::IntentContainsSensitiveData);
         }
         if let Some(ref rl) = self.rate_limiter {
-            if let Err(retry_after_secs) = rl.check_and_consume() {
+            if let Err(retry_after_secs) = std::sync::Arc::clone(rl).check_and_consume_async().await
+            {
                 return Err(PlanningError::RateLimitExceeded { retry_after_secs });
             }
         }
@@ -689,7 +693,8 @@ impl LlmPlanner {
             return Err(PlanningError::IntentContainsSensitiveData);
         }
         if let Some(ref rl) = self.rate_limiter {
-            if let Err(retry_after_secs) = rl.check_and_consume() {
+            if let Err(retry_after_secs) = std::sync::Arc::clone(rl).check_and_consume_async().await
+            {
                 return Err(PlanningError::RateLimitExceeded { retry_after_secs });
             }
         }
@@ -699,8 +704,8 @@ impl LlmPlanner {
         // Rebuild the system prompt with current preferences on each call
         // so that preferences saved during a prior `plan_intent` are visible.
         let effective_prompt = {
-            let prefs_content = match self.prefs_path.as_ref() {
-                Some(p) => match crate::prefs::read_prefs(p) {
+            let prefs_content = match self.prefs_path.clone() {
+                Some(p) => match crate::prefs::read_prefs_async(p.clone()).await {
                     Ok(content) => content,
                     Err(e) => {
                         eprintln!(
@@ -810,13 +815,10 @@ impl LlmPlanner {
                                         "failed to serialize system state: {e}"
                                     ))
                                 })?;
-                                tool_results.push(ToolResultBlock {
-                                    tool_use_id: id.clone(),
-                                    call_id: call_id.clone(),
-                                    content: sanitize_tool_output("get_system_state", &state_json)
-                                        .into_inner(),
-                                    is_error: false,
-                                });
+                                tool_results.push(
+                                    sanitize_tool_output("get_system_state", &state_json)
+                                        .into_tool_result(id.clone(), call_id.clone()),
+                                );
                             }
                             "propose_plan" => {
                                 // Parse and validate before returning.
@@ -836,8 +838,14 @@ impl LlmPlanner {
                                             turn + 1,
                                             max = self.max_turns
                                         );
-                                        if let Some(audit) = &self.audit_log {
-                                            audit.log_rejection(intent, &reason, &raw_plan);
+                                        if let Some(audit) = self.audit_log.clone() {
+                                            audit
+                                                .log_rejection_async(
+                                                    intent.to_string(),
+                                                    reason.clone(),
+                                                    raw_plan.clone(),
+                                                )
+                                                .await;
                                         }
                                         tool_results.push(ToolResultBlock {
                                             tool_use_id: id.clone(),
@@ -866,8 +874,13 @@ impl LlmPlanner {
                                             .to_string(),
                                         true,
                                     )
-                                } else if let Some(ref prefs_path) = self.prefs_path {
-                                    match crate::prefs::append_pref(prefs_path, fact) {
+                                } else if let Some(prefs_path) = self.prefs_path.clone() {
+                                    match crate::prefs::append_pref_async(
+                                        prefs_path.clone(),
+                                        fact.to_string(),
+                                    )
+                                    .await
+                                    {
                                         Ok(()) => (format!("Preference saved: {fact}"), false),
                                         Err(e) => {
                                             eprintln!(
@@ -897,8 +910,13 @@ impl LlmPlanner {
                                         "Error: 'fact' parameter must not be empty.".to_string(),
                                         true,
                                     )
-                                } else if let Some(ref prefs_path) = self.prefs_path {
-                                    match crate::prefs::remove_pref(prefs_path, fact) {
+                                } else if let Some(prefs_path) = self.prefs_path.clone() {
+                                    match crate::prefs::remove_pref_async(
+                                        prefs_path.clone(),
+                                        fact.to_string(),
+                                    )
+                                    .await
+                                    {
                                         Ok(true) => (format!("Preference removed: {fact}"), false),
                                         Ok(false) => {
                                             (format!("Preference not found: {fact}"), false)
@@ -933,12 +951,12 @@ impl LlmPlanner {
                                         (format!("Error: cannot determine current user: {e}"), true)
                                     }
                                 };
-                                tool_results.push(ToolResultBlock {
-                                    tool_use_id: id.clone(),
-                                    call_id: call_id.clone(),
-                                    content: sanitize_tool_output("query_current_user", &content)
-                                        .into_inner(),
-                                    is_error,
+                                let sanitized =
+                                    sanitize_tool_output("query_current_user", &content);
+                                tool_results.push(if is_error {
+                                    sanitized.into_error_tool_result(id.clone(), call_id.clone())
+                                } else {
+                                    sanitized.into_tool_result(id.clone(), call_id.clone())
                                 });
                             }
                             other_name => {
@@ -948,15 +966,13 @@ impl LlmPlanner {
                                     Ok(Some((action_name, params))) => {
                                         match self.state_client.query_action(action_name, &params) {
                                             Ok(output) => {
-                                                tool_results.push(ToolResultBlock {
-                                                    tool_use_id: id.clone(),
-                                                    call_id: call_id.clone(),
-                                                    content: sanitize_tool_output(
-                                                        other_name, &output,
-                                                    )
-                                                    .into_inner(),
-                                                    is_error: false,
-                                                });
+                                                tool_results.push(
+                                                    sanitize_tool_output(other_name, &output)
+                                                        .into_tool_result(
+                                                            id.clone(),
+                                                            call_id.clone(),
+                                                        ),
+                                                );
                                             }
                                             Err(e) => {
                                                 // Daemon errors are trusted (they come from us
@@ -964,16 +980,16 @@ impl LlmPlanner {
                                                 // beyond the action name they reflect back), but
                                                 // wrap anyway: it's a uniform contract for the
                                                 // model and costs nothing.
-                                                tool_results.push(ToolResultBlock {
-                                                    tool_use_id: id.clone(),
-                                                    call_id: call_id.clone(),
-                                                    content: sanitize_tool_output(
+                                                tool_results.push(
+                                                    sanitize_tool_output(
                                                         other_name,
                                                         &format!("Query failed: {e}"),
                                                     )
-                                                    .into_inner(),
-                                                    is_error: true,
-                                                });
+                                                    .into_error_tool_result(
+                                                        id.clone(),
+                                                        call_id.clone(),
+                                                    ),
+                                                );
                                             }
                                         }
                                     }

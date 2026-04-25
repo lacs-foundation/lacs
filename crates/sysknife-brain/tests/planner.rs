@@ -938,7 +938,6 @@ async fn remember_rejects_sensitive_data() {
 async fn remember_without_prefs_path_returns_not_configured_error() {
     // When no prefs_path is set the planner must report "not configured"
     // with is_error=true so the LLM knows storage is unavailable.
-    let mut provider_calls: Vec<String> = Vec::new();
     let provider = Box::new(MockProvider::new([
         Ok(Completion {
             content: vec![ContentBlock::ToolUse {
@@ -1282,7 +1281,7 @@ async fn rate_limiter_blocks_after_limit_exceeded_retry_after_bounded() {
     planner.plan_intent("check disk 2").await.unwrap();
     let err = planner.plan_intent("check disk 3").await.unwrap_err();
     assert!(
-        matches!(err, PlanningError::RateLimitExceeded { retry_after_secs } if retry_after_secs >= 1 && retry_after_secs <= 60),
+        matches!(err, PlanningError::RateLimitExceeded { retry_after_secs } if (1..=60).contains(&retry_after_secs)),
         "retry_after_secs must be in [1, 60], got: {err:?}"
     );
 }
@@ -1322,7 +1321,7 @@ fn rate_limiter_file_persistence_across_instances() {
     let rl3 = RateLimiter::new(path.clone(), limit);
     let err = rl3.check_and_consume().unwrap_err();
     assert!(
-        err >= 1 && err <= 60,
+        (1..=60).contains(&err),
         "retry_after must be 1..=60, got {err}"
     );
 }

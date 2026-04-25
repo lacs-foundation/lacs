@@ -17,7 +17,7 @@ const executionError: ShellError = {
 describe("ErrorBlock", () => {
   it("renders the title for daemon_not_running", () => {
     render(<ErrorBlock error={daemonError} />);
-    expect(screen.getByText(/Cannot reach the LACS daemon/)).toBeInTheDocument();
+    expect(screen.getByText(/Cannot reach the SysKnife daemon/)).toBeInTheDocument();
   });
 
   it("renders 'Nothing has changed' when systemChanged is false", () => {

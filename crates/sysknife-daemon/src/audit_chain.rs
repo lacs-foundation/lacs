@@ -62,7 +62,7 @@ type HmacSha256 = Hmac<Sha256>;
 /// Tied to the schema, not the key bytes — rotation will introduce `"v2"` etc.
 pub const CURRENT_KEY_ID: &str = "v1";
 
-/// Hex-encoded HMAC length for SHA-256 (32 bytes × 2).
+/// Hex-encoded HMAC length for SHA-256.
 pub const HASH_HEX_LEN: usize = 64;
 
 /// Loaded HMAC key + its identifier. Construct via [`AuditKey::load_or_generate`].
@@ -70,10 +70,38 @@ pub const HASH_HEX_LEN: usize = 64;
 /// `Clone` is intentional: the audit-verify CLI needs to load the key once
 /// and share it between the SQLite read-only path and the Postgres pool.
 /// The clone is cheap (`Vec<u8>` of 32 bytes + a short `String`).
-#[derive(Debug, Clone)]
+///
+/// `Debug` is implemented manually to redact `key_bytes`. The derived
+/// `Debug` would dump the raw HMAC bytes via any `tracing::debug!("{key:?}")`
+/// or `dbg!(key)` site, which would leak the audit secret into journald.
+/// We keep `key_id` visible because operators need to identify which key
+/// generation a record belongs to when triaging chain breaks.
+#[derive(Clone)]
 pub struct AuditKey {
     key_id: String,
     key_bytes: Vec<u8>,
+}
+
+impl std::fmt::Debug for AuditKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuditKey")
+            .field("key_id", &self.key_id)
+            .field(
+                "key_bytes",
+                &format_args!("<redacted {} bytes>", self.key_bytes.len()),
+            )
+            .finish()
+    }
+}
+
+/// Zero `key_bytes` on drop so a freed allocation cannot be scraped from
+/// the heap. Pairs with the manual `Debug` impl above; together they keep
+/// the HMAC secret out of logs and out of post-free memory.
+impl Drop for AuditKey {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.key_bytes.zeroize();
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -214,8 +242,7 @@ fn generate_key_at(path: &Path) -> Result<(), AuditKeyError> {
     Ok(())
 }
 
-/// Fill `buf` with bytes from `/dev/urandom`. Avoids a `getrandom` dep — the
-/// kernel CSPRNG is the right source on every Linux system the daemon runs on.
+/// Fill `buf` with bytes from the kernel CSPRNG via `/dev/urandom`.
 fn fill_random(buf: &mut [u8]) -> std::io::Result<()> {
     use std::io::Read as _;
     let mut f = std::fs::File::open("/dev/urandom")?;
@@ -226,8 +253,22 @@ fn fill_random(buf: &mut [u8]) -> std::io::Result<()> {
 /// see module docs.
 ///
 /// The canonical serialisation is stable across SQLite/Postgres backends.
-/// Each field is emitted as `tag<RS>value<US>` where `RS = 0x1E` (record
-/// separator) and `US = 0x1F` (field separator). Inside a value, the four
+/// Each field is emitted as
+///
+/// ```text
+///     <tag-name> 0x1E <tag-value> 0x1F
+/// ```
+///
+/// where `0x1E` is the *tag/value* separator within a single field and `0x1F`
+/// is the *field* separator that terminates the field and introduces the
+/// next one. We use the ASCII C0 byte values RS (0x1E) and US (0x1F)
+/// because they are guaranteed not to appear in any normal text field, but
+/// **our role assignment is the inverse of the ASCII C0 convention**
+/// (where RS = "record separator" and US = "unit separator"). The names
+/// are kept in the source for byte-level traceability against the canonical
+/// buffer, not as a claim about ASCII semantics.
+///
+/// Inside a value, the four
 /// bytes `\\`, NUL, `RS`, `US` are escaped to `\\\\`, `\\0`, `\\1E`, `\\1F`
 /// respectively. The escape table is **prefix-free** (every escape starts
 /// with `\\`), so any value can be injected without ambiguity. See
@@ -250,8 +291,9 @@ pub struct ChainContent<'a> {
 }
 
 impl<'a> ChainContent<'a> {
-    /// Stable canonical encoding of every field. Field separator is `\x1F`
-    /// (Unit Separator); within a field, raw NUL becomes `\0`.
+    /// Stable canonical encoding of every field. Within each field the
+    /// `0x1E` byte separates tag from value, and `0x1F` terminates the field;
+    /// raw NUL becomes the two-byte escape `\0`.
     pub fn canonical_bytes(&self) -> Vec<u8> {
         let risk_level_str = match self.risk_level {
             RiskLevel::Low => "low",
@@ -261,8 +303,8 @@ impl<'a> ChainContent<'a> {
         let approval = self.approval_id.unwrap_or("");
 
         let mut buf = Vec::with_capacity(512);
-        // Each field: tag = value, separated by US (0x1F).
-        // Tags make the canonical form self-describing for forensics.
+        // Each field is `tag 0x1E value 0x1F`; tags make the canonical form
+        // self-describing for forensics.
         push_field(&mut buf, "seq", &self.seq.to_string());
         push_field(&mut buf, "key_id", self.key_id);
         push_field(&mut buf, "transaction_id", self.transaction_id);
@@ -297,7 +339,7 @@ impl<'a> ChainContent<'a> {
 /// as a raw NUL and produce an HMAC collision.
 fn push_field(buf: &mut Vec<u8>, tag: &str, value: &str) {
     buf.extend_from_slice(tag.as_bytes());
-    buf.push(0x1E); // RS — record separator between tag and value
+    buf.push(0x1E); // tag/value separator (ASCII RS byte, but used inversely — see ChainContent doc)
     for b in value.bytes() {
         match b {
             b'\\' => buf.extend_from_slice(b"\\\\"),
@@ -307,7 +349,7 @@ fn push_field(buf: &mut Vec<u8>, tag: &str, value: &str) {
             other => buf.push(other),
         }
     }
-    buf.push(0x1F); // US — field separator
+    buf.push(0x1F); // field terminator (ASCII US byte, but used inversely — see ChainContent doc)
 }
 
 /// Result of `verify_chain`.
@@ -517,9 +559,9 @@ mod tests {
         assert!(String::from_utf8_lossy(&bytes).contains("before\\0after"));
     }
 
-    /// Red-team finding F1: an attacker who could craft a row with
-    /// `summary = "before\\0after"` (literal backslash + zero) must NOT
-    /// produce the same canonical bytes as one with raw `\x00`. Without
+    /// Backslash-NUL collision regression: an attacker who could craft a
+    /// row with `summary = "before\\0after"` (literal backslash + zero) must
+    /// NOT produce the same canonical bytes as one with raw `\x00`. Without
     /// the `\\` → `\\\\` escape, the two collide and the attacker can
     /// substitute one for the other while the chain hash matches.
     #[test]
@@ -531,7 +573,7 @@ mod tests {
         assert_ne!(
             a.canonical_bytes(),
             b.canonical_bytes(),
-            "F1 collision: backslash escape must run before NUL escape"
+            "backslash escape must run before NUL escape to prevent collision"
         );
     }
 
@@ -549,7 +591,7 @@ mod tests {
         assert_ne!(
             key.chain_hash(&a, ""),
             key.chain_hash(&b, ""),
-            "F1: HMAC must distinguish escape from raw byte"
+            "HMAC must distinguish escape from raw byte"
         );
     }
 
@@ -627,6 +669,56 @@ mod tests {
             } => assert_eq!(
                 first_broken_seq, 3,
                 "first broken row is the one whose prev_hash refers to deleted row"
+            ),
+            other => panic!("expected Broken, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inserted_forged_row_breaks_chain() {
+        // Counterpart to `deleted_middle_row_…`. An attacker who managed to
+        // insert a fabricated row between two genuine ones still cannot
+        // produce a `chain_hash` that links the insertion back to the prior
+        // row's hash, so verification must flag the forgery at the inserted
+        // row (or at the immediately following genuine row whose
+        // `prev_chain_hash` no longer matches its real predecessor).
+        let key = fixed_key();
+        let mut rows = build_chain(&key, 3);
+
+        // Splice in a new row between seq=1 and seq=2 with a fabricated hash.
+        let forged = ChainRow {
+            seq: 2,
+            key_id: CURRENT_KEY_ID.to_string(),
+            transaction_id: "tx-forged".to_string(),
+            request_id: "req-forged".to_string(),
+            request_hash: "hash-forged".to_string(),
+            action_name: "InstallFlatpak".to_string(),
+            risk_level: RiskLevel::Medium,
+            summary: "Forged row".to_string(),
+            approval_id: None,
+            warnings_json: "[]".to_string(),
+            created_at: "2026-04-25T13:00:00Z".to_string(),
+            // Plausible prev_chain_hash chosen to look intact at boundary.
+            prev_chain_hash: rows[0].chain_hash.clone(),
+            // Not a real HMAC — verification must reject this.
+            chain_hash: "0".repeat(HASH_HEX_LEN),
+        };
+
+        // Renumber the genuine seq=2/3 rows so seq is still 1..=4.
+        let mut rest: Vec<ChainRow> = rows.split_off(1);
+        for r in rest.iter_mut() {
+            r.seq += 1;
+        }
+        rows.push(forged);
+        rows.extend(rest);
+
+        let outcome = verify_chain(&key, &rows);
+        match outcome {
+            VerifyOutcome::Broken {
+                first_broken_seq, ..
+            } => assert!(
+                first_broken_seq == 2 || first_broken_seq == 3,
+                "verifier must flag the inserted row or the row that follows it (got {first_broken_seq})"
             ),
             other => panic!("expected Broken, got {other:?}"),
         }
@@ -714,5 +806,68 @@ mod tests {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
         let result = AuditKey::load_or_generate(&path);
         assert!(matches!(result, Err(AuditKeyError::KeyTooShort { .. })));
+    }
+
+    // ── Debug redaction (HI-17 secret hygiene) ────────────────────────────
+
+    /// `Debug` must never expose the HMAC key material — neither raw bytes,
+    /// nor their hex encoding. A derived `Debug` would dump the bytes the
+    /// moment anyone wrote `tracing::debug!("{key:?}")`.
+    #[test]
+    fn debug_redacts_key_bytes_and_their_hex_encoding() {
+        // Use a distinctive byte pattern so accidental leaks are obvious.
+        let raw = (0u8..32).collect::<Vec<u8>>();
+        let key = AuditKey::from_bytes(raw.clone());
+        let dbg = format!("{key:?}");
+
+        assert!(
+            dbg.contains("redacted"),
+            "Debug output must contain the literal 'redacted' marker, got: {dbg}"
+        );
+
+        // Hex encoding of the bytes must NOT appear, in either case.
+        let hex_lower = hex::encode(&raw);
+        let hex_upper = hex::encode_upper(&raw);
+        assert!(
+            !dbg.contains(&hex_lower),
+            "Debug output leaks lowercase hex of key bytes: {dbg}"
+        );
+        assert!(
+            !dbg.contains(&hex_upper),
+            "Debug output leaks uppercase hex of key bytes: {dbg}"
+        );
+
+        // Each individual byte's two-hex-char form must also be absent. This
+        // catches the case where a future change splits the bytes across the
+        // formatter and prints them piecewise.
+        for b in &raw {
+            let pair = format!("{b:02x}");
+            // 1-byte values 0x00..0x0f render as "00".."0f" — too short to
+            // assert against safely (collides with key_id "v1" etc.). Only
+            // check 2-char forms that cannot incidentally match the rest of
+            // the Debug output.
+            if *b >= 0x10 && pair != "1e" && pair != "1f" {
+                assert!(
+                    !dbg.contains(&pair),
+                    "Debug output leaks byte {b:#04x} as {pair:?}: {dbg}"
+                );
+            }
+        }
+    }
+
+    /// Operators triaging a chain break need to know which key generation
+    /// produced a row. `key_id` is not secret and must remain visible.
+    #[test]
+    fn debug_preserves_key_id() {
+        let key = AuditKey::from_bytes(vec![0xff; 32]);
+        let dbg = format!("{key:?}");
+        assert!(
+            dbg.contains("key_id"),
+            "Debug output must label the key_id field: {dbg}"
+        );
+        assert!(
+            dbg.contains(CURRENT_KEY_ID),
+            "Debug output must contain the key_id value {CURRENT_KEY_ID:?}: {dbg}"
+        );
     }
 }

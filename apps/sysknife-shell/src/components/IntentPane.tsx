@@ -18,7 +18,7 @@ export function IntentPane({ intent, mode, onSubmit, onReset, error }: Props) {
     // Compact read-only strip
     return (
       <section className="pane pane-intent pane-intent--compact">
-        <p className="eyebrow">What should LACS do?</p>
+        <p className="eyebrow">What should SysKnife do?</p>
         <p className="intent-submitted">{intent}</p>
         {mode !== "executing" && (
           <button type="button" onClick={onReset} className="intent-reset">
@@ -42,7 +42,7 @@ export function IntentPane({ intent, mode, onSubmit, onReset, error }: Props) {
         }}
       >
         <label className="field">
-          <span>What should LACS do?</span>
+          <span>What should SysKnife do?</span>
           <input
             name="intent"
             defaultValue={intent}

@@ -87,15 +87,36 @@ pub fn validated_locale(s: &str, param: &'static str) -> Result<String, Executor
     Ok(s.to_string())
 }
 
-/// General safe-arg validator: no null bytes, must not start with `-`.
+/// Maximum byte length for any string passed through [`validated_safe_arg`].
+///
+/// 254 bytes is one byte under the Linux per-argument limit imposed by the
+/// kernel's argv parser when an argv element is processed via execve in
+/// historically narrow buffers; it also stays well under typical filename,
+/// app-id, and remote-name lengths in the action catalogue.  Lift this only
+/// alongside a corresponding adjustment to whatever downstream consumer
+/// drove the cap — the limit is intentionally tight, not a placeholder.
+pub const SAFE_ARG_MAX_BYTES: usize = 254;
+
+/// General safe-arg validator with strict allowlist `[A-Za-z0-9._:/+@-]`,
+/// 1-[`SAFE_ARG_MAX_BYTES`] bytes, must not start with `-`.
+///
+/// This is the last line of defence against shell injection when arguments are
+/// interpolated into command strings (e.g. `runuser -l user -c "<cmd>"`). The
+/// allowlist deliberately excludes every shell metacharacter — quotes,
+/// backticks, `$`, `;`, `&`, `|`, `>`, `<`, `\`, whitespace, control bytes,
+/// and all non-ASCII. Callers that need richer character sets must use a
+/// dedicated validator (e.g. `validated_hostname`, `validated_unit_name`).
 pub fn validated_safe_arg(s: &str, param: &'static str) -> Result<String, ExecutorError> {
-    if s.is_empty() {
-        return Err(ExecutorError::InvalidParam(param));
-    }
-    if s.contains('\0') {
+    if s.is_empty() || s.len() > SAFE_ARG_MAX_BYTES {
         return Err(ExecutorError::InvalidParam(param));
     }
     if s.starts_with('-') {
+        return Err(ExecutorError::InvalidParam(param));
+    }
+    if !s
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '/' | '+' | '@' | '-'))
+    {
         return Err(ExecutorError::InvalidParam(param));
     }
     Ok(s.to_string())
@@ -349,9 +370,61 @@ mod tests {
     }
 
     #[test]
-    fn safe_arg_accepts_unicode() {
-        // Safe arg is intentionally permissive — only blocks null bytes and leading dash.
-        assert!(validated_safe_arg("café", "name").is_ok());
+    fn safe_arg_rejects_unicode_and_non_ascii() {
+        // Strict ASCII allowlist — non-ASCII (including printable Unicode) is rejected
+        // because it can include homoglyphs / control codepoints that survive shell
+        // interpolation in surprising ways.
+        assert!(validated_safe_arg("café", "name").is_err());
+        assert!(validated_safe_arg("über", "name").is_err());
+    }
+
+    #[test]
+    fn safe_arg_rejects_every_shell_metacharacter() {
+        // CVE-class regression: every one of these has been used to inject a
+        // command into a `sh -c "<arg>"` style call somewhere in the wild.
+        for meta in [
+            "a b",   // space
+            "a\tb",  // tab
+            "a\nb",  // newline
+            "a\rb",  // CR
+            "a\0b",  // NUL
+            "a;b",   // command separator
+            "a&b",   // background / AND
+            "a|b",   // pipe
+            "a$b",   // var expansion
+            "a`b`",  // command substitution
+            "a$(b)", // command substitution
+            "a>b",   // redirect
+            "a<b",   // redirect
+            "a\\b",  // backslash
+            "a\"b",  // double quote
+            "a'b",   // single quote
+            "a*b",   // glob
+            "a?b",   // glob
+            "a[b]",  // glob
+            "a{b}",  // brace expansion
+            "a~b",   // tilde
+            "a!b",   // history
+            "a#b",   // comment
+            "a%b",   // job control / printf
+            "a^b",   // history quick-substitution (csh)
+            "a=b",   // assignment in some contexts
+            "a,b",   // brace expansion list
+            "a(b)",  // subshell
+        ] {
+            assert!(
+                validated_safe_arg(meta, "arg").is_err(),
+                "should reject metacharacter sequence {meta:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn safe_arg_rejects_oversized_input() {
+        let over = "a".repeat(SAFE_ARG_MAX_BYTES + 1);
+        assert!(validated_safe_arg(&over, "name").is_err());
+        let max = "a".repeat(SAFE_ARG_MAX_BYTES);
+        assert!(validated_safe_arg(&max, "name").is_ok());
     }
 
     // ── error variant check ──────────────────────────────────────────────

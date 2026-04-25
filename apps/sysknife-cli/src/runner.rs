@@ -159,7 +159,7 @@ pub fn highest_risk(plan: &sysknife_brain::planner::Plan) -> Option<&PlanRiskLev
 // build_history_params (private helper)
 // ---------------------------------------------------------------------------
 
-fn build_history_params(
+pub(crate) fn build_history_params(
     limit: u32,
     status: Option<&str>,
     action: Option<&str>,
@@ -301,7 +301,7 @@ pub async fn run_doctor(
 // run_history
 // ---------------------------------------------------------------------------
 
-/// Query past LACS execution history via `ListJobHistory`.
+/// Query past SysKnife execution history via `ListJobHistory`.
 pub async fn run_history(
     args: HistoryArgs,
     socket: SocketTarget,
@@ -461,7 +461,7 @@ pub async fn run_audit_verify(args: AuditVerifyArgs, log: &Logger) -> Result<(),
     }
 }
 
-async fn verify_sqlite(
+pub(crate) async fn verify_sqlite(
     db_path: &std::path::Path,
     key: &sysknife_daemon::audit_chain::AuditKey,
 ) -> sysknife_daemon::audit_chain::VerifyOutcome {
@@ -493,26 +493,36 @@ async fn verify_sqlite(
     }
 }
 
-async fn verify_postgres(
+pub(crate) async fn verify_postgres(
     storage: &sysknife_core::config::StorageSection,
     key: &sysknife_daemon::audit_chain::AuditKey,
 ) -> sysknife_daemon::audit_chain::VerifyOutcome {
+    use sysknife_core::config::StorageBackend;
     use sysknife_daemon::audit_chain::VerifyOutcome;
     use sysknife_daemon::store::postgres::{PostgresConfig, PostgresStore};
     use sysknife_daemon::store::AuditStore;
 
-    let Some(url) = storage.url.as_deref() else {
-        return VerifyOutcome::CannotVerify {
-            reason: "[storage] backend = \"postgres\" requires url = \"postgres://...\""
-                .to_string(),
-        };
+    // Project the relaxed config form into the type-state-checked enum;
+    // the match below makes future backends a compile-time decision.
+    let parsed = match storage.parsed() {
+        Ok(p) => p,
+        Err(reason) => return VerifyOutcome::CannotVerify { reason },
     };
+    let (url, pool) =
+        match parsed {
+            StorageBackend::Sqlite => return VerifyOutcome::CannotVerify {
+                reason:
+                    "verify_postgres called with backend = \"sqlite\" — caller picks the wrong path"
+                        .to_string(),
+            },
+            StorageBackend::Postgres { url, pool } => (url, pool),
+        };
 
     let mut cfg = PostgresConfig {
-        url: url.to_string(),
+        url,
         ..PostgresConfig::default()
     };
-    if let Some(pool) = storage.pool.as_ref() {
+    {
         if let Some(n) = pool.max_connections {
             cfg.max_connections = n;
         }
@@ -623,7 +633,7 @@ pub async fn run_intent(intent: String, opts: &RunOpts, log: &Logger) -> Result<
 
     let planner = LlmPlanner::from_config(config, Box::new(plan_client))
         .map_err(CliError::ConfigOrDaemon)?
-        .with_prefs_path(prefs_path())
+        .with_prefs_path(sysknife_core::config::prefs_path())
         .with_progress(progress_tx);
 
     // Layer 1: spinner — auto-hidden by indicatif when stderr is not a TTY.
@@ -806,7 +816,7 @@ pub async fn run_intent(intent: String, opts: &RunOpts, log: &Logger) -> Result<
             .execute(
                 step.action_name(),
                 step.params(),
-                &preview.request_hash,
+                preview.request_hash.as_str(),
                 |line| {
                     if first_line {
                         if let Some(ref pb) = exec_spinner_ref {
@@ -930,15 +940,6 @@ pub async fn run_repl(opts: &RunOpts, log: &Logger) -> Result<(), CliError> {
 // Private helpers
 // ---------------------------------------------------------------------------
 
-/// Path to the user preferences file (`~/.config/sysknife/prefs.md`).
-fn prefs_path() -> PathBuf {
-    let mut base = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/root"));
-    base.push(".config/sysknife/prefs.md");
-    base
-}
-
 /// Ask the user a yes/no question on stderr; return `true` iff they answer "y"
 /// or "yes" (case-insensitive).
 ///
@@ -957,11 +958,11 @@ async fn prompt_confirm(msg: &str) -> bool {
 
     match reader.read_line(&mut buf).await {
         Ok(0) => {
-            eprintln!("\nlacs: stdin closed (EOF) — treating as 'no'");
+            eprintln!("\nsysknife: stdin closed (EOF) — treating as 'no'");
             false
         }
         Err(e) => {
-            eprintln!("\nlacs: stdin read error ({e}) — treating as 'no'");
+            eprintln!("\nsysknife: stdin read error ({e}) — treating as 'no'");
             false
         }
         Ok(_) => matches!(buf.trim().to_ascii_lowercase().as_str(), "y" | "yes"),

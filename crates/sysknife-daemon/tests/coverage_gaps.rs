@@ -15,7 +15,7 @@ use sysknife_daemon::executor::{ActionExecutor, ExecutionOutput, ExecutorError};
 use sysknife_daemon::state::{DaemonConfig, DaemonState};
 use sysknife_daemon::state_collector::CommandRunner;
 use sysknife_daemon::transactions::{NewTransaction, TransactionStore};
-use sysknife_daemon::transport::{framing::FramedStream, grpc::ListenTarget};
+use sysknife_daemon::transport::{framing::FramedStream, listen::ListenTarget};
 use sysknife_types::{CallerRole, JobState, RiskLevel};
 use tempfile::tempdir;
 use tokio::net::UnixStream;
@@ -368,4 +368,65 @@ async fn execute_rejects_dev_for_admin_action() {
         "expected error_response for Dev on Admin action, got: {resp}"
     );
     assert_eq!(resp["category"], "authorization_failure");
+}
+
+// ---------------------------------------------------------------------------
+// MD-8 — `cleanup_stale_queued` must not clobber non-Queued rows even when
+// they share a backdated `created_at` with the row we want to cancel.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cleanup_stale_queued_does_not_clobber_running_rows() {
+    use rusqlite::params;
+
+    let dir = tempdir().unwrap();
+    let store = TransactionStore::open(dir.path().join("tx.sqlite")).expect("open store");
+
+    // Insert two rows: both will be backdated to 30 minutes ago, but only
+    // one is left in `Queued` state. The other is promoted to `Running`
+    // before the cleanup runs — which would normally collide with the TTL
+    // window if the WHERE clause didn't pin `status = Queued`.
+    let queued = store.record(make_transaction("queued-old")).unwrap();
+    let promoted = store.record(make_transaction("promoted-old")).unwrap();
+    store
+        .update_status(&promoted.transaction_id, JobState::Running)
+        .unwrap();
+
+    // Reach into the SQLite file directly to backdate both rows so the TTL
+    // window matches them. Going through the public API would require time
+    // manipulation; this is a coverage-gap test, so the surgical approach
+    // is fine and exercises exactly the predicate that `cleanup_stale_queued`
+    // applies in production.
+    {
+        let conn = rusqlite::Connection::open(dir.path().join("tx.sqlite")).unwrap();
+        conn.execute(
+            "UPDATE transactions SET created_at = datetime('now', '-30 minutes')",
+            params![],
+        )
+        .unwrap();
+    }
+
+    let canceled = store.cleanup_stale_queued().unwrap();
+    assert_eq!(
+        canceled, 1,
+        "expected exactly the queued row to be canceled, got {canceled}"
+    );
+
+    // Re-read: queued should now be Canceled, running should still be Running.
+    let still_queued = store.find_by_request_hash(&queued.request_hash).unwrap();
+    assert!(
+        still_queued.is_none(),
+        "find_by_request_hash should not find a Canceled row through the Queued filter"
+    );
+    let history = store.list_transactions(10, None, None, None).unwrap();
+    let queued_status = history
+        .iter()
+        .find(|r| r.transaction_id == queued.transaction_id)
+        .map(|r| r.status);
+    let promoted_status = history
+        .iter()
+        .find(|r| r.transaction_id == promoted.transaction_id)
+        .map(|r| r.status);
+    assert_eq!(queued_status, Some(JobState::Canceled));
+    assert_eq!(promoted_status, Some(JobState::Running));
 }

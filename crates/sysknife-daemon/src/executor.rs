@@ -26,11 +26,31 @@ pub enum ExecutorError {
     Io(#[from] io::Error),
 }
 
+/// Output of a single executed action.
+///
+/// `exit_code` is the discriminant between success and failure.  Prefer
+/// [`is_success`](Self::is_success) / [`is_nonzero`](Self::is_nonzero) at
+/// call sites — `if output.exit_code == 0` is harder to read and easier to
+/// invert by accident than `if output.is_success()`.  The raw `exit_code`
+/// stays public because the dispatcher echoes it back to callers and the
+/// rollback path includes the precise code in diagnostic messages.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecutionOutput {
     pub stdout: String,
     pub stderr: String,
     pub exit_code: i32,
+}
+
+impl ExecutionOutput {
+    /// `true` when the action exited cleanly (`exit_code == 0`).
+    pub fn is_success(&self) -> bool {
+        self.exit_code == 0
+    }
+
+    /// `true` when the action failed (`exit_code != 0`).
+    pub fn is_nonzero(&self) -> bool {
+        self.exit_code != 0
+    }
 }
 
 /// Abstraction over action execution, making the execute + rollback path
@@ -811,10 +831,15 @@ mod tests {
                 program: "sudo",
                 args: vec![
                     "runuser".to_string(),
-                    "-l".to_string(),
+                    "-u".to_string(),
                     "alice".to_string(),
-                    "-c".to_string(),
-                    "flatpak install --user -y 'flathub' 'org.mozilla.firefox'".to_string(),
+                    "--".to_string(),
+                    "flatpak".to_string(),
+                    "install".to_string(),
+                    "--user".to_string(),
+                    "-y".to_string(),
+                    "flathub".to_string(),
+                    "org.mozilla.firefox".to_string(),
                 ],
             }
         );
@@ -838,10 +863,15 @@ mod tests {
                 program: "sudo",
                 args: vec![
                     "runuser".to_string(),
-                    "-l".to_string(),
+                    "-u".to_string(),
                     "alice".to_string(),
-                    "-c".to_string(),
-                    "flatpak install --user -y 'flathub' 'org.mozilla.firefox'".to_string(),
+                    "--".to_string(),
+                    "flatpak".to_string(),
+                    "install".to_string(),
+                    "--user".to_string(),
+                    "-y".to_string(),
+                    "flathub".to_string(),
+                    "org.mozilla.firefox".to_string(),
                 ],
             }
         );

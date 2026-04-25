@@ -7,7 +7,7 @@ use sysknife_daemon::dispatcher::{connection_handler, resolve_caller_role};
 use sysknife_daemon::policy::PolicyTable;
 use sysknife_daemon::state::{DaemonConfig, DaemonState};
 use sysknife_daemon::state_collector::RealCommandRunner;
-use sysknife_daemon::transport::grpc::{bind_unix_listener, ListenTarget};
+use sysknife_daemon::transport::listen::{bind_unix_listener, ListenTarget};
 use tokio::net::UnixListener;
 use tokio::sync::Semaphore;
 
@@ -51,7 +51,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Optional external audit log forwarding (#150). Spawned before
+    // Optional external audit log forwarding (UDP/TCP syslog). Spawned before
     // DaemonState is constructed so the state can hold the handle.
     let forwarder: Option<AuditForwarder> = match build_forwarder(lacs_config.audit.as_ref()) {
         Ok(f) => f,
@@ -67,7 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listen_target = ListenTarget::try_from_uri(&listen_uri)?;
     let config = DaemonConfig::new(listen_target.clone(), &database_path);
 
-    // Storage backend selection (#147). Default: SQLite at the database path.
+    // Storage backend selection. Default: SQLite at the database path.
     // `[storage] backend = "postgres"` connects to a managed Postgres (RDS,
     // Cloud SQL, Azure Flexible, Supabase, Neon, CockroachDB Cloud, or
     // self-hosted) — strongly recommended for production.
@@ -104,7 +104,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         #[cfg(target_os = "linux")]
         ListenTarget::Vsock { port } => {
-            use sysknife_daemon::transport::grpc::bind_vsock_listener;
+            use sysknife_daemon::transport::listen::bind_vsock_listener;
             let listener = bind_vsock_listener(port)?;
             vsock_accept_loop(listener, state, runner, semaphore).await;
         }
@@ -264,43 +264,37 @@ async fn build_postgres_audit(
     use sysknife_daemon::store::postgres::PostgresConfig;
     use sysknife_daemon::store::PostgresStore;
 
+    use sysknife_core::config::StorageBackend;
+
     let Some(storage) = storage else {
         return Ok(None);
     };
-    if storage.backend.eq_ignore_ascii_case("sqlite") {
-        return Ok(None);
-    }
-    if !storage.backend.eq_ignore_ascii_case("postgres") {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            format!(
-                "[storage] backend = {:?} unsupported; use \"sqlite\" or \"postgres\"",
-                storage.backend
-            ),
-        ));
-    }
 
-    let url = storage.url.as_deref().ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "[storage] backend = \"postgres\" requires url = \"postgres://...\"",
-        )
-    })?;
+    // Project the relaxed `StorageSection` into the type-state-checked
+    // `StorageBackend` enum. The match below is exhaustive: a future
+    // backend added to the enum will fail to compile here, forcing a
+    // conscious update rather than silently falling through to "unsupported".
+    let parsed = storage
+        .parsed()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+
+    let (url, pool) = match parsed {
+        StorageBackend::Sqlite => return Ok(None),
+        StorageBackend::Postgres { url, pool } => (url, pool),
+    };
 
     let mut cfg = PostgresConfig {
-        url: url.to_string(),
+        url,
         ..PostgresConfig::default()
     };
-    if let Some(pool) = storage.pool.as_ref() {
-        if let Some(n) = pool.max_connections {
-            cfg.max_connections = n;
-        }
-        if let Some(s) = pool.acquire_timeout_secs {
-            cfg.acquire_timeout = std::time::Duration::from_secs(s);
-        }
-        if let Some(c) = pool.statement_cache_capacity {
-            cfg.statement_cache_capacity = c;
-        }
+    if let Some(n) = pool.max_connections {
+        cfg.max_connections = n;
+    }
+    if let Some(s) = pool.acquire_timeout_secs {
+        cfg.acquire_timeout = std::time::Duration::from_secs(s);
+    }
+    if let Some(c) = pool.statement_cache_capacity {
+        cfg.statement_cache_capacity = c;
     }
 
     // The Postgres backend uses the same on-disk audit key as SQLite for
@@ -326,7 +320,11 @@ async fn build_postgres_audit(
 #[cfg(test)]
 mod tests {
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn max_connections_is_reasonable() {
+        // The bounds are constants so clippy flags the assert as constant-valued —
+        // suppress because the *intent* is a regression guard against a future
+        // edit that pushes MAX_CONNECTIONS out of the safe range.
         assert!(
             super::MAX_CONNECTIONS >= 4,
             "MAX_CONNECTIONS {} too low; need at least one connection per shell + headroom",

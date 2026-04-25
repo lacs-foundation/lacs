@@ -9,7 +9,7 @@
 //! the `sysknife` socket-gating group and the `sysknife-admin` role group
 //! (needed for Admin-level actions such as RemoveAuthorizedKey and DeleteUser).
 //!
-//! Output: TAP (https://testanything.org) to stdout. ~52 tests total.
+//! Output: TAP (https://testanything.org) to stdout, one line per test.
 //! Exit code: 0 if all tests pass, 1 if any fail, 2 on connection error.
 //!
 //! Environment:

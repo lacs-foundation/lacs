@@ -12,7 +12,7 @@ fn request(action_name: &str, request_id: &str, request_hash: &str) -> RequestEn
         request_id: request_id.to_string(),
         params: json!({}),
         caller_role: sysknife_types::CallerRole::Admin,
-        request_hash: request_hash.to_string(),
+        request_hash: sysknife_types::RequestHash::new(request_hash.to_string()),
     }
 }
 
@@ -25,7 +25,7 @@ fn low_risk_preview_is_read_only_and_requires_no_reboot() {
     );
 
     assert_eq!(preview.risk_level, RiskLevel::Low);
-    assert_eq!(preview.request_hash, "hash-low");
+    assert_eq!(preview.request_hash.as_str(), "hash-low");
     assert!(!preview.reboot_required);
     assert!(!preview.rollback_available);
     assert!(preview.expected_side_effects.is_empty());
@@ -40,7 +40,7 @@ fn medium_risk_preview_marks_service_restart_as_mutating() {
     );
 
     assert_eq!(preview.risk_level, RiskLevel::Medium);
-    assert_eq!(preview.request_hash, "hash-medium");
+    assert_eq!(preview.request_hash.as_str(), "hash-medium");
     assert!(!preview.reboot_required);
     assert!(!preview.rollback_available);
     assert!(preview
@@ -58,7 +58,7 @@ fn firewall_preview_is_classified_explicitly_as_medium_risk() {
     );
 
     assert_eq!(preview.risk_level, RiskLevel::Medium);
-    assert_eq!(preview.request_hash, "hash-firewall");
+    assert_eq!(preview.request_hash.as_str(), "hash-firewall");
     assert!(!preview.reboot_required);
     assert!(!preview.rollback_available);
     assert!(preview
@@ -76,7 +76,7 @@ fn hostname_preview_is_classified_explicitly_as_medium_risk() {
     );
 
     assert_eq!(preview.risk_level, RiskLevel::Medium);
-    assert_eq!(preview.request_hash, "hash-hostname");
+    assert_eq!(preview.request_hash.as_str(), "hash-hostname");
     assert!(!preview.reboot_required);
     assert!(!preview.rollback_available);
 }
@@ -90,7 +90,7 @@ fn user_creation_preview_is_classified_explicitly_as_medium_risk() {
     );
 
     assert_eq!(preview.risk_level, RiskLevel::Medium);
-    assert_eq!(preview.request_hash, "hash-user");
+    assert_eq!(preview.request_hash.as_str(), "hash-user");
     assert!(!preview.reboot_required);
     assert!(!preview.rollback_available);
 }
@@ -104,7 +104,7 @@ fn package_repository_preview_mentions_repository_trust_change() {
     );
 
     assert_eq!(preview.risk_level, RiskLevel::Medium);
-    assert_eq!(preview.request_hash, "hash-repo");
+    assert_eq!(preview.request_hash.as_str(), "hash-repo");
     assert!(!preview.reboot_required);
     assert!(!preview.rollback_available);
     assert!(preview
@@ -122,7 +122,7 @@ fn container_preview_mentions_container_lifecycle_change() {
     );
 
     assert_eq!(preview.risk_level, RiskLevel::Medium);
-    assert_eq!(preview.request_hash, "hash-container");
+    assert_eq!(preview.request_hash.as_str(), "hash-container");
     assert!(!preview.reboot_required);
     assert!(!preview.rollback_available);
     assert!(preview
@@ -140,7 +140,7 @@ fn high_risk_preview_marks_system_update_as_reboot_required() {
     );
 
     assert_eq!(preview.risk_level, RiskLevel::High);
-    assert_eq!(preview.request_hash, "hash-high");
+    assert_eq!(preview.request_hash.as_str(), "hash-high");
     assert!(preview.reboot_required);
     assert!(preview.rollback_available);
     assert!(preview
@@ -217,7 +217,7 @@ fn previewed_transactions_persist_preview_state() {
         reboot_required: true,
         rollback_available: true,
         warnings: vec!["exact approval required".to_string()],
-        request_hash: "hash-preview".to_string(),
+        request_hash: sysknife_types::RequestHash::new("hash-preview".to_string()),
     };
 
     let transaction = NewTransaction {

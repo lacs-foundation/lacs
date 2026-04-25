@@ -7,7 +7,7 @@ interface Props {
 }
 
 const TITLES: Record<ShellErrorCode, string> = {
-  daemon_not_running:              "Cannot reach the LACS daemon",
+  daemon_not_running:              "Cannot reach the SysKnife daemon",
   daemon_permission_denied:        "Permission denied on daemon socket",
   llm_rate_limit:                  "Could not generate a plan (rate limit)",
   llm_http_error:                  "Could not generate a plan",

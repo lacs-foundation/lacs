@@ -1,70 +1,18 @@
 //! `ActionName` newtype — a string that is guaranteed to be in the
 //! approved SysKnife action catalogue.
 //!
-//! Construction (`ActionName::parse`) rejects unknown names at the
-//! boundary so downstream code can rely on the type rather than
-//! re-checking the allowed set.
+//! The type itself lives in `sysknife-types::ActionName` so the
+//! `RequestEnvelope` deserializer can validate at the IPC boundary (and
+//! so other crates do not have to depend on `sysknife-brain` just to
+//! talk about action names). This module re-exports the type so existing
+//! `use sysknife_brain::action_name::ActionName` imports continue to work.
 
-use serde::Serialize;
-use std::fmt;
-
-use crate::planning_tools::propose_plan::KNOWN_ACTIONS;
-
-/// A validated action name from the approved SysKnife action catalogue.
-///
-/// Can only be constructed through [`ActionName::parse`], which rejects
-/// any string not present in [`KNOWN_ACTIONS`].
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize)]
-#[serde(transparent)]
-pub struct ActionName(String);
-
-impl ActionName {
-    /// Parse a string into a validated `ActionName`.
-    ///
-    /// Returns `Err` if `name` is not in the approved action catalogue.
-    pub fn parse(name: impl Into<String>) -> Result<Self, UnknownActionName> {
-        let name = name.into();
-        if KNOWN_ACTIONS.iter().any(|(n, _)| *n == name.as_str()) {
-            Ok(Self(name))
-        } else {
-            Err(UnknownActionName(name))
-        }
-    }
-
-    /// Return the inner string slice.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for ActionName {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl AsRef<str> for ActionName {
-    fn as_ref(&self) -> &str {
-        &self.0
-    }
-}
-
-/// Error returned when an unknown action name is passed to
-/// [`ActionName::parse`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UnknownActionName(pub String);
-
-impl fmt::Display for UnknownActionName {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "unknown action name: '{}'", self.0)
-    }
-}
-
-impl std::error::Error for UnknownActionName {}
+pub use sysknife_types::{ActionName, UnknownActionName, KNOWN_ACTION_NAMES};
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::planning_tools::propose_plan::KNOWN_ACTIONS;
 
     #[test]
     fn known_action_parses() {
@@ -90,5 +38,24 @@ mod tests {
     fn display_shows_name() {
         let name = ActionName::parse("RebaseSystem").unwrap();
         assert_eq!(format!("{name}"), "RebaseSystem");
+    }
+
+    /// Cross-module invariant: every name in brain's `KNOWN_ACTIONS` (which
+    /// pairs each name with an LLM-facing description) must also appear in
+    /// `sysknife-types::KNOWN_ACTION_NAMES`. Adding an action requires a
+    /// coordinated update to both lists.
+    #[test]
+    fn every_known_action_is_in_types_list() {
+        for &(action, _) in KNOWN_ACTIONS {
+            assert!(
+                KNOWN_ACTION_NAMES.contains(&action),
+                "brain action {action} missing from sysknife_types::KNOWN_ACTION_NAMES"
+            );
+        }
+        assert_eq!(
+            KNOWN_ACTIONS.len(),
+            KNOWN_ACTION_NAMES.len(),
+            "KNOWN_ACTIONS and KNOWN_ACTION_NAMES must have the same length"
+        );
     }
 }

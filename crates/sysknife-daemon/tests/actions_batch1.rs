@@ -77,8 +77,9 @@ fn flatpak_family_covers_install_remove_and_query_actions() {
 #[test]
 fn flatpak_install_routes_through_runuser() {
     // InstallFlatpak must run as the target user (user-scoped Flatpak store).
-    // The daemon runs as `sysknife`; `sudo runuser -l <username>` switches to
-    // the correct user environment so `--user` operations reach the right store.
+    // The daemon runs as `sysknife`; `sudo runuser -u <username> -- flatpak ...`
+    // switches to the correct UID and bypasses the shell entirely so each argv
+    // element is passed to flatpak verbatim (no metacharacter expansion).
     let spec = flatpak::install_flatpak("testuser", "org.mozilla.firefox", "flathub");
 
     assert_eq!(spec.action_name, "InstallFlatpak");
@@ -89,10 +90,15 @@ fn flatpak_install_routes_through_runuser() {
             program: "sudo",
             args: vec![
                 "runuser".to_string(),
-                "-l".to_string(),
+                "-u".to_string(),
                 "testuser".to_string(),
-                "-c".to_string(),
-                "flatpak install --user -y 'flathub' 'org.mozilla.firefox'".to_string(),
+                "--".to_string(),
+                "flatpak".to_string(),
+                "install".to_string(),
+                "--user".to_string(),
+                "-y".to_string(),
+                "flathub".to_string(),
+                "org.mozilla.firefox".to_string(),
             ],
         }
     );
@@ -308,10 +314,14 @@ fn update_flatpak_with_app_id_appends_it() {
             program: "sudo",
             args: vec![
                 "runuser".to_string(),
-                "-l".to_string(),
+                "-u".to_string(),
                 "testuser".to_string(),
-                "-c".to_string(),
-                "flatpak update --user -y 'org.mozilla.Firefox'".to_string(),
+                "--".to_string(),
+                "flatpak".to_string(),
+                "update".to_string(),
+                "--user".to_string(),
+                "-y".to_string(),
+                "org.mozilla.Firefox".to_string(),
             ],
         }
     );
@@ -329,10 +339,13 @@ fn update_flatpak_without_app_id_omits_it() {
             program: "sudo",
             args: vec![
                 "runuser".to_string(),
-                "-l".to_string(),
+                "-u".to_string(),
                 "testuser".to_string(),
-                "-c".to_string(),
-                "flatpak update --user -y".to_string(),
+                "--".to_string(),
+                "flatpak".to_string(),
+                "update".to_string(),
+                "--user".to_string(),
+                "-y".to_string(),
             ],
         }
     );

@@ -1,6 +1,6 @@
 {
   "identifier": "org.lacsfoundation.LacsShell",
-  "productName": "LACS Shell",
+  "productName": "SysKnife Shell",
   "version": "0.1.0",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -12,7 +12,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "LACS",
+        "title": "SysKnife",
         "width": 1200,
         "height": 800,
         "resizable": true,
@@ -31,7 +31,7 @@
     ],
     "category": "Utility",
     "shortDescription": "AI agent for Linux — preview, approve, execute.",
-    "longDescription": "LACS (Linux Agent Control Standard) is an AI agent for Linux system administration. Every action is shown to you as a typed plan before execution. No command runs without your explicit approval. Full audit trail included.",
+    "longDescription": "SysKnife (Linux Agent Control Standard) is an AI agent for Linux system administration. Every action is shown to you as a typed plan before execution. No command runs without your explicit approval. Full audit trail included.",
     "linux": {
       "deb": {
         "depends": []

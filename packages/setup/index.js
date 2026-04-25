@@ -81,9 +81,9 @@ const PROVIDERS = ['openai', 'anthropic', 'gemini', 'ollama'];
 
 const MODEL_DEFAULTS = {
   openai:    'gpt-4.1',
-  anthropic: 'claude-opus-4-6',
+  anthropic: 'claude-sonnet-4-6',
   gemini:    'gemini-2.5-pro',
-  ollama:    'llama3.2:3b',
+  ollama:    'qwen3:8b',
 };
 
 const API_KEY_VARS = {
@@ -144,9 +144,9 @@ pattern: .*
 
 # Deferred MCP tool schemas must be fetched before use
 
-Sysknife MCP tools (\`sysknife_plan\`, \`sysknife_execute\`, \`sysknife_preview\`) are
-registered as **deferred tools** — their full schemas are NOT loaded at session
-start to save context.
+Sysknife MCP tools (\`sysknife_plan\`, \`sysknife_execute\`) are registered as
+**deferred tools** — their full schemas are NOT loaded at session start to
+save context.
 
 **Before calling any sysknife tool you have not used yet this session:**
 1. Call \`ToolSearch\` with the tool name (e.g. \`select:sysknife_plan\`) to fetch its schema.
@@ -376,7 +376,13 @@ async function main() {
   console.log();
 
   const mcpConfig = { mcpServers };
-  fs.writeFileSync('.mcp.json', JSON.stringify(mcpConfig, null, 2) + '\n');
+  // .mcp.json may contain provider API keys in plain text. Restrict to owner
+  // read/write so a coworker on a shared workstation (or a stray `cat *` in a
+  // build script) cannot recover them. `chmodSync` is idempotent and also
+  // tightens permissions on a pre-existing file that was created with the
+  // process umask before this change.
+  fs.writeFileSync('.mcp.json', JSON.stringify(mcpConfig, null, 2) + '\n', { mode: 0o600 });
+  fs.chmodSync('.mcp.json', 0o600);
 
   const serverKeys = Object.keys(mcpServers);
   const targetSummary = targets.length === 1

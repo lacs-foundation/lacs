@@ -66,6 +66,7 @@ struct AuditEntry<'a> {
 /// Each call to [`log_rejection`](SafetyAuditLog::log_rejection) appends a
 /// single JSON line to the log file. The file is opened for each write so
 /// that external log rotation works without coordination.
+#[derive(Clone)]
 pub struct SafetyAuditLog {
     path: PathBuf,
 }
@@ -114,6 +115,16 @@ impl SafetyAuditLog {
     /// (CI, non-systemd hosts) the call is a no-op. On systemd systems the
     /// entry is protected by Forward Secure Sealing once FSS is enabled
     /// (`journalctl --setup-keys`), providing tamper-evident audit records.
+    /// Async wrapper for [`log_rejection`] that runs the file write on the
+    /// blocking pool. Call from `async fn` paths so the planner's reactor is
+    /// not parked on a slow filesystem (NFS, encrypted home).
+    pub async fn log_rejection_async(self, intent: String, reason: String, raw_plan: String) {
+        let _ = tokio::task::spawn_blocking(move || {
+            self.log_rejection(&intent, &reason, &raw_plan);
+        })
+        .await;
+    }
+
     pub fn log_rejection(&self, intent: &str, reason: &str, raw_plan: &str) {
         let timestamp = format_rfc3339(SystemTime::now());
         let entry = AuditEntry {

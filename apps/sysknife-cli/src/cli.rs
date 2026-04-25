@@ -73,7 +73,7 @@ pub enum Command {
     /// Check daemon connectivity and print configuration.
     Doctor,
 
-    /// Query past LACS execution history.
+    /// Query past SysKnife execution history.
     History(HistoryArgs),
 
     /// Print shell completion script to stdout.

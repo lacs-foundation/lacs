@@ -45,6 +45,33 @@ use crate::{
 };
 
 // ---------------------------------------------------------------------------
+// Tunable constants
+// ---------------------------------------------------------------------------
+
+/// Maximum wait for the first auth frame on a vsock connection, in seconds.
+///
+/// A peer that opens the socket but never writes is either firewalled,
+/// confused, or hostile.  Ten seconds is comfortably longer than any sane
+/// auth round-trip (~ms) and short enough that a stuck guest does not
+/// sit on a connection slot indefinitely under [`MAX_CONNECTIONS`] backpressure.
+const VSOCK_AUTH_FRAME_TIMEOUT_SECS: u64 = 10;
+
+/// Default number of history rows returned by `query_history` when the
+/// caller does not specify `limit`.
+///
+/// 20 is a single-screenful of recent activity that mirrors the CLI's
+/// `sysknife history` default — large enough to be useful for triage,
+/// small enough to keep the response under the IPC frame budget.
+const DEFAULT_HISTORY_LIMIT: u32 = 20;
+
+/// How many leading characters of a transaction UUID to render in the
+/// human-readable history listing.  UUID v4 has 122 bits of entropy; even
+/// at 80,000 entries the chance of collision in the first 8 hex chars
+/// (32 bits) is < 1%, which is fine for a forensic-only display where the
+/// full ID is also recorded.
+const TRANSACTION_ID_DISPLAY_PREFIX_LEN: usize = 8;
+
+// ---------------------------------------------------------------------------
 // Wire types — Shell → Daemon
 // ---------------------------------------------------------------------------
 
@@ -127,14 +154,29 @@ enum DaemonResponse {
     },
 }
 
+/// IPC payload included in `job_completed` and related response frames.
+///
+/// Although the type itself is private to the dispatcher module, every field
+/// is serialised on the wire and parsed by the shell, the CLI, and the MCP
+/// adapter — treat changes here as breaking IPC changes.
 #[derive(Debug, Serialize)]
 struct JobResult {
+    /// Terminal job status: `"succeeded"`, `"failed"`, `"canceled"`,
+    /// `"rolled_back"`, or `"needs_reboot"`. Mirrors `JobState`'s `Display`.
     status: String,
+    /// One-line human-readable summary of the outcome.
     summary: String,
+    /// Per-step warning strings preserved verbatim from the executor.
     warnings: Vec<String>,
+    /// Daemon-assigned identifier for this job (UUID v4).
     job_id: String,
+    /// `true` when the action requires a reboot to take effect.
     needs_reboot: bool,
+    /// OSTree commit reference recorded for rollback, or `None` when the
+    /// action is not rollbackable.
     rollback_ref: Option<String>,
+    /// Audit-log transaction ID for this job — also the join key for SIEM
+    /// correlation against forwarded events.
     transaction_id: String,
 }
 
@@ -329,14 +371,23 @@ fn canonical_json(v: &Value) -> String {
 // Connection handler
 // ---------------------------------------------------------------------------
 
-/// Handle a single accepted connection until the peer closes it.
+/// Handle a single Unix-socket (or test duplex) connection until the peer
+/// closes it.
 ///
-/// Works with any `AsyncRead + AsyncWrite + Unpin + Send` stream — Unix sockets,
-/// vsock streams, or duplex streams used in tests.
+/// **Do not call directly for vsock streams.** Vsock connections MUST enter
+/// the daemon through [`vsock_connection_handler`], which reads and validates
+/// the auth token from the first frame before dispatching here. Calling this
+/// function with a raw vsock stream skips token authentication entirely —
+/// the function trusts whatever `caller_role` it is handed and does not
+/// re-validate the peer.
 ///
-/// `caller_role` MUST be resolved before this function is called:
-/// - Unix: via `SO_PEERCRED` in the accept loop.
-/// - Vsock: via `vsock_connection_handler`, which validates the token first.
+/// Permitted stream types:
+/// - Unix sockets — `caller_role` is resolved from `SO_PEERCRED` in the
+///   accept loop, so no in-band auth is needed.
+/// - In-process duplex streams used by integration tests, with the test
+///   passing the role explicitly.
+///
+/// `caller_role` MUST be resolved before this function is called.
 pub async fn connection_handler<S>(
     stream: S,
     state: DaemonState,
@@ -425,10 +476,13 @@ async fn authenticate_vsock_token(
         token: String,
     }
 
-    let raw = tokio::time::timeout(std::time::Duration::from_secs(10), framed.recv())
-        .await
-        .ok()? // timeout expired
-        .ok()?; // framing error
+    let raw = tokio::time::timeout(
+        std::time::Duration::from_secs(VSOCK_AUTH_FRAME_TIMEOUT_SECS),
+        framed.recv(),
+    )
+    .await
+    .ok()? // timeout expired
+    .ok()?; // framing error
     let auth: AuthFrame = serde_json::from_slice(&raw).ok()?;
     if auth.msg_type != "auth" {
         return None;
@@ -644,7 +698,7 @@ async fn handle_query_action(
                     .await;
                 }
             },
-            None => 20,
+            None => DEFAULT_HISTORY_LIMIT,
         };
         let status_filter = params
             .get("status_filter")
@@ -749,7 +803,7 @@ async fn handle_query_action(
     let is_informational_exit =
         matches!((action_name, output.exit_code), ("GetServiceStatus", 1..=4));
 
-    if output.exit_code != 0 && !is_informational_exit {
+    if output.is_nonzero() && !is_informational_exit {
         return send_error(
             framed,
             request_id,
@@ -922,7 +976,7 @@ async fn handle_preview(
         request_id: request_id.to_string(),
         params: params.clone(),
         caller_role: *caller_role,
-        request_hash: request_hash.clone(),
+        request_hash: sysknife_types::RequestHash::new(request_hash.to_string()),
     };
 
     let preview = preview_action(&envelope, current_state, proposed_change);
@@ -951,7 +1005,7 @@ async fn handle_preview(
         }
     };
 
-    // External SIEM forwarding (#150). Best-effort, never blocks the preview
+    // External SIEM forwarding. Best-effort, never blocks the preview
     // response — if the forwarder queue is full or its task is gone, the
     // event is dropped (with a counter + WARN). The local hash-chained log
     // is always written first; the SIEM receives a copy.
@@ -976,11 +1030,10 @@ async fn handle_preview(
 /// audit-store fetch (true fire-and-forget across both SQLite and Postgres
 /// backends).
 fn forward_audit_event(state: &DaemonState, transaction_id: &str, caller: &CallerRole) {
-    if state.forwarder.is_none() {
+    let Some(forwarder) = state.forwarder.clone() else {
         return;
-    }
+    };
     let audit = std::sync::Arc::clone(&state.audit);
-    let forwarder = state.forwarder.clone().expect("checked above");
     let transaction_id = transaction_id.to_string();
     let caller_label = format!("{caller:?}");
     tokio::spawn(async move {
@@ -997,12 +1050,70 @@ fn forward_audit_event(state: &DaemonState, transaction_id: &str, caller: &Calle
                     chain_hash: row.chain_hash,
                     key_id: row.key_id,
                     caller_role: Some(caller_label),
+                    final_status: None,
                 });
             }
             Ok(None) => {
                 eprintln!(
                     "[sysknife-daemon] audit-forward: transaction {transaction_id} \
                      not found just after insert (race?)"
+                );
+            }
+            Err(e) => {
+                eprintln!(
+                    "[sysknife-daemon] audit-forward: chain row fetch failed for \
+                     {transaction_id}: {e}"
+                );
+            }
+        }
+    });
+}
+
+/// Submit a status-change `AuditEvent` to the configured forwarder after
+/// `update_status` records the terminal `JobState`.
+///
+/// Without this, SOC analysts watching the SIEM see the preview event but
+/// never see whether the action ran, succeeded, failed, or was rolled back —
+/// the local hash-chained log carries the terminal status, but the SIEM does
+/// not. Mirrors [`forward_audit_event`]: bails when no forwarder is wired,
+/// looks up the chain row in a background task, and sets `final_status` to
+/// the lowercase Debug rendering of the terminal `JobState` so the
+/// `terminal_status` SD-PARAM appears in the emitted RFC 5424 frame.
+fn forward_status_change_event(
+    state: &DaemonState,
+    transaction_id: &str,
+    caller: &CallerRole,
+    final_status: JobState,
+) {
+    if state.forwarder.is_none() {
+        return;
+    }
+    let audit = std::sync::Arc::clone(&state.audit);
+    let forwarder = state.forwarder.clone().expect("checked above");
+    let transaction_id = transaction_id.to_string();
+    let caller_label = format!("{caller:?}");
+    let final_status_label = format!("{final_status:?}").to_lowercase();
+    tokio::spawn(async move {
+        match audit.fetch_chain_row(&transaction_id).await {
+            Ok(Some(row)) => {
+                forwarder.submit(crate::audit_forward::AuditEvent {
+                    seq: row.seq,
+                    transaction_id: row.transaction_id,
+                    action_name: row.action_name,
+                    risk_level: row.risk_level,
+                    summary: row.summary,
+                    approval_id: row.approval_id,
+                    created_at: row.created_at,
+                    chain_hash: row.chain_hash,
+                    key_id: row.key_id,
+                    caller_role: Some(caller_label),
+                    final_status: Some(final_status_label),
+                });
+            }
+            Ok(None) => {
+                eprintln!(
+                    "[sysknife-daemon] audit-forward: transaction {transaction_id} \
+                     not found for status-change forward (race?)"
                 );
             }
             Err(e) => {
@@ -1144,7 +1255,7 @@ async fn handle_execute(
     };
 
     let (initial_status, initial_summary) = match &output {
-        Ok(out) if out.exit_code == 0 => {
+        Ok(out) if out.is_success() => {
             if spec.reboot_required {
                 (
                     JobState::NeedsReboot,
@@ -1193,16 +1304,25 @@ async fn handle_execute(
     // log it and surface it as a warning in the job result so the client is
     // aware of the gap.
     let mut warnings = Vec::new();
-    if let Err(e) = state
+    match state
         .audit
         .update_status(&transaction_id, final_status)
         .await
     {
-        eprintln!(
-            "[sysknife-daemon] failed to update transaction {transaction_id} to \
-             {final_status:?}: {e}"
-        );
-        warnings.push(format!("audit trail update failed: {e}"));
+        Ok(()) => {
+            // Forward a status-change event to the SIEM so analysts see the
+            // terminal outcome of the action, not just the preview. Best-effort
+            // and fire-and-forget — the local hash-chained log is the durable
+            // record.
+            forward_status_change_event(state, &transaction_id, caller_role, final_status);
+        }
+        Err(e) => {
+            eprintln!(
+                "[sysknife-daemon] failed to update transaction {transaction_id} to \
+                 {final_status:?}: {e}"
+            );
+            warnings.push(format!("audit trail update failed: {e}"));
+        }
     }
 
     send_response(
@@ -1327,7 +1447,7 @@ async fn attempt_rollback_if_needed(
     .await;
 
     match executor.execute(&rb_spec).await {
-        Ok(rb_out) if rb_out.exit_code == 0 => {
+        Ok(rb_out) if rb_out.is_success() => {
             let _ = send_response(
                 framed,
                 &DaemonResponse::JobProgress {
@@ -1400,7 +1520,10 @@ fn format_job_history(records: &[sysknife_types::TransactionRecord]) -> String {
     for r in records {
         output.push_str(&format!(
             "  {}  {:30}  {:12}  {}\n",
-            r.transaction_id.chars().take(8).collect::<String>(),
+            r.transaction_id
+                .chars()
+                .take(TRANSACTION_ID_DISPLAY_PREFIX_LEN)
+                .collect::<String>(),
             r.action_name,
             format!("{:?}", r.status).to_lowercase(),
             r.summary,
@@ -1443,7 +1566,7 @@ mod tests {
     use super::*;
     use crate::{
         state::{DaemonConfig, DaemonState},
-        transport::grpc::ListenTarget,
+        transport::listen::ListenTarget,
     };
     use std::io;
     use tempfile::tempdir;

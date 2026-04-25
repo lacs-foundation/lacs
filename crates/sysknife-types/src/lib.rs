@@ -4,6 +4,262 @@ use std::convert::TryFrom;
 
 use sysknife_proto::sysknife::v1 as proto;
 
+// ---------------------------------------------------------------------------
+// ActionName — validated action catalogue primitive
+// ---------------------------------------------------------------------------
+
+/// Canonical names of every action in the SysKnife catalogue.
+///
+/// This is the single source of truth for "is this string a valid action
+/// name?" — kept in `sysknife-types` (not `sysknife-brain`) so the
+/// `RequestEnvelope` deserializer can validate at the IPC boundary, and
+/// every other crate that touches an action name (the daemon's
+/// `policy::min_role_for_action`, the CLI's approval flow, the proto
+/// bridge) sees the same list without depending on the brain.
+///
+/// **Cross-module invariant:** `sysknife_brain::propose_plan::KNOWN_ACTIONS`
+/// (which pairs each name with an LLM-facing description) MUST list every
+/// name that appears here, in either order.  The brain has a unit test
+/// (`every_known_action_name_is_in_types`) that pins this — adding an
+/// action requires a coordinated update to both lists.
+pub const KNOWN_ACTION_NAMES: &[&str] = &[
+    "GetSystemState",
+    "CollectDiagnostics",
+    "GetDeploymentHistory",
+    "ListDeployments",
+    "UpdateSystem",
+    "CleanupDeployments",
+    "RebootSystem",
+    "RollbackDeployment",
+    "GetKernelArguments",
+    "PinDeployment",
+    "UnpinDeployment",
+    "RebaseSystem",
+    "SetKernelArguments",
+    "InstallFlatpak",
+    "RemoveFlatpak",
+    "UpdateFlatpak",
+    "SearchFlatpakApps",
+    "ListFlatpakRemotes",
+    "ListInstalledFlatpaks",
+    "AddFlatpakRemote",
+    "RemoveFlatpakRemote",
+    "GetFlatpakAppInfo",
+    "ListToolboxes",
+    "CreateToolbox",
+    "RemoveToolbox",
+    "GetLayeredPackages",
+    "ResetLayeredPackageOverride",
+    "GetPendingUpdates",
+    "InstallPackages",
+    "RemovePackages",
+    "AddLayeredPackage",
+    "RemoveLayeredPackage",
+    "ReplaceLayeredPackage",
+    "RemoveBasePackage",
+    "ListServices",
+    "ListTimers",
+    "ReloadDaemon",
+    "StartService",
+    "StopService",
+    "RestartService",
+    "ReloadService",
+    "SetServiceEnabled",
+    "MaskService",
+    "UnmaskService",
+    "GetServiceLogs",
+    "GetServiceStatus",
+    "GetFirewallState",
+    "GetNetworkStatus",
+    "ConfigureWifi",
+    "SetDnsServers",
+    "ConfigureFirewall",
+    "GetDiskUsage",
+    "ListProcesses",
+    "GetMemoryInfo",
+    "GetDateTime",
+    "SetHostname",
+    "SetTimezone",
+    "SetLocale",
+    "SetNtp",
+    "ListPackageRepositories",
+    "AddPackageRepository",
+    "RemovePackageRepository",
+    "EnablePackageRepository",
+    "DisablePackageRepository",
+    "ListContainers",
+    "CreateContainer",
+    "StartContainer",
+    "StopContainer",
+    "RemoveContainer",
+    "GetContainerInfo",
+    "ListUsers",
+    "ListGroups",
+    "CreateUser",
+    "DeleteUser",
+    "AddUserToGroup",
+    "RemoveUserFromGroup",
+    "GetAuthorizedKeys",
+    "AddAuthorizedKey",
+    "RemoveAuthorizedKey",
+    "ListJobHistory",
+];
+
+/// A validated action name from the approved SysKnife catalogue.
+///
+/// Constructed via [`ActionName::parse`], which rejects any string not in
+/// [`KNOWN_ACTION_NAMES`].  Holding an `ActionName` is a compile-time
+/// guarantee that the contained string is in the catalogue — downstream
+/// code does not need to re-validate.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize)]
+#[serde(transparent)]
+pub struct ActionName(String);
+
+impl ActionName {
+    /// Parse a string into a validated `ActionName`.
+    pub fn parse(name: impl Into<String>) -> Result<Self, UnknownActionName> {
+        let name = name.into();
+        if KNOWN_ACTION_NAMES.contains(&name.as_str()) {
+            Ok(Self(name))
+        } else {
+            Err(UnknownActionName(name))
+        }
+    }
+
+    /// Return the inner string slice.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for ActionName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl AsRef<str> for ActionName {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Returned by [`ActionName::parse`] when the string is not a known action.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnknownActionName(pub String);
+
+impl std::fmt::Display for UnknownActionName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "unknown action name: '{}'", self.0)
+    }
+}
+
+impl std::error::Error for UnknownActionName {}
+
+// ---------------------------------------------------------------------------
+// Hash newtypes — RequestHash / ApprovalHash
+// ---------------------------------------------------------------------------
+
+/// Hex-encoded SHA-256 hash of a [`RequestEnvelope`].
+///
+/// `RequestHash` and [`ApprovalHash`] are intentionally distinct types even
+/// though they hold the same underlying string at runtime. The compiler will
+/// reject any code that swaps the two arguments to
+/// [`approval_matches_request`](crate::approval_matches_request) — without
+/// these newtypes a `(String, String)` signature is one off-by-one parameter
+/// flip away from validating the wrong direction. The two also do **not**
+/// implement `PartialEq<ApprovalHash>`; the only sanctioned comparison is
+/// [`approval_matches_request`], which uses a constant-time compare.
+///
+/// `serde(transparent)` keeps the wire format identical to a bare string so
+/// existing JSON IPC frames deserialize unchanged.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct RequestHash(String);
+
+impl RequestHash {
+    pub fn new(s: impl Into<String>) -> Self {
+        Self(s.into())
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+    pub fn into_inner(self) -> String {
+        self.0
+    }
+}
+
+impl std::fmt::Display for RequestHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl AsRef<str> for RequestHash {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for RequestHash {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
+/// Hex-encoded SHA-256 hash of an [`ApprovalEnvelope`]-equivalent payload.
+///
+/// See [`RequestHash`] for the type-state rationale.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ApprovalHash(String);
+
+impl ApprovalHash {
+    pub fn new(s: impl Into<String>) -> Self {
+        Self(s.into())
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+    pub fn into_inner(self) -> String {
+        self.0
+    }
+}
+
+impl std::fmt::Display for ApprovalHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl AsRef<str> for ApprovalHash {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for ApprovalHash {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
+/// Constant-time comparison between a `RequestHash` and an `ApprovalHash`.
+///
+/// The only sanctioned way to compare the two — pulls `subtle::ConstantTimeEq`
+/// internally so a timing oracle cannot reveal a per-byte prefix. Returns
+/// `false` immediately when either side is empty or the lengths differ;
+/// neither short-circuit reveals byte-level information.
+pub fn approval_matches_request(request: &RequestHash, approval: &ApprovalHash) -> bool {
+    use subtle::ConstantTimeEq;
+    let r = request.as_str().as_bytes();
+    let a = approval.as_str().as_bytes();
+    if r.is_empty() || r.len() != a.len() {
+        return false;
+    }
+    r.ct_eq(a).unwrap_u8() == 1
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CallerRole {
@@ -69,7 +325,7 @@ pub struct RequestEnvelope {
     pub request_id: String,
     pub params: Value,
     pub caller_role: CallerRole,
-    pub request_hash: String,
+    pub request_hash: RequestHash,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -82,7 +338,7 @@ pub struct PreviewEnvelope {
     pub reboot_required: bool,
     pub rollback_available: bool,
     pub warnings: Vec<String>,
-    pub request_hash: String,
+    pub request_hash: RequestHash,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -261,7 +517,7 @@ impl From<RequestEnvelope> for proto::RequestEnvelope {
             request_id: value.request_id,
             params_json: serde_json::to_string(&value.params).expect("json serialization"),
             caller_role: caller_role_code(value.caller_role),
-            request_hash: value.request_hash,
+            request_hash: value.request_hash.into_inner(),
         }
     }
 }
@@ -285,7 +541,7 @@ impl TryFrom<proto::RequestEnvelope> for RequestEnvelope {
                     }
                 })?,
             )?,
-            request_hash: value.request_hash,
+            request_hash: RequestHash::from(value.request_hash),
         })
     }
 }
@@ -303,7 +559,7 @@ impl From<PreviewEnvelope> for proto::PreviewEnvelope {
             reboot_required: value.reboot_required,
             rollback_available: value.rollback_available,
             warnings: value.warnings,
-            request_hash: value.request_hash,
+            request_hash: value.request_hash.into_inner(),
         }
     }
 }
@@ -333,7 +589,7 @@ impl TryFrom<proto::PreviewEnvelope> for PreviewEnvelope {
             reboot_required: value.reboot_required,
             rollback_available: value.rollback_available,
             warnings: value.warnings,
-            request_hash: value.request_hash,
+            request_hash: RequestHash::from(value.request_hash),
         })
     }
 }
@@ -428,5 +684,51 @@ impl TryFrom<proto::TransactionRecord> for TransactionRecord {
             summary: value.summary,
             warnings: value.warnings,
         })
+    }
+}
+
+#[cfg(test)]
+mod hash_newtype_tests {
+    use super::*;
+
+    #[test]
+    fn matches_when_request_and_approval_are_equal() {
+        let r = RequestHash::new("deadbeef".to_string());
+        let a = ApprovalHash::new("deadbeef".to_string());
+        assert!(approval_matches_request(&r, &a));
+    }
+
+    #[test]
+    fn rejects_unequal_hashes() {
+        let r = RequestHash::new("deadbeef".to_string());
+        let a = ApprovalHash::new("cafebabe".to_string());
+        assert!(!approval_matches_request(&r, &a));
+    }
+
+    #[test]
+    fn rejects_empty_request_hash() {
+        let r = RequestHash::new(String::new());
+        let a = ApprovalHash::new(String::new());
+        assert!(!approval_matches_request(&r, &a));
+        let a2 = ApprovalHash::new("deadbeef".to_string());
+        assert!(!approval_matches_request(&r, &a2));
+    }
+
+    #[test]
+    fn rejects_length_mismatch_without_byte_compare() {
+        let r = RequestHash::new("dead".to_string());
+        let a = ApprovalHash::new("deadbeef".to_string());
+        assert!(!approval_matches_request(&r, &a));
+    }
+
+    #[test]
+    fn serde_round_trips_via_transparent_string() {
+        // The newtype must serialise to a bare string so existing JSON IPC
+        // frames continue to deserialise unchanged.
+        let r = RequestHash::new("abc123".to_string());
+        let json = serde_json::to_string(&r).unwrap();
+        assert_eq!(json, "\"abc123\"");
+        let back: RequestHash = serde_json::from_str("\"abc123\"").unwrap();
+        assert_eq!(back, r);
     }
 }

@@ -3,7 +3,7 @@ use sysknife_daemon::jobs::JobStateMachine;
 use sysknife_daemon::policy::approval_matches_request;
 use sysknife_daemon::state::DaemonConfig;
 use sysknife_daemon::transactions::{NewTransaction, TransactionStore};
-use sysknife_daemon::transport::grpc::{bind_unix_listener, ListenTarget};
+use sysknife_daemon::transport::listen::{bind_unix_listener, ListenTarget};
 use sysknife_types::{CallerRole, JobState, RiskLevel};
 use tempfile::tempdir;
 

@@ -825,7 +825,7 @@ mod tests {
         mock.await.unwrap();
         let _ = tokio::fs::remove_file(&socket_path).await;
 
-        assert_eq!(envelope.request_hash, "abcdef1234");
+        assert_eq!(envelope.request_hash.as_str(), "abcdef1234");
         assert_eq!(envelope.summary, "Collect disk usage statistics");
         assert_eq!(envelope.risk_level, RiskLevel::Low);
         assert!(!envelope.reboot_required);

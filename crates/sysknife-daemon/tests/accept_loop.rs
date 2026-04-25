@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 use sysknife_daemon::dispatcher::{connection_handler, resolve_caller_role};
 use sysknife_daemon::state::{DaemonConfig, DaemonState};
 use sysknife_daemon::state_collector::CommandRunner;
-use sysknife_daemon::transport::{framing::FramedStream, grpc::ListenTarget};
+use sysknife_daemon::transport::{framing::FramedStream, listen::ListenTarget};
 use tempfile::tempdir;
 use tokio::net::{UnixListener, UnixStream};
 
@@ -55,18 +55,13 @@ async fn start_daemon(dir: &tempfile::TempDir) -> std::path::PathBuf {
     let state = runtime.state;
 
     tokio::spawn(async move {
-        loop {
-            match listener.accept().await {
-                Ok((stream, _)) => {
-                    let role = resolve_caller_role(&stream);
-                    let state = state.clone();
-                    let runner = Arc::clone(&runner);
-                    tokio::spawn(async move {
-                        connection_handler(stream, state, runner, role).await;
-                    });
-                }
-                Err(_) => break,
-            }
+        while let Ok((stream, _)) = listener.accept().await {
+            let role = resolve_caller_role(&stream);
+            let state = state.clone();
+            let runner = Arc::clone(&runner);
+            tokio::spawn(async move {
+                connection_handler(stream, state, runner, role).await;
+            });
         }
     });
 

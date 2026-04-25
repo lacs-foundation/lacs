@@ -10,7 +10,7 @@ fn request_envelope_round_trips_json() {
         request_id: "req-1".to_string(),
         params: serde_json::json!({"app_id": "org.mozilla.firefox"}),
         caller_role: CallerRole::Dev,
-        request_hash: "abc123".to_string(),
+        request_hash: sysknife_types::RequestHash::new("abc123".to_string()),
     };
 
     let encoded = serde_json::to_string(&value).unwrap();
@@ -30,7 +30,7 @@ fn preview_envelope_round_trips_json() {
         reboot_required: false,
         rollback_available: true,
         warnings: vec!["network required".to_string()],
-        request_hash: "abc123".to_string(),
+        request_hash: sysknife_types::RequestHash::new("abc123".to_string()),
     };
 
     let encoded = serde_json::to_string(&value).unwrap();

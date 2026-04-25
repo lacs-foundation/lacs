@@ -20,6 +20,17 @@ pub fn specs() -> Vec<ActionSpec> {
 /// but does not trigger `pam_systemd`, so `XDG_RUNTIME_DIR` is left empty.
 /// Toolbox derives its rootless Podman socket path from it; an empty value
 /// produces `--volume ":"` which Podman rejects.
+///
+/// **Shell-injection safety:** the `-c "<toolbox_cmd>"` form passes a string
+/// to `/bin/sh`, so an attacker-controlled metacharacter would be expanded.
+/// Defence-in-depth:
+///   1. `username` flows through `validated_username` (`[A-Za-z0-9._-]`).
+///   2. Toolbox `name`, `release`, and `image` flow through
+///      `validated_safe_arg`, which now enforces a strict ASCII allowlist
+///      and rejects every shell metacharacter at the boundary.
+///   3. The format!-interpolated values are wrapped in single quotes for
+///      defence-in-depth; the `$(id -u)` expansion is daemon-controlled, not
+///      attacker-reachable.
 fn toolbox_as(username: &str, toolbox_cmd: &str) -> ActionMechanism {
     ActionMechanism::Command {
         program: "sudo",

@@ -246,7 +246,7 @@ export function SetupWizard({ onDismiss }: Props) {
       <section className="pane setup-wizard">
         <h2>Choose your LLM provider</h2>
         <p className="setup-wizard__subtitle">
-          LACS needs an LLM to generate administration plans. Pick one to get started.
+          SysKnife needs an LLM to generate administration plans. Pick one to get started.
         </p>
         <div className="setup-wizard__cards">
           <button
@@ -408,7 +408,7 @@ export function SetupWizard({ onDismiss }: Props) {
                   checked={thinkOverride === null}
                   onChange={() => setThinkOverride(null)}
                 />
-                Auto (recommended) — let LACS decide from the model name
+                Auto (recommended) — let SysKnife decide from the model name
               </label>
               <label>
                 <input
@@ -544,7 +544,7 @@ export function SetupWizard({ onDismiss }: Props) {
     <section className="pane setup-wizard">
       <h2>Setup complete</h2>
       <p className="setup-wizard__subtitle">
-        Restart the shell to apply the new configuration. LACS will read{" "}
+        Restart the shell to apply the new configuration. SysKnife will read{" "}
         <code>{CONFIG_PATH}</code> on startup and use{" "}
         {category === "local" ? "Ollama" : currentCloudMeta?.label ?? "your provider"} as the LLM provider.
       </p>

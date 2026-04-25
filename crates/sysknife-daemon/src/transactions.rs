@@ -133,7 +133,7 @@ impl TransactionStore {
         // IMMEDIATE acquires the write lock at BEGIN, so the read of
         // `next_seq_and_prev_hash` is consistent with the eventual INSERT.
         // Default DEFERRED would let two writers both read the same prev_hash
-        // and then race to INSERT — the loser hits SQLITE_BUSY (F6).
+        // and then race to INSERT — the loser hits SQLITE_BUSY.
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let transaction_id = Uuid::new_v4().to_string();
         let record = Self::insert_transaction(&tx, key, &transaction_id, transaction)?;
@@ -156,7 +156,7 @@ impl TransactionStore {
         // IMMEDIATE acquires the write lock at BEGIN, so the read of
         // `next_seq_and_prev_hash` is consistent with the eventual INSERT.
         // Default DEFERRED would let two writers both read the same prev_hash
-        // and then race to INSERT — the loser hits SQLITE_BUSY (F6).
+        // and then race to INSERT — the loser hits SQLITE_BUSY.
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let transaction_id = Uuid::new_v4().to_string();
         let transaction = Self::insert_transaction(&tx, key, &transaction_id, transaction)?;
@@ -225,7 +225,7 @@ impl TransactionStore {
              WHERE request_hash = ?1
                AND status = ?2
                AND created_at > datetime('now', '-15 minutes')
-             ORDER BY rowid DESC
+             ORDER BY seq DESC
              LIMIT 1",
         )?;
         let mut rows = stmt.query(params![request_hash, queued_json])?;
@@ -317,6 +317,18 @@ impl TransactionStore {
 
     /// Cancel all `Queued` transactions whose `created_at` timestamp is older
     /// than the 15-minute TTL window.  Returns the number of rows affected.
+    ///
+    /// **State-machine safety:** the WHERE clause pins `status = Queued`
+    /// before applying `Queued → Canceled`, which is the only legal
+    /// transition reachable from `Queued` other than `Running`. A row that
+    /// has progressed to `Running` (or any terminal state) in between the
+    /// TTL match and our UPDATE is skipped because the predicate no longer
+    /// matches it. This makes the bulk SQL semantically equivalent to
+    /// fetching each candidate, building a `JobStateMachine`, and calling
+    /// `cancel()` on it — but in a single statement so we don't race ourselves
+    /// when many rows expire at once. The
+    /// `cleanup_stale_queued_does_not_clobber_running_rows` regression test
+    /// in `tests/coverage_gaps.rs` pins this guarantee.
     pub fn cleanup_stale_queued(&self) -> Result<u64, TransactionStoreError> {
         let conn = self.connection()?;
         let canceled_json = serialize_field(&JobState::Canceled)?;
@@ -375,7 +387,7 @@ impl TransactionStore {
             param_values.push(Box::new(hours));
         }
 
-        sql.push_str(" ORDER BY rowid DESC LIMIT ?");
+        sql.push_str(" ORDER BY seq DESC LIMIT ?");
         param_values.push(Box::new(limit));
 
         let params_ref: Vec<&dyn rusqlite::types::ToSql> =
@@ -393,7 +405,7 @@ impl TransactionStore {
 
     fn connection(&self) -> Result<Connection, TransactionStoreError> {
         let conn = Connection::open(&self.path)?;
-        // Concurrency tuning (red-team finding F6):
+        // Concurrency tuning :
         //   - WAL journal mode lets readers proceed concurrently with writers.
         //   - busy_timeout=5000ms makes a contending writer block instead of
         //     immediately returning SQLITE_BUSY. Without it, two concurrent
@@ -412,7 +424,10 @@ impl TransactionStore {
 
     fn initialize(&self) -> Result<(), TransactionStoreError> {
         let conn = self.connection()?;
-        // Schema additions for the tamper-evident hash chain (#149):
+        // Schema additions for the append-tamper-evident hash chain (see
+        // `audit_chain.rs` for the full threat model — note that truncation of
+        // the tail is NOT detected by this chain alone; that requires the
+        // separate watermark mechanism documented there):
         //   seq             — monotonic ordering, 1-indexed
         //   key_id          — identifies the key generation (forward-compatible
         //                     with epoch rotation in a follow-up issue)
@@ -725,7 +740,7 @@ mod tests {
         TransactionStore::open_with_key(path, key).unwrap()
     }
 
-    // ── Audit chain integration tests (#149) ─────────────────────────────
+    // ── Audit chain integration tests ────────────────────────────────────
 
     #[test]
     fn record_writes_audit_chain_columns() {
@@ -1075,7 +1090,7 @@ mod tests {
         );
     }
 
-    // ── TTL expiry tests (issue #46) ────────────────────────────────────────
+    // ── TTL expiry tests ────────────────────────────────────────────────────
 
     #[test]
     fn fresh_queued_transaction_is_found_by_request_hash() {
@@ -1142,7 +1157,7 @@ mod tests {
         assert_eq!(fresh_record.status, JobState::Queued);
     }
 
-    // ── State-machine validation tests (issue #56) ──────────────────────────
+    // ── State-machine validation tests ──────────────────────────────────────
 
     #[test]
     fn update_status_rejects_queued_to_succeeded() {

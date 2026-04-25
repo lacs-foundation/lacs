@@ -52,6 +52,22 @@ pub fn set_dns_servers(interface: &str, servers: &[&str]) -> ActionSpec {
     }
 }
 
+/// Configure a firewalld rule and reload so it takes effect.
+///
+/// Uses `sh -c` to chain `firewall-cmd --permanent ... && firewall-cmd --reload`
+/// atomically; firewalld has no single-call equivalent that updates the
+/// permanent rule and reloads runtime in one shot.
+///
+/// **Shell-injection safety:** `zone` and `service` are interpolated into the
+/// script via `format!`, so any shell metacharacter in either would be
+/// expanded by `/bin/sh`. Defence-in-depth:
+///   1. Both flow through `validated_safe_arg` upstream, which enforces a
+///      strict ASCII allowlist (`[A-Za-z0-9._:/+@-]`, no leading dash, ≤254
+///      bytes) and rejects every shell metacharacter at the boundary.
+///   2. The interpolated values are wrapped in single quotes so a future
+///      validator regression cannot escape the surrounding quotes.
+///   3. `verb` is selected from a fixed pair of literals (`add-service` /
+///      `remove-service`); it is never attacker-influenced.
 pub fn configure_firewall(zone: &str, service: &str, enabled: bool) -> ActionSpec {
     let verb = if enabled {
         "add-service"
