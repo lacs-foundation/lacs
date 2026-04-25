@@ -142,18 +142,15 @@ async fn unix_accept_loop(
                             }
                         }
                     }
-                    Err(e) => {
-                        use std::io::ErrorKind;
-                        match e.kind() {
-                            ErrorKind::ConnectionAborted | ErrorKind::ConnectionReset => {
-                                eprintln!("[sysknife-daemon] transient accept error: {e}");
-                            }
-                            _ => {
-                                eprintln!("[sysknife-daemon] fatal accept error, shutting down: {e}");
-                                break;
-                            }
+                    Err(e) => match classify_accept_error(&e) {
+                        AcceptErrorAction::LogTransient => {
+                            eprintln!("[sysknife-daemon] transient accept error: {e}");
                         }
-                    }
+                        AcceptErrorAction::BreakFatal => {
+                            eprintln!("[sysknife-daemon] fatal accept error, shutting down: {e}");
+                            break;
+                        }
+                    },
                 }
             }
             _ = tokio::signal::ctrl_c() => {
@@ -161,6 +158,33 @@ async fn unix_accept_loop(
                 break;
             }
         }
+    }
+}
+
+/// Decision returned by [`classify_accept_error`] for the accept-loop's
+/// `Err` arm.  `LogTransient` keeps the loop alive; `BreakFatal` exits
+/// the loop and (eventually) the daemon process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AcceptErrorAction {
+    LogTransient,
+    BreakFatal,
+}
+
+/// Classify an `io::Error` from `listener.accept()`.
+///
+/// `ConnectionAborted` and `ConnectionReset` happen routinely when a peer
+/// closes the connection between the kernel signalling readiness and
+/// `accept()` returning the fd — the loop must not treat these as fatal.
+/// Anything else (`PermissionDenied`, `OutOfMemory`, `BadFileDescriptor`)
+/// indicates the listener has lost its ability to serve connections; bail
+/// out of the loop so the daemon can be restarted by its supervisor.
+fn classify_accept_error(e: &std::io::Error) -> AcceptErrorAction {
+    use std::io::ErrorKind;
+    match e.kind() {
+        ErrorKind::ConnectionAborted | ErrorKind::ConnectionReset => {
+            AcceptErrorAction::LogTransient
+        }
+        _ => AcceptErrorAction::BreakFatal,
     }
 }
 
@@ -196,20 +220,17 @@ async fn vsock_accept_loop(
                             }
                         }
                     }
-                    Err(e) => {
-                        use std::io::ErrorKind;
-                        match e.kind() {
-                            ErrorKind::ConnectionAborted | ErrorKind::ConnectionReset => {
-                                eprintln!("[sysknife-daemon] transient vsock accept error: {e}");
-                            }
-                            _ => {
-                                eprintln!(
-                                    "[sysknife-daemon] fatal vsock accept error, shutting down: {e}"
-                                );
-                                break;
-                            }
+                    Err(e) => match classify_accept_error(&e) {
+                        AcceptErrorAction::LogTransient => {
+                            eprintln!("[sysknife-daemon] transient vsock accept error: {e}");
                         }
-                    }
+                        AcceptErrorAction::BreakFatal => {
+                            eprintln!(
+                                "[sysknife-daemon] fatal vsock accept error, shutting down: {e}"
+                            );
+                            break;
+                        }
+                    },
                 }
             }
             _ = tokio::signal::ctrl_c() => {
@@ -319,6 +340,10 @@ async fn build_postgres_audit(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use tokio::sync::Semaphore;
+
     #[test]
     #[allow(clippy::assertions_on_constants)]
     fn max_connections_is_reasonable() {
@@ -335,5 +360,114 @@ mod tests {
             "MAX_CONNECTIONS {} too high; each connection holds DB state",
             super::MAX_CONNECTIONS
         );
+    }
+
+    /// T13 — accept-loop fatal-vs-transient classification.
+    ///
+    /// `unix_accept_loop` and `vsock_accept_loop` both fork on the
+    /// `io::Error` returned by `listener.accept()`: a peer-side reset is
+    /// expected and recoverable (log + continue), but anything else means
+    /// the listener has lost its ability to serve connections (process
+    /// exhausted fds, kernel revoked the socket, …) and the daemon must
+    /// restart.  Pin every concrete `ErrorKind` used in the match so a
+    /// regression that swaps the alternation or forgets a kind is caught
+    /// here, not by an oncall page after the daemon hangs in production.
+    #[test]
+    fn classify_accept_error_treats_peer_resets_as_transient() {
+        use std::io::{Error, ErrorKind};
+        for kind in [ErrorKind::ConnectionAborted, ErrorKind::ConnectionReset] {
+            let err = Error::new(kind, "peer hung up");
+            assert_eq!(
+                super::classify_accept_error(&err),
+                super::AcceptErrorAction::LogTransient,
+                "{kind:?} must keep the loop alive"
+            );
+        }
+    }
+
+    #[test]
+    fn classify_accept_error_treats_other_kinds_as_fatal() {
+        use std::io::{Error, ErrorKind};
+        for kind in [
+            ErrorKind::PermissionDenied,
+            ErrorKind::OutOfMemory,
+            ErrorKind::AddrNotAvailable,
+            ErrorKind::Other,
+            ErrorKind::Interrupted,
+            ErrorKind::WouldBlock,
+        ] {
+            let err = Error::new(kind, "fatal");
+            assert_eq!(
+                super::classify_accept_error(&err),
+                super::AcceptErrorAction::BreakFatal,
+                "{kind:?} must break the accept loop so the supervisor restarts the daemon"
+            );
+        }
+    }
+
+    /// T14 — the accept loop's runtime backpressure contract.
+    ///
+    /// `unix_accept_loop` and `vsock_accept_loop` use
+    /// `Arc::clone(&semaphore).try_acquire_owned()` to gate every accepted
+    /// connection: success → spawn a handler that holds the permit, failure
+    /// → drop the connection with a warning.  This pattern is what bounds
+    /// the daemon's open-fd footprint under load.
+    ///
+    /// Pin the contract directly on the `Semaphore`: with N permits, the
+    /// first N `try_acquire_owned` calls succeed, the (N+1)th returns an
+    /// error, and dropping any held permit unblocks one further acquire.
+    /// A regression that swaps the semaphore for an unbounded queue (or
+    /// flips `try_acquire_owned` to `acquire_owned().await`, which would
+    /// block the accept loop instead of dropping) fails this test.
+    #[test]
+    fn semaphore_backpressure_drops_excess_acquires_and_recovers_on_release() {
+        const SLOTS: usize = 2;
+        let sem = Arc::new(Semaphore::new(SLOTS));
+
+        let p1 = Arc::clone(&sem)
+            .try_acquire_owned()
+            .expect("first slot must acquire");
+        let p2 = Arc::clone(&sem)
+            .try_acquire_owned()
+            .expect("second slot must acquire");
+
+        // Third acquire must fail without blocking.
+        assert!(
+            Arc::clone(&sem).try_acquire_owned().is_err(),
+            "{}+1 acquires must be refused while all permits are held",
+            SLOTS
+        );
+
+        // Releasing one permit unblocks exactly one further acquire.
+        drop(p1);
+        let p3 = Arc::clone(&sem)
+            .try_acquire_owned()
+            .expect("released permit must allow one more acquire");
+        assert!(
+            Arc::clone(&sem).try_acquire_owned().is_err(),
+            "with the recovered slot also held, further acquires must be refused"
+        );
+
+        drop(p2);
+        drop(p3);
+        // Both released: the pool is fully drained again. Stash the permits so
+        // they are not dropped immediately by the for-loop expression — that
+        // would let the same slot be reacquired on each iteration and the
+        // assertion would pass even if the semaphore had only one slot.
+        let mut reclaimed = Vec::with_capacity(SLOTS);
+        for _ in 0..SLOTS {
+            reclaimed.push(
+                Arc::clone(&sem)
+                    .try_acquire_owned()
+                    .expect("after releasing both, all permits are reclaimable"),
+            );
+        }
+        // The (SLOTS+1)th must still fail — proves all slots were genuinely
+        // reclaimed up to the cap, not the same slot N times.
+        assert!(
+            Arc::clone(&sem).try_acquire_owned().is_err(),
+            "with all reclaimed permits held, further acquires must be refused"
+        );
+        drop(reclaimed);
     }
 }

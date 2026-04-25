@@ -784,6 +784,83 @@ mod tests {
         assert_eq!(rows[2].prev_chain_hash, rows[1].chain_hash);
     }
 
+    /// T3 — concurrent `record()` keeps the chain intact and seqs contiguous.
+    ///
+    /// The store guarantees this via `BEGIN IMMEDIATE` on every record:
+    /// the immediate write lock means `next_seq_and_prev_hash` is read
+    /// inside the same SQLite transaction that does the INSERT, so two
+    /// records cannot both observe `seq=N` and produce two rows with the
+    /// same chain hash.  Drive 8 worker threads × 10 records each
+    /// through the same store and assert (a) `verify_audit_chain` returns
+    /// Intact { rows_checked: 80 } and (b) the seq column is contiguous
+    /// 1..=80.  A regression that drops `BEGIN IMMEDIATE` or substitutes
+    /// a non-locking read fails one of these on every run.
+    #[test]
+    fn concurrent_record_keeps_chain_intact_and_seqs_contiguous() {
+        const WORKERS: usize = 8;
+        const RECORDS_PER_WORKER: usize = 10;
+        const TOTAL: usize = WORKERS * RECORDS_PER_WORKER;
+
+        let dir = tempdir().unwrap();
+        let store = std::sync::Arc::new(test_store(dir.path().join("tx.db")));
+
+        let mut handles = Vec::with_capacity(WORKERS);
+        for w in 0..WORKERS {
+            let store = std::sync::Arc::clone(&store);
+            handles.push(std::thread::spawn(move || {
+                for r in 0..RECORDS_PER_WORKER {
+                    let tx = NewTransaction {
+                        request_id: format!("worker-{w}-record-{r}"),
+                        request_hash: format!("hash-{w}-{r}"),
+                        action_name: "GetSystemState".to_string(),
+                        risk_level: RiskLevel::Low,
+                        approval_id: None,
+                        summary: format!("worker {w} record {r}"),
+                        warnings: vec![],
+                    };
+                    store
+                        .record(tx)
+                        .expect("record must succeed under contention");
+                }
+            }));
+        }
+        for h in handles {
+            h.join().expect("worker thread did not panic");
+        }
+
+        // (a) chain must be intact end-to-end.
+        let key = AuditKey::from_bytes(vec![0x42; 32]);
+        let outcome = store.verify_audit_chain(&key).unwrap();
+        match outcome {
+            VerifyOutcome::Intact { rows_checked } => {
+                assert_eq!(
+                    rows_checked, TOTAL as u64,
+                    "expected {TOTAL} rows checked, got {rows_checked}"
+                );
+            }
+            other => panic!("chain must be Intact under concurrent writes; got {other:?}"),
+        }
+
+        // (b) seq must be a contiguous run 1..=TOTAL with no gaps and no duplicates.
+        let conn = store.connection().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT seq FROM transactions ORDER BY seq ASC")
+            .unwrap();
+        let seqs: Vec<i64> = stmt
+            .query_map([], |row| row.get::<_, i64>(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(seqs.len(), TOTAL, "row count mismatch");
+        for (i, s) in seqs.iter().enumerate() {
+            assert_eq!(
+                *s,
+                (i as i64) + 1,
+                "seq column must be contiguous 1..={TOTAL}; saw {s} at position {i}"
+            );
+        }
+    }
+
     #[test]
     fn verify_audit_chain_intact_after_inserts() {
         let dir = tempdir().unwrap();
