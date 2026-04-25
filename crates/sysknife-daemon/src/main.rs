@@ -1,7 +1,9 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use sysknife_core::{config::LacsConfig, default_database_path, default_listen_uri};
 use sysknife_daemon::dispatcher::{connection_handler, resolve_caller_role};
+use sysknife_daemon::policy::PolicyTable;
 use sysknife_daemon::state::{DaemonConfig, DaemonState};
 use sysknife_daemon::state_collector::RealCommandRunner;
 use sysknife_daemon::transport::grpc::{bind_unix_listener, ListenTarget};
@@ -19,14 +21,38 @@ const MAX_CONNECTIONS: usize = 16;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Apply config-file values as env var defaults before reading any config.
     // Must run before the tokio runtime starts worker threads.
-    LacsConfig::load().apply_defaults_to_env();
+    let lacs_config = LacsConfig::load();
+    lacs_config.apply_defaults_to_env();
 
     let listen_uri = default_listen_uri();
     let database_path = default_database_path();
 
+    // Build the policy table from `[policy.risk_overrides]` (if any). A
+    // typo, an unknown action, or a downgrade attempt is a fatal startup
+    // error — operators must see misconfiguration loudly, not silently.
+    let raw_overrides: HashMap<String, String> = lacs_config
+        .policy
+        .as_ref()
+        .and_then(|p| p.risk_overrides.clone())
+        .unwrap_or_default();
+    let policy = PolicyTable::from_overrides(&raw_overrides).map_err(|e| {
+        eprintln!("[sysknife-daemon] FATAL: policy validation failed: {e}");
+        e
+    })?;
+
+    if policy.override_count() > 0 {
+        eprintln!(
+            "[sysknife-daemon] applying {} risk override(s) from [policy.risk_overrides]:",
+            policy.override_count()
+        );
+        for (action, role) in policy.active_overrides() {
+            eprintln!("[sysknife-daemon]   {action:30} → {role:?}");
+        }
+    }
+
     let listen_target = ListenTarget::try_from_uri(&listen_uri)?;
     let config = DaemonConfig::new(listen_target.clone(), &database_path);
-    let state = DaemonState::open(config)?;
+    let state = DaemonState::open_with_policy(config, policy)?;
 
     let runner = Arc::new(RealCommandRunner);
     let semaphore = Arc::new(Semaphore::new(MAX_CONNECTIONS));
