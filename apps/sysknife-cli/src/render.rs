@@ -228,3 +228,77 @@ pub fn print_doctor_fail(error: &str) {
         "✗".if_supports_color(Stream::Stderr, |t| t.red()),
     );
 }
+
+// ---------------------------------------------------------------------------
+// T10 — render-layer regression tests
+//
+// `render.rs` drives every line a CLI user reads. Before this batch
+// nothing in here had direct test coverage; the layout was held in
+// place only by the developer running `sysknife` locally. These tests
+// pin the contract of the leaf functions — string layout, badge
+// shape, presence of every word a user sees — without colour codes
+// (`if_supports_color` returns the raw string when stdout is not a
+// TTY, which is always true under cargo test).
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn risk_colored_low_renders_low_with_a_dot_marker() {
+        let s = risk_colored(&PlanRiskLevel::Low);
+        assert!(
+            s.starts_with('●'),
+            "every risk badge must lead with the bullet glyph; got {s:?}"
+        );
+        assert!(
+            s.contains("low"),
+            "low-risk badge must mention 'low'; got {s:?}"
+        );
+    }
+
+    #[test]
+    fn risk_colored_medium_renders_medium_with_a_dot_marker() {
+        let s = risk_colored(&PlanRiskLevel::Medium);
+        assert!(s.starts_with('●'));
+        assert!(s.contains("medium"));
+    }
+
+    #[test]
+    fn risk_colored_high_renders_high_uppercase() {
+        // Uppercase HIGH is a deliberate visual escalation cue —
+        // anything else means a regression in the warn-loud-on-high
+        // contract.
+        let s = risk_colored(&PlanRiskLevel::High);
+        assert!(s.starts_with('●'));
+        assert!(
+            s.contains("HIGH"),
+            "high-risk badge must use uppercase HIGH; got {s:?}"
+        );
+        assert!(
+            !s.contains("high "),
+            "high-risk badge must NOT use lowercase 'high'; got {s:?}"
+        );
+    }
+
+    #[test]
+    fn risk_badges_are_distinct_so_a_skim_can_tell_them_apart() {
+        // Quick smoke: the three rendered badges must be three distinct
+        // strings.  A regression that maps Medium → "low" or High → "medium"
+        // (e.g. an off-by-one in a future enum reorder) collapses the set.
+        use std::collections::HashSet;
+        let set: HashSet<String> = [
+            risk_colored(&PlanRiskLevel::Low),
+            risk_colored(&PlanRiskLevel::Medium),
+            risk_colored(&PlanRiskLevel::High),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(
+            set.len(),
+            3,
+            "the three risk badges must render to distinct strings"
+        );
+    }
+}

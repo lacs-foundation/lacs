@@ -666,6 +666,67 @@ mod tests {
         assert_eq!(seen[0], INITIAL_BACKOFF_SECS);
     }
 
+    /// T8 — RFC 5424 round-trip through a real syslog parser.
+    ///
+    /// Substring `assert!(frame.contains("..."))` checks accept malformed
+    /// frames as long as they happen to contain the expected substring.
+    /// Round-trip the formatter's output through `syslog_loose`, which
+    /// implements RFC 5424's grammar, and assert each parsed field
+    /// matches the input event.  A regression that breaks PRI / VERSION /
+    /// MSGID / SD-ID structure fails parsing here, not in production.
+    #[test]
+    fn rfc5424_round_trip_through_syslog_loose() {
+        let event = sample_event();
+        let facility = 1u8; // user-level
+        let frame = format_rfc5424(&event, facility);
+
+        let parsed = syslog_loose::parse_message(&frame, syslog_loose::Variant::RFC5424);
+
+        // PRI = facility * 8 + severity. Severity for audit events is 5
+        // (NOTICE) — pin both halves through the parser.
+        assert_eq!(
+            parsed.facility.expect("frame has a facility"),
+            syslog_loose::SyslogFacility::LOG_USER,
+            "facility should round-trip as user-level (1)"
+        );
+        assert_eq!(
+            parsed.severity.expect("frame has a severity"),
+            syslog_loose::SyslogSeverity::SEV_NOTICE,
+            "audit events must be NOTICE-severity"
+        );
+        assert!(
+            matches!(parsed.protocol, syslog_loose::Protocol::RFC5424(1)),
+            "RFC 5424 frames carry version=1; got protocol={:?}",
+            parsed.protocol
+        );
+        assert_eq!(parsed.msgid, Some("AUDIT"));
+        assert_eq!(parsed.appname, Some("sysknife-daemon"));
+
+        // Structured-data block: one SD element with id "sysknife@32473"
+        // and the audit fields as params.
+        let sd = parsed
+            .structured_data
+            .iter()
+            .find(|s| s.id == "sysknife@32473")
+            .expect("frame has the sysknife@32473 SD element");
+
+        let get = |key: &str| -> String {
+            sd.params
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, v)| (*v).to_string())
+                .unwrap_or_else(|| panic!("SD element missing param {key}: {sd:?}"))
+        };
+        assert_eq!(get("seq"), event.seq.to_string());
+        assert_eq!(get("tx"), event.transaction_id);
+        assert_eq!(get("action"), event.action_name);
+        assert_eq!(get("risk"), "medium");
+        assert_eq!(get("approval"), event.approval_id.unwrap());
+        assert_eq!(get("role"), event.caller_role.unwrap());
+        assert_eq!(get("chain_hash"), event.chain_hash);
+        assert_eq!(get("key_id"), event.key_id);
+    }
+
     /// IPv6 bind path: `open_udp` must select `[::]:0` for an IPv6 host so
     /// an IPv6-only SIEM (e.g. Sentinel at `[2001:db8::5]:514`) is reachable.
     /// Skipped when the kernel has IPv6 disabled (e.g. some hardened CI

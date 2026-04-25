@@ -191,6 +191,19 @@ pub struct HistoryEntry {
     pub risk_level: Option<String>,
 }
 
+/// Output wrapper for `sysknife_history`.
+///
+/// MCP requires the tool's output schema to have an `object` root type;
+/// returning a bare `Vec<HistoryEntry>` produces an `array` root and
+/// makes the rmcp `ToolRouter` panic at construction time.  Wrapping
+/// the vec in a single-field struct gives the schema an object root
+/// with one named property, satisfying the spec without any extra
+/// runtime cost.
+#[derive(Debug, Default, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
+pub struct HistoryOutput {
+    pub entries: Vec<HistoryEntry>,
+}
+
 // ---------------------------------------------------------------------------
 // sysknife_doctor — output types
 // ---------------------------------------------------------------------------
@@ -318,10 +331,10 @@ impl SysknifeMcpServer {
     async fn sysknife_history(
         &self,
         Parameters(input): Parameters<HistoryInput>,
-    ) -> Result<Json<Vec<HistoryEntry>>, ErrorData> {
+    ) -> Result<Json<HistoryOutput>, ErrorData> {
         history_inner(input)
             .await
-            .map(Json)
+            .map(|entries| Json(HistoryOutput { entries }))
             .map_err(|e| ErrorData::internal_error(e, None))
     }
 
@@ -861,6 +874,74 @@ pub async fn run_mcp_server() -> Result<(), CliError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // -----------------------------------------------------------------------
+    // T11 — tool registration round-trip via the rmcp ToolRouter
+    //
+    // The `#[tool_router(server_handler)]` macro generates a
+    // `tool_router()` method on `SysknifeMcpServer`.  Asking it for
+    // `list_all()` returns the exact tool list MCP clients see during
+    // `tools/list`, so this is the boundary contract: every tool name
+    // and description that ships in production goes through this list.
+    // Prior coverage tested only inner helpers; a regression that
+    // forgot to register a tool, swapped its name, or broke its
+    // description string would have shipped silently.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn rmcp_tool_router_registers_every_sysknife_tool() {
+        let router = SysknifeMcpServer::tool_router();
+        let tools = router.list_all();
+
+        let names: std::collections::HashSet<String> =
+            tools.iter().map(|t| t.name.to_string()).collect();
+        for expected in [
+            "sysknife_plan",
+            "sysknife_execute",
+            "sysknife_history",
+            "sysknife_doctor",
+            "sysknife_audit_verify",
+        ] {
+            assert!(
+                names.contains(expected),
+                "MCP tool registry missing {expected}: registered = {names:?}"
+            );
+        }
+
+        // Every registered tool must carry a non-empty description so
+        // clients (and the model) can pick the right one. Empty
+        // descriptions silently degrade tool selection.
+        for t in &tools {
+            assert!(
+                t.description.as_ref().is_some_and(|d| !d.is_empty()),
+                "tool {} has empty description",
+                t.name
+            );
+        }
+    }
+
+    #[test]
+    fn rmcp_sysknife_plan_description_warns_to_stop_after_planning() {
+        // The plan tool's description carries a load-bearing instruction
+        // — "after presenting this plan, STOP" — that gates every
+        // hookify rule and the MCP-side approval flow.  A regression
+        // that drops this clause would let agents bypass the
+        // human-in-the-loop interlock.
+        let router = SysknifeMcpServer::tool_router();
+        let tools = router.list_all();
+        let plan = tools
+            .iter()
+            .find(|t| t.name == "sysknife_plan")
+            .expect("sysknife_plan must be registered");
+        let desc = plan
+            .description
+            .as_ref()
+            .expect("plan tool has a description");
+        assert!(
+            desc.to_lowercase().contains("stop"),
+            "sysknife_plan description must tell the agent to STOP after planning; got: {desc}"
+        );
+    }
 
     // -----------------------------------------------------------------------
     // parse_max_risk
