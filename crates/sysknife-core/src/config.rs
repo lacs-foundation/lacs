@@ -109,8 +109,59 @@ fn default_storage_backend() -> String {
     "sqlite".to_string()
 }
 
+/// Type-state projection of [`StorageSection`] with cross-field invariants
+/// enforced.
+///
+/// `StorageSection` is deserialized from `config.toml` with relaxed shape so
+/// existing user configs continue to load — `backend: String`, `url:
+/// Option<String>`. That means a misconfigured `backend = "postgres"` with
+/// no `url` only fails at daemon startup with a string-mismatch error, and
+/// callers downstream of the parse have to keep re-checking the
+/// invariant.
+///
+/// `StorageBackend` is the parsed form: variants carry exactly the fields
+/// they require, so it is impossible to construct a `Postgres` variant
+/// without a URL or to ask for a pool configuration in a `Sqlite` variant.
+/// Use [`StorageSection::parsed`] at the boundary; downstream code
+/// matches on the enum.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StorageBackend {
+    Sqlite,
+    Postgres {
+        url: String,
+        pool: StoragePoolSection,
+    },
+}
+
+impl StorageSection {
+    /// Project the relaxed deserialised form into the type-state-checked
+    /// [`StorageBackend`] enum.  Returns a human-readable error when the
+    /// `(backend, url, pool)` tuple is inconsistent (unknown backend,
+    /// `postgres` without `url`, etc.).
+    pub fn parsed(&self) -> Result<StorageBackend, String> {
+        match self.backend.to_ascii_lowercase().as_str() {
+            "sqlite" => Ok(StorageBackend::Sqlite),
+            "postgres" => {
+                let url = self
+                    .url
+                    .as_ref()
+                    .ok_or_else(|| {
+                        "[storage] backend = \"postgres\" requires `url = \"postgres://...\"`"
+                            .to_string()
+                    })?
+                    .clone();
+                let pool = self.pool.clone().unwrap_or_default();
+                Ok(StorageBackend::Postgres { url, pool })
+            }
+            other => Err(format!(
+                "[storage] unknown backend {other:?}; expected \"sqlite\" or \"postgres\""
+            )),
+        }
+    }
+}
+
 /// `[storage.pool]` section.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize)]
 pub struct StoragePoolSection {
     /// Max connections in the pool. Default 8.
     pub max_connections: Option<u32>,
@@ -373,6 +424,64 @@ fn set_if_absent(key: &str, value: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn storage_section_parses_sqlite_default() {
+        let s = StorageSection {
+            backend: "sqlite".to_string(),
+            url: None,
+            pool: None,
+        };
+        assert_eq!(s.parsed().unwrap(), StorageBackend::Sqlite);
+    }
+
+    #[test]
+    fn storage_section_parses_sqlite_case_insensitive() {
+        let s = StorageSection {
+            backend: "Sqlite".to_string(),
+            url: None,
+            pool: None,
+        };
+        assert_eq!(s.parsed().unwrap(), StorageBackend::Sqlite);
+    }
+
+    #[test]
+    fn storage_section_parses_postgres_with_url() {
+        let s = StorageSection {
+            backend: "postgres".to_string(),
+            url: Some("postgres://user@host/db".to_string()),
+            pool: None,
+        };
+        match s.parsed().unwrap() {
+            StorageBackend::Postgres { url, pool } => {
+                assert_eq!(url, "postgres://user@host/db");
+                assert_eq!(pool, StoragePoolSection::default());
+            }
+            other => panic!("expected Postgres, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn storage_section_rejects_postgres_without_url() {
+        let s = StorageSection {
+            backend: "postgres".to_string(),
+            url: None,
+            pool: None,
+        };
+        let err = s.parsed().unwrap_err();
+        assert!(err.contains("requires `url"), "got: {err}");
+    }
+
+    #[test]
+    fn storage_section_rejects_unknown_backend() {
+        let s = StorageSection {
+            backend: "sqlit".to_string(), // typo
+            url: None,
+            pool: None,
+        };
+        let err = s.parsed().unwrap_err();
+        assert!(err.contains("unknown backend"), "got: {err}");
+    }
 
     #[test]
     fn load_returns_default_when_file_absent() {

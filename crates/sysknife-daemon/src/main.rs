@@ -264,43 +264,37 @@ async fn build_postgres_audit(
     use sysknife_daemon::store::postgres::PostgresConfig;
     use sysknife_daemon::store::PostgresStore;
 
+    use sysknife_core::config::StorageBackend;
+
     let Some(storage) = storage else {
         return Ok(None);
     };
-    if storage.backend.eq_ignore_ascii_case("sqlite") {
-        return Ok(None);
-    }
-    if !storage.backend.eq_ignore_ascii_case("postgres") {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            format!(
-                "[storage] backend = {:?} unsupported; use \"sqlite\" or \"postgres\"",
-                storage.backend
-            ),
-        ));
-    }
 
-    let url = storage.url.as_deref().ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "[storage] backend = \"postgres\" requires url = \"postgres://...\"",
-        )
-    })?;
+    // Project the relaxed `StorageSection` into the type-state-checked
+    // `StorageBackend` enum. The match below is exhaustive: a future
+    // backend added to the enum will fail to compile here, forcing a
+    // conscious update rather than silently falling through to "unsupported".
+    let parsed = storage
+        .parsed()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+
+    let (url, pool) = match parsed {
+        StorageBackend::Sqlite => return Ok(None),
+        StorageBackend::Postgres { url, pool } => (url, pool),
+    };
 
     let mut cfg = PostgresConfig {
-        url: url.to_string(),
+        url,
         ..PostgresConfig::default()
     };
-    if let Some(pool) = storage.pool.as_ref() {
-        if let Some(n) = pool.max_connections {
-            cfg.max_connections = n;
-        }
-        if let Some(s) = pool.acquire_timeout_secs {
-            cfg.acquire_timeout = std::time::Duration::from_secs(s);
-        }
-        if let Some(c) = pool.statement_cache_capacity {
-            cfg.statement_cache_capacity = c;
-        }
+    if let Some(n) = pool.max_connections {
+        cfg.max_connections = n;
+    }
+    if let Some(s) = pool.acquire_timeout_secs {
+        cfg.acquire_timeout = std::time::Duration::from_secs(s);
+    }
+    if let Some(c) = pool.statement_cache_capacity {
+        cfg.statement_cache_capacity = c;
     }
 
     // The Postgres backend uses the same on-disk audit key as SQLite for

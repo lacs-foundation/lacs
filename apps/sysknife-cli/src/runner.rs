@@ -497,22 +497,32 @@ pub(crate) async fn verify_postgres(
     storage: &sysknife_core::config::StorageSection,
     key: &sysknife_daemon::audit_chain::AuditKey,
 ) -> sysknife_daemon::audit_chain::VerifyOutcome {
+    use sysknife_core::config::StorageBackend;
     use sysknife_daemon::audit_chain::VerifyOutcome;
     use sysknife_daemon::store::postgres::{PostgresConfig, PostgresStore};
     use sysknife_daemon::store::AuditStore;
 
-    let Some(url) = storage.url.as_deref() else {
-        return VerifyOutcome::CannotVerify {
-            reason: "[storage] backend = \"postgres\" requires url = \"postgres://...\""
-                .to_string(),
-        };
+    // Project the relaxed config form into the type-state-checked enum;
+    // the match below makes future backends a compile-time decision.
+    let parsed = match storage.parsed() {
+        Ok(p) => p,
+        Err(reason) => return VerifyOutcome::CannotVerify { reason },
     };
+    let (url, pool) =
+        match parsed {
+            StorageBackend::Sqlite => return VerifyOutcome::CannotVerify {
+                reason:
+                    "verify_postgres called with backend = \"sqlite\" — caller picks the wrong path"
+                        .to_string(),
+            },
+            StorageBackend::Postgres { url, pool } => (url, pool),
+        };
 
     let mut cfg = PostgresConfig {
-        url: url.to_string(),
+        url,
         ..PostgresConfig::default()
     };
-    if let Some(pool) = storage.pool.as_ref() {
+    {
         if let Some(n) = pool.max_connections {
             cfg.max_connections = n;
         }
