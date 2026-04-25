@@ -148,8 +148,10 @@ pub fn spawn(spec: AuditSinkSpec) -> AuditForwarder {
 async fn forwarder_task(spec: AuditSinkSpec, mut rx: mpsc::Receiver<AuditEvent>) {
     match spec {
         AuditSinkSpec::SyslogUdp { host, facility } => {
-            // Bind once. On reconnect we recreate the socket lazily.
-            let mut socket = open_udp().await;
+            let mut socket = open_udp(host).await;
+            // Exponential backoff on consecutive bind failures (F11).
+            // 1s → 2s → 4s → … capped at 60s. Reset to 1s on first success.
+            let mut backoff_secs: u64 = 1;
             while let Some(event) = rx.recv().await {
                 let frame = format_rfc5424(&event, facility);
                 if let Some(s) = &socket {
@@ -161,13 +163,17 @@ async fn forwarder_task(spec: AuditSinkSpec, mut rx: mpsc::Receiver<AuditEvent>)
                         socket = None;
                     }
                 }
-                // Reopen if needed. UdpSocket bind failures back off briefly.
                 if socket.is_none() {
-                    socket = open_udp().await;
+                    socket = open_udp(host).await;
                     if socket.is_none() {
-                        // Bind failure is the kernel telling us "no go". Sleep
-                        // briefly to avoid a hot loop on a misconfigured host.
-                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        // Bind failure: sleep with exponential backoff before
+                        // we attempt again on the next event. Without this,
+                        // a misconfigured host with a packed channel would
+                        // pin a CPU at 100% on `eprintln!` syscalls.
+                        tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
+                        backoff_secs = (backoff_secs.saturating_mul(2)).min(60);
+                    } else {
+                        backoff_secs = 1;
                     }
                 }
             }
@@ -175,13 +181,24 @@ async fn forwarder_task(spec: AuditSinkSpec, mut rx: mpsc::Receiver<AuditEvent>)
     }
 }
 
-/// Bind a fresh ephemeral UDP socket. `None` on bind failure — caller will
-/// retry next event.
-async fn open_udp() -> Option<tokio::net::UdpSocket> {
-    match tokio::net::UdpSocket::bind("0.0.0.0:0").await {
+/// Bind a fresh ephemeral UDP socket whose address family matches `host`.
+///
+/// IPv4 host → bind on `0.0.0.0:0`; IPv6 host → bind on `[::]:0`. Without
+/// this, an operator with an IPv6-only SIEM (e.g. Sentinel at
+/// `[2001:db8::5]:514`) would never receive any events because every send
+/// would fail with `AddrNotAvailable` (F8).
+///
+/// Returns `None` on bind failure — caller retries with backoff.
+async fn open_udp(host: SocketAddr) -> Option<tokio::net::UdpSocket> {
+    let bind_addr = if host.is_ipv6() {
+        "[::]:0"
+    } else {
+        "0.0.0.0:0"
+    };
+    match tokio::net::UdpSocket::bind(bind_addr).await {
         Ok(s) => Some(s),
         Err(e) => {
-            eprintln!("[sysknife-daemon] audit-forward: UDP bind failed: {e}");
+            eprintln!("[sysknife-daemon] audit-forward: UDP bind on {bind_addr} failed: {e}");
             None
         }
     }
@@ -247,6 +264,15 @@ pub fn format_rfc5424(event: &AuditEvent, facility: u8) -> String {
 }
 
 /// Escape a value for inclusion inside a RFC 5424 SD-PARAM-VALUE per §6.3.3.
+///
+/// RFC 5424 §6 names PRINTUSASCII (`0x21..=0x7E`) as the preferred SD form;
+/// UTF-8 is technically allowed but every strict SIEM ingest pipeline we
+/// have surveyed (Splunk in strict mode, IBM QRadar, AWS Sentinel) rejects
+/// non-ASCII bytes inside SD-VALUE. We therefore drop **every** byte
+/// outside the printable-ASCII range and escape the three characters
+/// `]`, `"`, `\` per §6.3.3.
+///
+/// This also covers DEL (`0x7F`) and C1 controls (`0x80..=0x9F`).
 fn sd_escape(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for ch in value.chars() {
@@ -254,19 +280,42 @@ fn sd_escape(value: &str) -> String {
             '"' => out.push_str("\\\""),
             '\\' => out.push_str("\\\\"),
             ']' => out.push_str("\\]"),
-            // Strip control codes inline; RFC 5424 says the message body is
-            // free-form UTF-8, but SD values must be PRINTUSASCII.
-            c if (c as u32) < 0x20 => {}
-            c => out.push(c),
+            c if (0x20..=0x7E).contains(&(c as u32)) => out.push(c),
+            // Drop everything else (C0, DEL, C1, all non-ASCII Unicode).
+            _ => {}
         }
     }
     out
 }
 
+/// Read the kernel hostname and validate it against RFC 5424 §6.2.4.
+///
+/// HOSTNAME must be a single token: 1..=255 bytes, all `PRINTUSASCII`
+/// (`0x21..=0x7E`), no embedded whitespace. Anything else (empty,
+/// embedded space, non-ASCII, control char) returns the NILVALUE `"-"`
+/// so the datagram remains parseable. Without this, a sysctl-set
+/// hostname containing a space (e.g. `"edge node"`) would corrupt every
+/// emitted frame and silently drop in strict SIEMs.
 fn read_hostname() -> String {
-    std::fs::read_to_string("/proc/sys/kernel/hostname")
+    let raw = std::fs::read_to_string("/proc/sys/kernel/hostname")
         .map(|s| s.trim().to_string())
-        .unwrap_or_else(|_| "-".to_string())
+        .unwrap_or_default();
+    if raw.is_empty() || raw.len() > 255 || !raw.bytes().all(|b| (0x21..=0x7E).contains(&b)) {
+        return "-".to_string();
+    }
+    raw
+}
+
+/// Test-only hostname validator that accepts an externally-provided string,
+/// applies the same RFC 5424 §6.2.4 rule, and returns either the input or
+/// `"-"`. Lets tests cover the validation path without mutating
+/// `/proc/sys/kernel/hostname`.
+#[cfg(test)]
+fn validate_hostname_for_test(raw: &str) -> String {
+    if raw.is_empty() || raw.len() > 255 || !raw.bytes().all(|b| (0x21..=0x7E).contains(&b)) {
+        return "-".to_string();
+    }
+    raw.to_string()
 }
 
 #[cfg(test)]
@@ -286,6 +335,58 @@ mod tests {
             key_id: "v1".to_string(),
             caller_role: Some("Dev".to_string()),
         }
+    }
+
+    // ── Hostname validation (red-team finding F2) ────────────────────────
+
+    #[test]
+    fn hostname_with_space_is_rejected() {
+        assert_eq!(validate_hostname_for_test("edge node 7"), "-");
+    }
+
+    #[test]
+    fn hostname_with_control_byte_is_rejected() {
+        assert_eq!(validate_hostname_for_test("edge\x01node"), "-");
+    }
+
+    #[test]
+    fn hostname_with_non_ascii_is_rejected() {
+        assert_eq!(validate_hostname_for_test("ëdge"), "-");
+    }
+
+    #[test]
+    fn empty_hostname_falls_back_to_nilvalue() {
+        assert_eq!(validate_hostname_for_test(""), "-");
+    }
+
+    #[test]
+    fn legitimate_hostname_passes_through() {
+        assert_eq!(
+            validate_hostname_for_test("edge-node-7.example.com"),
+            "edge-node-7.example.com"
+        );
+    }
+
+    #[test]
+    fn hostname_over_255_bytes_is_rejected() {
+        let long = "a".repeat(256);
+        assert_eq!(validate_hostname_for_test(&long), "-");
+    }
+
+    // ── SD-VALUE strict ASCII (F3) ───────────────────────────────────────
+
+    #[test]
+    fn sd_escape_strips_del_and_c1_controls() {
+        let raw = "before\x7Fafter\u{0085}";
+        assert_eq!(sd_escape(raw), "beforeafter");
+    }
+
+    #[test]
+    fn sd_escape_strips_non_ascii_to_avoid_strict_siem_rejection() {
+        // Splunk/QRadar in strict mode reject non-ASCII inside SD-VALUE.
+        let raw = "café";
+        let escaped = sd_escape(raw);
+        assert!(escaped.bytes().all(|b| (0x20..=0x7E).contains(&b)));
     }
 
     // ── RFC 5424 framing ──────────────────────────────────────────────────

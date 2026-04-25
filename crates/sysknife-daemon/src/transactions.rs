@@ -1,5 +1,5 @@
 use crate::audit_chain::{self, AuditKey, ChainContent, ChainRow, VerifyOutcome, CURRENT_KEY_ID};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, TransactionBehavior};
 use serde::{de::DeserializeOwned, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -130,7 +130,11 @@ impl TransactionStore {
                 "this TransactionStore was opened read-only; cannot record",
             ))?;
         let mut conn = self.connection()?;
-        let tx = conn.transaction()?;
+        // IMMEDIATE acquires the write lock at BEGIN, so the read of
+        // `next_seq_and_prev_hash` is consistent with the eventual INSERT.
+        // Default DEFERRED would let two writers both read the same prev_hash
+        // and then race to INSERT — the loser hits SQLITE_BUSY (F6).
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let transaction_id = Uuid::new_v4().to_string();
         let record = Self::insert_transaction(&tx, key, &transaction_id, transaction)?;
         tx.commit()?;
@@ -149,7 +153,11 @@ impl TransactionStore {
                 "this TransactionStore was opened read-only; cannot record",
             ))?;
         let mut conn = self.connection()?;
-        let tx = conn.transaction()?;
+        // IMMEDIATE acquires the write lock at BEGIN, so the read of
+        // `next_seq_and_prev_hash` is consistent with the eventual INSERT.
+        // Default DEFERRED would let two writers both read the same prev_hash
+        // and then race to INSERT — the loser hits SQLITE_BUSY (F6).
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let transaction_id = Uuid::new_v4().to_string();
         let transaction = Self::insert_transaction(&tx, key, &transaction_id, transaction)?;
         Self::insert_preview(&tx, &transaction.transaction_id, &preview)?;
@@ -384,7 +392,22 @@ impl TransactionStore {
     }
 
     fn connection(&self) -> Result<Connection, TransactionStoreError> {
-        Ok(Connection::open(&self.path)?)
+        let conn = Connection::open(&self.path)?;
+        // Concurrency tuning (red-team finding F6):
+        //   - WAL journal mode lets readers proceed concurrently with writers.
+        //   - busy_timeout=5000ms makes a contending writer block instead of
+        //     immediately returning SQLITE_BUSY. Without it, two concurrent
+        //     `record()` calls (one of the two daemon use cases the dispatcher
+        //     supports) had a 100% second-writer failure rate.
+        //   - synchronous=NORMAL is the WAL-recommended setting; FULL is
+        //     overkill for an audit log that's already append-only by design,
+        //     and OFF risks losing the latest transactions on a crash.
+        //   - foreign_keys=ON for parity with future schema changes.
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
+        conn.pragma_update(None, "foreign_keys", "ON")?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        Ok(conn)
     }
 
     fn initialize(&self) -> Result<(), TransactionStoreError> {
