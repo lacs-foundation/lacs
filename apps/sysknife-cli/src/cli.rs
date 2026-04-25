@@ -94,6 +94,12 @@ pub enum Command {
     #[command(name = "mcp-server")]
     McpServer,
 
+    /// Audit log integrity tools.
+    Audit {
+        #[command(subcommand)]
+        command: AuditCommand,
+    },
+
     /// Execute a natural-language intent.
     ///
     /// Words not matching any named subcommand are captured here.
@@ -117,6 +123,26 @@ impl Command {
             _ => None,
         }
     }
+}
+
+/// `sysknife audit <subcommand>` subcommands.
+#[derive(Subcommand, Debug, Clone)]
+pub enum AuditCommand {
+    /// Verify the tamper-evident HMAC-SHA256 hash chain over the audit log.
+    ///
+    /// Exits 0 if the chain is intact, 1 if any row is broken, and 2 if the
+    /// chain cannot be verified (missing key file, retired key not on disk,
+    /// unreadable database, etc.). The 1/2 split matters: a CI pipeline
+    /// expecting 0 or 1 must not silently pass on a missing key file.
+    Verify(AuditVerifyArgs),
+}
+
+/// Arguments for `sysknife audit verify`.
+#[derive(Args, Debug, Clone)]
+pub struct AuditVerifyArgs {
+    /// Emit a machine-readable JSON report instead of human-friendly text.
+    #[arg(long)]
+    pub json: bool,
 }
 
 /// Arguments for `sysknife history`.

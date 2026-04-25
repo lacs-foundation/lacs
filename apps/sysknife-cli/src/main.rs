@@ -74,6 +74,13 @@ async fn dispatch(
         // --- sysknife mcp-server ---
         Some(Command::McpServer) => mcp_server::run_mcp_server().await,
 
+        // --- sysknife audit verify ---
+        Some(Command::Audit { command }) => match command {
+            crate::cli::AuditCommand::Verify(args) => {
+                runner::run_audit_verify(args.clone(), log).await
+            }
+        },
+
         // --- sysknife <intent words ...> ---
         Some(Command::Intent(_)) => {
             let intent = cli

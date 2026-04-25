@@ -28,7 +28,7 @@ use sysknife_brain::PlanEvent;
 use sysknife_brain::state_client::StateClient as _;
 
 use crate::approval::{ApprovalDecision, ApprovalPolicy, MaxRisk};
-use crate::cli::{Cli, HistoryArgs};
+use crate::cli::{AuditVerifyArgs, Cli, HistoryArgs};
 use crate::client::{DaemonClient, SocketTarget};
 use crate::error::CliError;
 
@@ -366,6 +366,181 @@ impl RunOpts {
     /// Build the `ApprovalPolicy` for this set of flags.
     pub fn approval_policy(&self) -> ApprovalPolicy {
         ApprovalPolicy::new(self.yes, self.max_risk, self.non_interactive, self.dry_run)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// run_audit_verify
+// ---------------------------------------------------------------------------
+
+/// Walk the audit log hash chain and report integrity status.
+///
+/// Resolves the database path via [`sysknife_core::default_database_path`]
+/// (same precedence as the daemon: `$SYSKNIFE_DATABASE_PATH` →
+/// `$XDG_STATE_HOME/sysknife/daemon.sqlite` → fallbacks). Loads the audit
+/// key from the path the daemon would generate it at (sibling of the DB,
+/// or `$SYSKNIFE_AUDIT_KEY_PATH`).
+///
+/// Exit codes:
+/// - 0 — chain intact across all rows
+/// - 1 — chain broken; first offending row is reported
+/// - 2 — verification could not be completed (missing key, unreadable DB,
+///   retired key not on disk, etc.)
+///
+/// On exit code 2, do **not** treat the audit log as either intact or
+/// tampered — the result is unknown until the operator resolves the
+/// underlying access problem.
+pub async fn run_audit_verify(args: AuditVerifyArgs, log: &Logger) -> Result<(), CliError> {
+    use sysknife_daemon::audit_chain::{self, AuditKey, VerifyOutcome};
+    use sysknife_daemon::transactions::TransactionStore;
+
+    let db_path = sysknife_core::default_database_path();
+    if !db_path.exists() {
+        let reason = format!(
+            "audit database not found at {}; set $SYSKNIFE_DATABASE_PATH or run the daemon first",
+            db_path.display()
+        );
+        emit_verify_outcome(
+            &args,
+            log,
+            &VerifyOutcome::CannotVerify { reason },
+            &db_path,
+        );
+        return Err(CliError::Exit(2));
+    }
+
+    let key_path = std::env::var("SYSKNIFE_AUDIT_KEY_PATH")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            db_path
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .join("audit-key")
+        });
+
+    if !key_path.exists() {
+        let reason = format!(
+            "audit key not found at {}; the daemon generates this on first run, \
+             or set $SYSKNIFE_AUDIT_KEY_PATH",
+            key_path.display()
+        );
+        emit_verify_outcome(
+            &args,
+            log,
+            &VerifyOutcome::CannotVerify { reason },
+            &db_path,
+        );
+        return Err(CliError::Exit(2));
+    }
+
+    // Load the key first; we need it to verify even when the store is empty.
+    let key = match AuditKey::load_or_generate(&key_path) {
+        Ok(k) => k,
+        Err(e) => {
+            let reason = format!("audit key load failed: {e}");
+            emit_verify_outcome(
+                &args,
+                log,
+                &VerifyOutcome::CannotVerify { reason },
+                &db_path,
+            );
+            return Err(CliError::Exit(2));
+        }
+    };
+
+    // Open read-only — we never write rows from the verify command.
+    let store = match TransactionStore::open_read_only(&db_path) {
+        Ok(s) => s,
+        Err(e) => {
+            let reason = format!("opening audit database failed: {e}");
+            emit_verify_outcome(
+                &args,
+                log,
+                &VerifyOutcome::CannotVerify { reason },
+                &db_path,
+            );
+            return Err(CliError::Exit(2));
+        }
+    };
+
+    let outcome = match store.verify_audit_chain(&key) {
+        Ok(o) => o,
+        Err(e) => {
+            let reason = format!("audit chain query failed: {e}");
+            VerifyOutcome::CannotVerify { reason }
+        }
+    };
+
+    let exit_code = audit_chain::outcome_to_exit_code(&outcome);
+    emit_verify_outcome(&args, log, &outcome, &db_path);
+    if exit_code == 0 {
+        Ok(())
+    } else {
+        Err(CliError::Exit(exit_code))
+    }
+}
+
+fn emit_verify_outcome(
+    args: &AuditVerifyArgs,
+    log: &Logger,
+    outcome: &sysknife_daemon::audit_chain::VerifyOutcome,
+    db_path: &std::path::Path,
+) {
+    use sysknife_daemon::audit_chain::VerifyOutcome;
+    if args.json {
+        let payload = match outcome {
+            VerifyOutcome::Intact { rows_checked } => json!({
+                "status": "intact",
+                "rows_checked": rows_checked,
+                "database": db_path.display().to_string(),
+            }),
+            VerifyOutcome::Broken {
+                rows_checked,
+                first_broken_seq,
+                first_broken_transaction_id,
+                expected,
+                actual,
+            } => json!({
+                "status": "broken",
+                "rows_checked": rows_checked,
+                "first_broken_seq": first_broken_seq,
+                "first_broken_transaction_id": first_broken_transaction_id,
+                "expected": expected,
+                "actual": actual,
+                "database": db_path.display().to_string(),
+            }),
+            VerifyOutcome::CannotVerify { reason } => json!({
+                "status": "cannot_verify",
+                "reason": reason,
+                "database": db_path.display().to_string(),
+            }),
+        };
+        log.println(&serde_json::to_string_pretty(&payload).unwrap_or_default());
+    } else {
+        match outcome {
+            VerifyOutcome::Intact { rows_checked } => {
+                log.println(&format!(
+                    "OK: {rows_checked} row(s) verified in {}",
+                    db_path.display()
+                ));
+            }
+            VerifyOutcome::Broken {
+                rows_checked,
+                first_broken_seq,
+                first_broken_transaction_id,
+                expected,
+                actual,
+            } => {
+                log.println(&format!(
+                    "BROKEN: chain intact for first {rows_checked} row(s); \
+                     row seq={first_broken_seq} (transaction {first_broken_transaction_id}) \
+                     does not chain.\n  expected: {expected}\n  actual:   {actual}"
+                ));
+            }
+            VerifyOutcome::CannotVerify { reason } => {
+                log.println(&format!("CANNOT VERIFY: {reason}"));
+            }
+        }
     }
 }
 

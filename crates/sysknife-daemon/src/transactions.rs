@@ -1,6 +1,8 @@
+use crate::audit_chain::{self, AuditKey, ChainContent, ChainRow, VerifyOutcome, CURRENT_KEY_ID};
 use rusqlite::{params, Connection};
 use serde::{de::DeserializeOwned, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use sysknife_types::{JobState, PreviewEnvelope, RiskLevel, TransactionRecord};
 use uuid::Uuid;
 
@@ -23,6 +25,9 @@ pub struct NewTransaction {
 #[derive(Clone, Debug)]
 pub struct TransactionStore {
     path: PathBuf,
+    /// HMAC key used to compute the forward audit hash chain on insert.
+    /// `None` only in legacy callers that never write rows (read-only access).
+    audit_key: Option<Arc<AuditKey>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -47,16 +52,69 @@ pub enum TransactionStoreError {
 
     #[error("invalid transition from {from:?} to {to:?}")]
     InvalidTransition { from: JobState, to: JobState },
+
+    #[error("audit chain misconfiguration: {0}")]
+    AuditChainMissing(&'static str),
 }
 
 impl TransactionStore {
-    pub fn open(path: impl AsRef<Path>) -> Result<Self, TransactionStoreError> {
+    /// Open the store with **no audit chain key**. Inserts will fail with
+    /// `AuditChainMissing` — only suitable for read-only callers (e.g.
+    /// `sysknife audit verify` which loads the key separately).
+    pub fn open_read_only(path: impl AsRef<Path>) -> Result<Self, TransactionStoreError> {
         let path = path.as_ref().to_path_buf();
         if let Some(parent) = path.parent() {
             ensure_private_dir(parent)?;
         }
 
-        let store = Self { path };
+        let store = Self {
+            path,
+            audit_key: None,
+        };
+        store.initialize()?;
+        Ok(store)
+    }
+
+    /// Open the store and bind it to an audit chain key. Every insert
+    /// computes a forward HMAC-SHA256 chain hash linked to the previous row.
+    ///
+    /// The key path defaults to `<db_dir>/audit-key` so dev/test runs with
+    /// per-tempdir databases are fully isolated. Production deployments
+    /// override with `SYSKNIFE_AUDIT_KEY_PATH=/etc/sysknife/audit-key`.
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, TransactionStoreError> {
+        let db_path = path.as_ref();
+        let key_path = std::env::var("SYSKNIFE_AUDIT_KEY_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                db_path
+                    .parent()
+                    .unwrap_or_else(|| Path::new("."))
+                    .join("audit-key")
+            });
+        let key = AuditKey::load_or_generate(&key_path).map_err(|e| {
+            TransactionStoreError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("audit key load failed: {e}"),
+            ))
+        })?;
+        Self::open_with_key(path, Arc::new(key))
+    }
+
+    /// Open the store with an explicit audit key. Used by tests and by
+    /// production code paths that want to inject a key from a specific path.
+    pub fn open_with_key(
+        path: impl AsRef<Path>,
+        audit_key: Arc<AuditKey>,
+    ) -> Result<Self, TransactionStoreError> {
+        let path = path.as_ref().to_path_buf();
+        if let Some(parent) = path.parent() {
+            ensure_private_dir(parent)?;
+        }
+
+        let store = Self {
+            path,
+            audit_key: Some(audit_key),
+        };
         store.initialize()?;
         Ok(store)
     }
@@ -65,9 +123,18 @@ impl TransactionStore {
         &self,
         transaction: NewTransaction,
     ) -> Result<TransactionRecord, TransactionStoreError> {
-        let conn = self.connection()?;
+        let key = self
+            .audit_key
+            .as_ref()
+            .ok_or(TransactionStoreError::AuditChainMissing(
+                "this TransactionStore was opened read-only; cannot record",
+            ))?;
+        let mut conn = self.connection()?;
+        let tx = conn.transaction()?;
         let transaction_id = Uuid::new_v4().to_string();
-        Self::insert_transaction(&conn, &transaction_id, transaction)
+        let record = Self::insert_transaction(&tx, key, &transaction_id, transaction)?;
+        tx.commit()?;
+        Ok(record)
     }
 
     pub fn record_previewed(
@@ -75,10 +142,16 @@ impl TransactionStore {
         transaction: NewTransaction,
         preview: PreviewEnvelope,
     ) -> Result<RecordedPreviewedTransaction, TransactionStoreError> {
+        let key = self
+            .audit_key
+            .as_ref()
+            .ok_or(TransactionStoreError::AuditChainMissing(
+                "this TransactionStore was opened read-only; cannot record",
+            ))?;
         let mut conn = self.connection()?;
         let tx = conn.transaction()?;
         let transaction_id = Uuid::new_v4().to_string();
-        let transaction = Self::insert_transaction(&tx, &transaction_id, transaction)?;
+        let transaction = Self::insert_transaction(&tx, key, &transaction_id, transaction)?;
         Self::insert_preview(&tx, &transaction.transaction_id, &preview)?;
         tx.commit()?;
 
@@ -316,6 +389,16 @@ impl TransactionStore {
 
     fn initialize(&self) -> Result<(), TransactionStoreError> {
         let conn = self.connection()?;
+        // Schema additions for the tamper-evident hash chain (#149):
+        //   seq             — monotonic ordering, 1-indexed
+        //   key_id          — identifies the key generation (forward-compatible
+        //                     with epoch rotation in a follow-up issue)
+        //   chain_hash      — HMAC-SHA256(canonical(immutable_fields) || prev_chain_hash, key)
+        //   prev_chain_hash — chain_hash of the previous row, "" for the first row
+        //
+        // status is intentionally absent from the chain content — it is mutable.
+        // The chain protects the *authorisation decision* captured at insert
+        // time, not the live execution state.
         conn.execute_batch(
             r#"
             CREATE TABLE IF NOT EXISTS transactions (
@@ -328,20 +411,96 @@ impl TransactionStore {
                 approval_id TEXT,
                 summary TEXT NOT NULL,
                 warnings_json TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                seq INTEGER NOT NULL UNIQUE,
+                key_id TEXT NOT NULL,
+                chain_hash TEXT NOT NULL,
+                prev_chain_hash TEXT NOT NULL DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS transaction_previews (
                 transaction_id TEXT PRIMARY KEY,
                 preview_json TEXT NOT NULL
             );
+
+            CREATE INDEX IF NOT EXISTS transactions_seq_idx ON transactions(seq);
             "#,
         )?;
         Ok(())
     }
 
+    /// Return all rows in seq order with the chain fields needed for verify.
+    pub fn fetch_chain_rows(&self) -> Result<Vec<ChainRow>, TransactionStoreError> {
+        let conn = self.connection()?;
+        let mut stmt = conn.prepare(
+            "SELECT seq, key_id, transaction_id, request_id, request_hash, \
+                    action_name, risk_level, summary, approval_id, warnings_json, \
+                    created_at, prev_chain_hash, chain_hash \
+             FROM transactions ORDER BY seq ASC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(ChainRow {
+                seq: row.get::<_, i64>(0)? as u64,
+                key_id: row.get(1)?,
+                transaction_id: row.get(2)?,
+                request_id: row.get(3)?,
+                request_hash: row.get(4)?,
+                action_name: row.get(5)?,
+                risk_level: deserialize_field(&row.get::<_, String>(6)?).map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        6,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?,
+                summary: row.get(7)?,
+                approval_id: row.get(8)?,
+                warnings_json: row.get(9)?,
+                created_at: row.get(10)?,
+                prev_chain_hash: row.get(11)?,
+                chain_hash: row.get(12)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    /// Walk the audit chain with `key` and report integrity status.
+    pub fn verify_audit_chain(
+        &self,
+        key: &AuditKey,
+    ) -> Result<VerifyOutcome, TransactionStoreError> {
+        let rows = self.fetch_chain_rows()?;
+        Ok(audit_chain::verify_chain(key, &rows))
+    }
+
+    /// Allocate the next monotonic `seq` and fetch the previous row's
+    /// `chain_hash`. Caller must hold a transaction so the (seq, prev_hash)
+    /// pair is consistent against concurrent writers.
+    fn next_seq_and_prev_hash(conn: &Connection) -> Result<(u64, String), TransactionStoreError> {
+        let prev: Option<(i64, String)> = conn
+            .query_row(
+                "SELECT seq, chain_hash FROM transactions ORDER BY seq DESC LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map(Some)
+            .or_else(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                other => Err(other),
+            })?;
+        Ok(match prev {
+            Some((seq, hash)) => ((seq as u64) + 1, hash),
+            None => (1, String::new()),
+        })
+    }
+
     fn insert_transaction(
         conn: &Connection,
+        key: &AuditKey,
         transaction_id: &str,
         transaction: NewTransaction,
     ) -> Result<TransactionRecord, TransactionStoreError> {
@@ -354,6 +513,37 @@ impl TransactionStore {
         let approval_id = transaction.approval_id;
         let summary = transaction.summary;
         let warnings = transaction.warnings;
+        let warnings_json = serde_json::to_string(&warnings)?;
+
+        // Allocate the next seq + previous chain hash inside the same DB
+        // transaction so concurrent writers can't race.
+        let (seq, prev_chain_hash) = Self::next_seq_and_prev_hash(conn)?;
+
+        // SQLite's `datetime('now')` (default for the column) is computed at
+        // INSERT time, but we need the same value to compute the chain hash
+        // before the row exists. Compute it ourselves and pin it.
+        let created_at: String =
+            conn.query_row("SELECT strftime('%Y-%m-%dT%H:%M:%fZ', 'now')", [], |row| {
+                row.get(0)
+            })?;
+
+        let key_id = CURRENT_KEY_ID.to_string();
+        let chain_hash = key.chain_hash(
+            &ChainContent {
+                seq,
+                key_id: &key_id,
+                transaction_id,
+                request_id: &request_id,
+                request_hash: &request_hash,
+                action_name: &action_name,
+                risk_level,
+                summary: &summary,
+                approval_id: approval_id.as_deref(),
+                warnings_json: &warnings_json,
+                created_at: &created_at,
+            },
+            &prev_chain_hash,
+        );
 
         let record = TransactionRecord {
             transaction_id: transaction_id.to_string(),
@@ -377,8 +567,13 @@ impl TransactionStore {
                 status,
                 approval_id,
                 summary,
-                warnings_json
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                warnings_json,
+                created_at,
+                seq,
+                key_id,
+                chain_hash,
+                prev_chain_hash
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 transaction_id,
                 request_id,
@@ -388,7 +583,12 @@ impl TransactionStore {
                 serialize_field(&status)?,
                 approval_id,
                 summary,
-                serde_json::to_string(&warnings)?,
+                warnings_json,
+                created_at,
+                seq as i64,
+                key_id,
+                chain_hash,
+                prev_chain_hash,
             ],
         )?;
         Ok(record)
@@ -453,6 +653,126 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     use tempfile::tempdir;
 
+    /// Open a TransactionStore with a deterministic test key. Avoids the
+    /// XDG/`/etc` lookup in `TransactionStore::open` so tests don't share
+    /// state with the dev environment.
+    fn test_store(path: impl AsRef<Path>) -> TransactionStore {
+        let key = Arc::new(AuditKey::from_bytes(vec![0x42; 32]));
+        TransactionStore::open_with_key(path, key).unwrap()
+    }
+
+    // ── Audit chain integration tests (#149) ─────────────────────────────
+
+    #[test]
+    fn record_writes_audit_chain_columns() {
+        let dir = tempdir().unwrap();
+        let store = test_store(dir.path().join("tx.db"));
+        let _record = store.record(queued_transaction()).unwrap();
+
+        let conn = store.connection().unwrap();
+        let (seq, key_id, chain_hash, prev): (i64, String, String, String) = conn
+            .query_row(
+                "SELECT seq, key_id, chain_hash, prev_chain_hash FROM transactions",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(seq, 1, "first row gets seq=1");
+        assert_eq!(key_id, audit_chain::CURRENT_KEY_ID);
+        assert_eq!(prev, "", "first row has empty prev_chain_hash");
+        assert_eq!(
+            chain_hash.len(),
+            audit_chain::HASH_HEX_LEN,
+            "chain_hash is hex-encoded HMAC-SHA256"
+        );
+    }
+
+    #[test]
+    fn sequential_records_produce_chained_hashes() {
+        let dir = tempdir().unwrap();
+        let store = test_store(dir.path().join("tx.db"));
+        store.record(queued_transaction()).unwrap();
+        store.record(queued_transaction()).unwrap();
+        store.record(queued_transaction()).unwrap();
+
+        let rows = store.fetch_chain_rows().unwrap();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].seq, 1);
+        assert_eq!(rows[1].seq, 2);
+        assert_eq!(rows[2].seq, 3);
+        // Each row's prev_chain_hash matches the previous row's chain_hash.
+        assert_eq!(rows[1].prev_chain_hash, rows[0].chain_hash);
+        assert_eq!(rows[2].prev_chain_hash, rows[1].chain_hash);
+    }
+
+    #[test]
+    fn verify_audit_chain_intact_after_inserts() {
+        let dir = tempdir().unwrap();
+        let store = test_store(dir.path().join("tx.db"));
+        for _ in 0..3 {
+            store.record(queued_transaction()).unwrap();
+        }
+        let key = AuditKey::from_bytes(vec![0x42; 32]);
+        let outcome = store.verify_audit_chain(&key).unwrap();
+        assert!(matches!(outcome, VerifyOutcome::Intact { rows_checked: 3 }));
+    }
+
+    #[test]
+    fn verify_detects_tampered_summary() {
+        let dir = tempdir().unwrap();
+        let store = test_store(dir.path().join("tx.db"));
+        let tx = store.record(queued_transaction()).unwrap();
+
+        // Tamper: modify the summary field directly via SQL — simulates an
+        // attacker with database write access who skips the daemon code path.
+        let conn = store.connection().unwrap();
+        conn.execute(
+            "UPDATE transactions SET summary = ?1 WHERE transaction_id = ?2",
+            params!["EVIL CHANGE", tx.transaction_id],
+        )
+        .unwrap();
+
+        let key = AuditKey::from_bytes(vec![0x42; 32]);
+        let outcome = store.verify_audit_chain(&key).unwrap();
+        assert!(matches!(outcome, VerifyOutcome::Broken { .. }));
+    }
+
+    #[test]
+    fn status_update_does_not_break_chain() {
+        // Status is mutable; the chain protects only immutable fields.
+        let dir = tempdir().unwrap();
+        let store = test_store(dir.path().join("tx.db"));
+        let tx = store.record(queued_transaction()).unwrap();
+        store
+            .update_status(&tx.transaction_id, JobState::Running)
+            .unwrap();
+        store
+            .update_status(&tx.transaction_id, JobState::Succeeded)
+            .unwrap();
+
+        let key = AuditKey::from_bytes(vec![0x42; 32]);
+        let outcome = store.verify_audit_chain(&key).unwrap();
+        assert!(
+            matches!(outcome, VerifyOutcome::Intact { rows_checked: 1 }),
+            "status mutation must not break the chain (status not in chain content): {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn open_read_only_rejects_record() {
+        let dir = tempdir().unwrap();
+        let key_path = dir.path().join("audit-key");
+        std::fs::write(&key_path, vec![0x42; 32]).unwrap();
+        std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        let store = TransactionStore::open_read_only(dir.path().join("tx.db")).unwrap();
+        let result = store.record(queued_transaction());
+        assert!(matches!(
+            result,
+            Err(TransactionStoreError::AuditChainMissing(_))
+        ));
+    }
+
     #[test]
     fn ensure_private_dir_creates_with_0700_mode() {
         let root = tempdir().unwrap();
@@ -479,7 +799,7 @@ mod tests {
     fn open_creates_parent_with_private_mode() {
         let root = tempdir().unwrap();
         let db_path = root.path().join("nested/dirs/daemon.sqlite");
-        let _store = TransactionStore::open(&db_path).unwrap();
+        let _store = test_store(&db_path);
         let parent = db_path.parent().unwrap();
         let mode = std::fs::metadata(parent).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o700);
@@ -500,7 +820,7 @@ mod tests {
     #[test]
     fn update_status_transitions_queued_to_running() {
         let dir = tempdir().unwrap();
-        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let store = test_store(dir.path().join("tx.db"));
         let tx = store.record(queued_transaction()).unwrap();
 
         store
@@ -514,7 +834,7 @@ mod tests {
     #[test]
     fn update_status_transitions_running_to_succeeded() {
         let dir = tempdir().unwrap();
-        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let store = test_store(dir.path().join("tx.db"));
         let tx = store.record(queued_transaction()).unwrap();
 
         store
@@ -531,7 +851,7 @@ mod tests {
     #[test]
     fn update_status_for_unknown_id_returns_not_found() {
         let dir = tempdir().unwrap();
-        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let store = test_store(dir.path().join("tx.db"));
 
         let result = store.update_status("does-not-exist", JobState::Running);
         assert!(
@@ -543,7 +863,7 @@ mod tests {
     #[test]
     fn update_status_leaves_other_fields_intact() {
         let dir = tempdir().unwrap();
-        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let store = test_store(dir.path().join("tx.db"));
         let tx = store.record(queued_transaction()).unwrap();
 
         store
@@ -562,7 +882,7 @@ mod tests {
     #[test]
     fn find_by_request_hash_returns_queued_transaction() {
         let dir = tempdir().unwrap();
-        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let store = test_store(dir.path().join("tx.db"));
         let tx = store.record(queued_transaction()).unwrap();
 
         let found = store.find_by_request_hash("hash-abc").unwrap();
@@ -573,7 +893,7 @@ mod tests {
     #[test]
     fn find_by_request_hash_returns_none_for_unknown_hash() {
         let dir = tempdir().unwrap();
-        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let store = test_store(dir.path().join("tx.db"));
 
         let found = store.find_by_request_hash("nonexistent-hash").unwrap();
         assert!(found.is_none());
@@ -585,7 +905,7 @@ mod tests {
         // not be returned — this blocks replay attacks where a captured approval
         // hash is submitted a second time after the first execute completes.
         let dir = tempdir().unwrap();
-        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let store = test_store(dir.path().join("tx.db"));
         let tx = store.record(queued_transaction()).unwrap();
 
         // Simulate completed execution (must go through Running first).
@@ -606,7 +926,7 @@ mod tests {
     #[test]
     fn claim_for_execution_succeeds_for_queued_transaction() {
         let dir = tempdir().unwrap();
-        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let store = test_store(dir.path().join("tx.db"));
         let tx = store.record(queued_transaction()).unwrap();
 
         let claimed = store.claim_for_execution(&tx.transaction_id).unwrap();
@@ -623,7 +943,7 @@ mod tests {
     #[test]
     fn claim_for_execution_returns_false_when_already_running() {
         let dir = tempdir().unwrap();
-        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let store = test_store(dir.path().join("tx.db"));
         let tx = store.record(queued_transaction()).unwrap();
 
         assert!(
@@ -639,7 +959,7 @@ mod tests {
     #[test]
     fn claim_for_execution_returns_false_for_unknown_id() {
         let dir = tempdir().unwrap();
-        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let store = test_store(dir.path().join("tx.db"));
 
         let claimed = store.claim_for_execution("does-not-exist").unwrap();
         assert!(!claimed, "unknown transaction must not be claimable");
@@ -650,7 +970,7 @@ mod tests {
         // A Running transaction must not be returned — it has already been
         // claimed by a concurrent request and must not be executed again.
         let dir = tempdir().unwrap();
-        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let store = test_store(dir.path().join("tx.db"));
         let tx = store.record(queued_transaction()).unwrap();
 
         store.claim_for_execution(&tx.transaction_id).unwrap();
@@ -668,7 +988,7 @@ mod tests {
         // Queued record should be returned even if an older Succeeded record
         // exists for the same hash.
         let dir = tempdir().unwrap();
-        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let store = test_store(dir.path().join("tx.db"));
 
         // First round: record → execute → succeed.
         let first_tx = store.record(queued_transaction()).unwrap();
@@ -696,7 +1016,7 @@ mod tests {
     #[test]
     fn fresh_queued_transaction_is_found_by_request_hash() {
         let dir = tempdir().unwrap();
-        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let store = test_store(dir.path().join("tx.db"));
         store.record(queued_transaction()).unwrap();
 
         let found = store.find_by_request_hash("hash-abc").unwrap();
@@ -709,7 +1029,7 @@ mod tests {
     #[test]
     fn stale_queued_transaction_is_not_found_by_request_hash() {
         let dir = tempdir().unwrap();
-        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let store = test_store(dir.path().join("tx.db"));
         let tx = store.record(queued_transaction()).unwrap();
 
         // Backdate created_at to 20 minutes ago so it exceeds the 15-minute TTL.
@@ -731,7 +1051,7 @@ mod tests {
     #[test]
     fn cleanup_stale_queued_cancels_old_records() {
         let dir = tempdir().unwrap();
-        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let store = test_store(dir.path().join("tx.db"));
 
         // Create two transactions: one fresh, one stale.
         let fresh = store.record(queued_transaction()).unwrap();
@@ -763,7 +1083,7 @@ mod tests {
     #[test]
     fn update_status_rejects_queued_to_succeeded() {
         let dir = tempdir().unwrap();
-        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let store = test_store(dir.path().join("tx.db"));
         let tx = store.record(queued_transaction()).unwrap();
 
         let result = store.update_status(&tx.transaction_id, JobState::Succeeded);
@@ -782,7 +1102,7 @@ mod tests {
     #[test]
     fn update_status_rejects_succeeded_to_running() {
         let dir = tempdir().unwrap();
-        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let store = test_store(dir.path().join("tx.db"));
         let tx = store.record(queued_transaction()).unwrap();
 
         store
@@ -808,7 +1128,7 @@ mod tests {
     #[test]
     fn update_status_accepts_running_to_failed() {
         let dir = tempdir().unwrap();
-        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let store = test_store(dir.path().join("tx.db"));
         let tx = store.record(queued_transaction()).unwrap();
 
         store
@@ -825,7 +1145,7 @@ mod tests {
     #[test]
     fn update_status_accepts_running_to_rolled_back() {
         let dir = tempdir().unwrap();
-        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let store = test_store(dir.path().join("tx.db"));
         let tx = store.record(queued_transaction()).unwrap();
 
         store
@@ -844,7 +1164,7 @@ mod tests {
     #[test]
     fn list_transactions_returns_empty_for_fresh_store() {
         let dir = tempdir().unwrap();
-        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let store = test_store(dir.path().join("tx.db"));
         let results = store.list_transactions(10, None, None, None).unwrap();
         assert!(results.is_empty());
     }
@@ -852,7 +1172,7 @@ mod tests {
     #[test]
     fn list_transactions_returns_all_records_ordered_by_newest_first() {
         let dir = tempdir().unwrap();
-        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let store = test_store(dir.path().join("tx.db"));
         store.record(queued_transaction()).unwrap();
 
         let mut second = queued_transaction();
@@ -870,7 +1190,7 @@ mod tests {
     #[test]
     fn list_transactions_respects_limit() {
         let dir = tempdir().unwrap();
-        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let store = test_store(dir.path().join("tx.db"));
         for _ in 0..5 {
             store.record(queued_transaction()).unwrap();
         }
@@ -881,7 +1201,7 @@ mod tests {
     #[test]
     fn list_transactions_filters_by_status() {
         let dir = tempdir().unwrap();
-        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let store = test_store(dir.path().join("tx.db"));
         let tx = store.record(queued_transaction()).unwrap();
         store
             .update_status(&tx.transaction_id, JobState::Running)
@@ -909,7 +1229,7 @@ mod tests {
     #[test]
     fn list_transactions_filters_by_action_name() {
         let dir = tempdir().unwrap();
-        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let store = test_store(dir.path().join("tx.db"));
         store.record(queued_transaction()).unwrap(); // UpdateSystem
 
         let mut disk = queued_transaction();
@@ -926,7 +1246,7 @@ mod tests {
     #[test]
     fn list_transactions_filters_by_since_hours() {
         let dir = tempdir().unwrap();
-        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let store = test_store(dir.path().join("tx.db"));
 
         // Record a transaction and backdate it to 48 hours ago.
         let old = store.record(queued_transaction()).unwrap();
@@ -953,7 +1273,7 @@ mod tests {
     #[test]
     fn list_transactions_rejects_invalid_status_filter() {
         let dir = tempdir().unwrap();
-        let store = TransactionStore::open(dir.path().join("tx.db")).unwrap();
+        let store = test_store(dir.path().join("tx.db"));
         store.record(queued_transaction()).unwrap();
         let result = store.list_transactions(10, Some("bogus"), None, None);
         assert!(result.is_err(), "invalid status filter should return error");
