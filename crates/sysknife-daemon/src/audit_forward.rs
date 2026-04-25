@@ -20,7 +20,8 @@
 //!
 //! ## Reliability vs durability
 //!
-//! - **Local audit-log INSERT** (with hash chain, #149) is the durable record.
+//! - **Local audit-log INSERT** (HMAC-SHA256 hash-chained — see
+//!   [`audit_chain`](crate::audit_chain)) is the durable record.
 //! - **External forwarding** is best-effort. A SIEM outage, a routing flap, or
 //!   a misconfigured collector must NEVER block daemon execution.
 //! - We do not retry the *send* in-process: a frame that the kernel could not

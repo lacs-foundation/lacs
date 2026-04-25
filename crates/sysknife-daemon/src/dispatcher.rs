@@ -975,7 +975,7 @@ async fn handle_preview(
         }
     };
 
-    // External SIEM forwarding (#150). Best-effort, never blocks the preview
+    // External SIEM forwarding. Best-effort, never blocks the preview
     // response — if the forwarder queue is full or its task is gone, the
     // event is dropped (with a counter + WARN). The local hash-chained log
     // is always written first; the SIEM receives a copy.
