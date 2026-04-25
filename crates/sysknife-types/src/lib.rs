@@ -5,6 +5,158 @@ use std::convert::TryFrom;
 use sysknife_proto::sysknife::v1 as proto;
 
 // ---------------------------------------------------------------------------
+// ActionName — validated action catalogue primitive
+// ---------------------------------------------------------------------------
+
+/// Canonical names of every action in the SysKnife catalogue.
+///
+/// This is the single source of truth for "is this string a valid action
+/// name?" — kept in `sysknife-types` (not `sysknife-brain`) so the
+/// `RequestEnvelope` deserializer can validate at the IPC boundary, and
+/// every other crate that touches an action name (the daemon's
+/// `policy::min_role_for_action`, the CLI's approval flow, the proto
+/// bridge) sees the same list without depending on the brain.
+///
+/// **Cross-module invariant:** `sysknife_brain::propose_plan::KNOWN_ACTIONS`
+/// (which pairs each name with an LLM-facing description) MUST list every
+/// name that appears here, in either order.  The brain has a unit test
+/// (`every_known_action_name_is_in_types`) that pins this — adding an
+/// action requires a coordinated update to both lists.
+pub const KNOWN_ACTION_NAMES: &[&str] = &[
+    "GetSystemState",
+    "CollectDiagnostics",
+    "GetDeploymentHistory",
+    "ListDeployments",
+    "UpdateSystem",
+    "CleanupDeployments",
+    "RebootSystem",
+    "RollbackDeployment",
+    "GetKernelArguments",
+    "PinDeployment",
+    "UnpinDeployment",
+    "RebaseSystem",
+    "SetKernelArguments",
+    "InstallFlatpak",
+    "RemoveFlatpak",
+    "UpdateFlatpak",
+    "SearchFlatpakApps",
+    "ListFlatpakRemotes",
+    "ListInstalledFlatpaks",
+    "AddFlatpakRemote",
+    "RemoveFlatpakRemote",
+    "GetFlatpakAppInfo",
+    "ListToolboxes",
+    "CreateToolbox",
+    "RemoveToolbox",
+    "GetLayeredPackages",
+    "ResetLayeredPackageOverride",
+    "GetPendingUpdates",
+    "InstallPackages",
+    "RemovePackages",
+    "AddLayeredPackage",
+    "RemoveLayeredPackage",
+    "ReplaceLayeredPackage",
+    "RemoveBasePackage",
+    "ListServices",
+    "ListTimers",
+    "ReloadDaemon",
+    "StartService",
+    "StopService",
+    "RestartService",
+    "ReloadService",
+    "SetServiceEnabled",
+    "MaskService",
+    "UnmaskService",
+    "GetServiceLogs",
+    "GetServiceStatus",
+    "GetFirewallState",
+    "GetNetworkStatus",
+    "ConfigureWifi",
+    "SetDnsServers",
+    "ConfigureFirewall",
+    "GetDiskUsage",
+    "ListProcesses",
+    "GetMemoryInfo",
+    "GetDateTime",
+    "SetHostname",
+    "SetTimezone",
+    "SetLocale",
+    "SetNtp",
+    "ListPackageRepositories",
+    "AddPackageRepository",
+    "RemovePackageRepository",
+    "EnablePackageRepository",
+    "DisablePackageRepository",
+    "ListContainers",
+    "CreateContainer",
+    "StartContainer",
+    "StopContainer",
+    "RemoveContainer",
+    "GetContainerInfo",
+    "ListUsers",
+    "ListGroups",
+    "CreateUser",
+    "DeleteUser",
+    "AddUserToGroup",
+    "RemoveUserFromGroup",
+    "GetAuthorizedKeys",
+    "AddAuthorizedKey",
+    "RemoveAuthorizedKey",
+    "ListJobHistory",
+];
+
+/// A validated action name from the approved SysKnife catalogue.
+///
+/// Constructed via [`ActionName::parse`], which rejects any string not in
+/// [`KNOWN_ACTION_NAMES`].  Holding an `ActionName` is a compile-time
+/// guarantee that the contained string is in the catalogue — downstream
+/// code does not need to re-validate.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize)]
+#[serde(transparent)]
+pub struct ActionName(String);
+
+impl ActionName {
+    /// Parse a string into a validated `ActionName`.
+    pub fn parse(name: impl Into<String>) -> Result<Self, UnknownActionName> {
+        let name = name.into();
+        if KNOWN_ACTION_NAMES.contains(&name.as_str()) {
+            Ok(Self(name))
+        } else {
+            Err(UnknownActionName(name))
+        }
+    }
+
+    /// Return the inner string slice.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for ActionName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl AsRef<str> for ActionName {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Returned by [`ActionName::parse`] when the string is not a known action.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnknownActionName(pub String);
+
+impl std::fmt::Display for UnknownActionName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "unknown action name: '{}'", self.0)
+    }
+}
+
+impl std::error::Error for UnknownActionName {}
+
+// ---------------------------------------------------------------------------
 // Hash newtypes — RequestHash / ApprovalHash
 // ---------------------------------------------------------------------------
 
