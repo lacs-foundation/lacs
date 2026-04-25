@@ -1,9 +1,11 @@
 use crate::audit_forward::AuditForwarder;
 use crate::policy::PolicyTable;
+use crate::store::{AuditStore, SqliteStore};
 use crate::transactions::{TransactionStore, TransactionStoreError};
 use crate::transport::grpc::{bind_unix_listener, ListenTarget, ListenTargetError};
 use std::os::unix::net::UnixListener;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DaemonConfig {
@@ -23,7 +25,10 @@ impl DaemonConfig {
 #[derive(Clone, Debug)]
 pub struct DaemonState {
     pub config: DaemonConfig,
-    pub transactions: TransactionStore,
+    /// Polymorphic audit store. Concrete impls: `SqliteStore` (default) and
+    /// `PostgresStore` (selected via `[storage] backend = "postgres"`).
+    /// Both implement [`AuditStore`] async trait.
+    pub audit: Arc<dyn AuditStore>,
     pub policy: PolicyTable,
     /// Optional external audit-log forwarder. `None` when no `[audit.forward]`
     /// sink is configured; events recorded by the dispatcher are then only
@@ -63,19 +68,40 @@ impl DaemonState {
 
     /// Open the daemon state with full configuration. Production callers
     /// (`main.rs`) build the policy table from `[policy.risk_overrides]` and
-    /// the forwarder from `[audit.forward]`.
+    /// the forwarder from `[audit.forward]`. The audit store defaults to
+    /// SQLite at `config.database_path`; pass an explicit `audit` to use
+    /// Postgres or any other [`AuditStore`] impl.
     pub fn open_full(
         config: DaemonConfig,
         policy: PolicyTable,
         forwarder: Option<AuditForwarder>,
     ) -> Result<Self, DaemonStateError> {
-        let transactions = TransactionStore::open(&config.database_path)?;
+        let store = TransactionStore::open(&config.database_path)?;
+        let audit: Arc<dyn AuditStore> = Arc::new(SqliteStore::new(store));
         Ok(Self {
             config,
-            transactions,
+            audit,
             policy,
             forwarder,
         })
+    }
+
+    /// Open the daemon state with an explicit audit store. Used by `main.rs`
+    /// when `[storage] backend = "postgres"` is configured: the Postgres
+    /// `AuditStore` is constructed via `PostgresStore::connect` and passed
+    /// here as the `audit` argument.
+    pub fn open_with_audit(
+        config: DaemonConfig,
+        policy: PolicyTable,
+        forwarder: Option<AuditForwarder>,
+        audit: Arc<dyn AuditStore>,
+    ) -> Self {
+        Self {
+            config,
+            audit,
+            policy,
+            forwarder,
+        }
     }
 
     pub fn bootstrap(config: DaemonConfig) -> Result<DaemonRuntime, DaemonStateError> {

@@ -57,6 +57,7 @@ pub struct LacsConfig {
     pub llm: Option<LlmSection>,
     pub policy: Option<PolicySection>,
     pub audit: Option<AuditSection>,
+    pub storage: Option<StorageSection>,
 }
 
 /// `[daemon]` section.
@@ -67,6 +68,59 @@ pub struct DaemonSection {
     pub socket: Option<String>,
     /// SQLite database path. Maps to `SYSKNIFE_DATABASE_PATH`.
     pub database: Option<String>,
+}
+
+/// `[storage]` section. Selects the audit-log backend.
+///
+/// Default (absent or `backend = "sqlite"`) uses the local rusqlite-backed
+/// store at `[daemon].database`. **Production deployments should set
+/// `backend = "postgres"`** and supply a connection URL — the local SQLite
+/// path is recommended only for testing and sandboxing because the audit
+/// log dies with the host (no off-box durability, nothing to forward to
+/// a SOC).
+///
+/// Example (Postgres, AWS RDS):
+///
+/// ```toml
+/// [storage]
+/// backend = "postgres"
+/// url     = "postgres://sysknife:${PG_PASSWORD}@db.example.com:5432/audit?sslmode=verify-full"
+///
+/// [storage.pool]
+/// max_connections          = 8
+/// acquire_timeout_secs     = 10
+/// statement_cache_capacity = 100   # set to 0 for Supabase pooler / CockroachDB
+/// ```
+///
+/// See `docs/storage-cloud.md` for cloud-provider URL reference.
+#[derive(Debug, Default, Deserialize)]
+pub struct StorageSection {
+    /// `"sqlite"` (default) or `"postgres"`.
+    #[serde(default = "default_storage_backend")]
+    pub backend: String,
+    /// Postgres connection URL (`postgres://...`). Required when
+    /// `backend = "postgres"`. Ignored otherwise.
+    pub url: Option<String>,
+    /// Optional pool tuning. Defaults are sane for typical SysKnife load.
+    pub pool: Option<StoragePoolSection>,
+}
+
+fn default_storage_backend() -> String {
+    "sqlite".to_string()
+}
+
+/// `[storage.pool]` section.
+#[derive(Debug, Default, Deserialize)]
+pub struct StoragePoolSection {
+    /// Max connections in the pool. Default 8.
+    pub max_connections: Option<u32>,
+    /// `acquire_timeout` for pool checkout (seconds). Default 10.
+    /// Raise above 10 if you observe Neon cold-start failures.
+    pub acquire_timeout_secs: Option<u64>,
+    /// Per-connection prepared-statement cache size. Default 100.
+    /// **Set to 0** for transaction-mode PgBouncer (Supabase pooler) and
+    /// CockroachDB Cloud — both reject sqlx's named prepared statements.
+    pub statement_cache_capacity: Option<usize>,
 }
 
 /// `[audit]` section.

@@ -599,7 +599,7 @@ async fn handle_query_action(
     params: &Value,
     request_id: &str,
 ) -> Result<(), HandlerError> {
-    let transactions = &state.transactions;
+    let audit = &state.audit;
 
     // Honour `[policy.risk_overrides]`: an operator can RAISE a previously
     // Low-risk action above Observer, in which case the unprivileged query
@@ -670,12 +670,15 @@ async fn handle_query_action(
             None => None,
         };
 
-        let records = match transactions.list_transactions(
-            limit,
-            status_filter.as_deref(),
-            action_filter.as_deref(),
-            since_hours,
-        ) {
+        let records = match audit
+            .list_transactions(
+                limit,
+                status_filter.as_deref(),
+                action_filter.as_deref(),
+                since_hours,
+            )
+            .await
+        {
             Ok(r) => r,
             Err(e) => {
                 return send_error(
@@ -935,7 +938,7 @@ async fn handle_preview(
         warnings: preview.warnings.clone(),
     };
 
-    let recorded = match state.transactions.record_previewed(new_tx, preview.clone()) {
+    let recorded = match state.audit.record_previewed(new_tx, preview.clone()).await {
         Ok(r) => r,
         Err(e) => {
             return send_error(
@@ -969,38 +972,47 @@ async fn handle_preview(
 /// `AuditEvent` to the configured forwarder, if any.
 ///
 /// Failures here are non-fatal — the local audit log is the durable record.
+/// Spawned in the background so the preview response is not delayed by the
+/// audit-store fetch (true fire-and-forget across both SQLite and Postgres
+/// backends).
 fn forward_audit_event(state: &DaemonState, transaction_id: &str, caller: &CallerRole) {
-    let Some(forwarder) = &state.forwarder else {
+    if state.forwarder.is_none() {
         return;
-    };
-    match state.transactions.fetch_chain_row(transaction_id) {
-        Ok(Some(row)) => {
-            forwarder.submit(crate::audit_forward::AuditEvent {
-                seq: row.seq,
-                transaction_id: row.transaction_id,
-                action_name: row.action_name,
-                risk_level: row.risk_level,
-                summary: row.summary,
-                approval_id: row.approval_id,
-                created_at: row.created_at,
-                chain_hash: row.chain_hash,
-                key_id: row.key_id,
-                caller_role: Some(format!("{caller:?}")),
-            });
-        }
-        Ok(None) => {
-            eprintln!(
-                "[sysknife-daemon] audit-forward: transaction {transaction_id} \
-                 not found just after insert (race?)"
-            );
-        }
-        Err(e) => {
-            eprintln!(
-                "[sysknife-daemon] audit-forward: chain row fetch failed for \
-                 {transaction_id}: {e}"
-            );
-        }
     }
+    let audit = std::sync::Arc::clone(&state.audit);
+    let forwarder = state.forwarder.clone().expect("checked above");
+    let transaction_id = transaction_id.to_string();
+    let caller_label = format!("{caller:?}");
+    tokio::spawn(async move {
+        match audit.fetch_chain_row(&transaction_id).await {
+            Ok(Some(row)) => {
+                forwarder.submit(crate::audit_forward::AuditEvent {
+                    seq: row.seq,
+                    transaction_id: row.transaction_id,
+                    action_name: row.action_name,
+                    risk_level: row.risk_level,
+                    summary: row.summary,
+                    approval_id: row.approval_id,
+                    created_at: row.created_at,
+                    chain_hash: row.chain_hash,
+                    key_id: row.key_id,
+                    caller_role: Some(caller_label),
+                });
+            }
+            Ok(None) => {
+                eprintln!(
+                    "[sysknife-daemon] audit-forward: transaction {transaction_id} \
+                     not found just after insert (race?)"
+                );
+            }
+            Err(e) => {
+                eprintln!(
+                    "[sysknife-daemon] audit-forward: chain row fetch failed for \
+                     {transaction_id}: {e}"
+                );
+            }
+        }
+    });
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1040,7 +1052,7 @@ async fn handle_execute(
     // Verify a prior preview exists (enforce preview-before-execute).
     // A lookup failure is an infrastructure error — send a response instead of
     // propagating, which would leave the client hanging with no reply.
-    let prior_tx = match state.transactions.find_by_request_hash(&stored_hash) {
+    let prior_tx = match state.audit.find_by_request_hash(&stored_hash).await {
         Ok(tx) => tx,
         Err(e) => {
             return send_error(
@@ -1070,7 +1082,7 @@ async fn handle_execute(
     // This closes the TOCTOU window: two concurrent execute requests that both
     // pass find_by_request_hash cannot both proceed — the loser's UPDATE sees
     // status ≠ Queued and returns false.
-    let claimed = match state.transactions.claim_for_execution(&transaction_id) {
+    let claimed = match state.audit.claim_for_execution(&transaction_id).await {
         Ok(c) => c,
         Err(e) => {
             return send_error(
@@ -1182,8 +1194,9 @@ async fn handle_execute(
     // aware of the gap.
     let mut warnings = Vec::new();
     if let Err(e) = state
-        .transactions
+        .audit
         .update_status(&transaction_id, final_status)
+        .await
     {
         eprintln!(
             "[sysknife-daemon] failed to update transaction {transaction_id} to \
