@@ -1916,6 +1916,179 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
+    // T12 — `update_status` failure surfaces as a job-completed warning
+    //
+    // When the audit-log update fails after a job runs, the dispatcher
+    // logs to stderr AND attaches a "audit trail update failed: …"
+    // string to the job_completed response's `warnings` field so the
+    // client can flag the audit gap. The warning emission was
+    // unverified: a regression that swapped the warnings push for an
+    // early return would silently drop the audit-loss signal.
+    // ------------------------------------------------------------------
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn update_status_failure_surfaces_as_audit_warning_in_job_completed() {
+        use crate::audit_chain::{AuditKey, ChainRow, VerifyOutcome};
+        use crate::store::AuditStore;
+        use crate::transactions::{
+            NewTransaction as NewTx, RecordedPreviewedTransaction, TransactionStoreError,
+        };
+        use sysknife_types::{JobState, PreviewEnvelope, TransactionRecord};
+
+        // A tiny `AuditStore` wrapper that delegates to the real
+        // SQLite-backed store for everything except `update_status`,
+        // which returns the most plausible production failure mode
+        // ("not found" — e.g. the row was rotated out before the dispatcher
+        // could close the loop). The dispatcher must still emit
+        // job_completed with the warning attached.
+        #[derive(Debug)]
+        struct UpdateStatusFails(std::sync::Arc<dyn AuditStore>);
+
+        #[async_trait::async_trait]
+        impl AuditStore for UpdateStatusFails {
+            async fn record(&self, t: NewTx) -> Result<TransactionRecord, TransactionStoreError> {
+                self.0.record(t).await
+            }
+            async fn record_previewed(
+                &self,
+                t: NewTx,
+                p: PreviewEnvelope,
+            ) -> Result<RecordedPreviewedTransaction, TransactionStoreError> {
+                self.0.record_previewed(t, p).await
+            }
+            async fn get(
+                &self,
+                id: &str,
+            ) -> Result<Option<TransactionRecord>, TransactionStoreError> {
+                self.0.get(id).await
+            }
+            async fn find_by_request_hash(
+                &self,
+                h: &str,
+            ) -> Result<Option<TransactionRecord>, TransactionStoreError> {
+                self.0.find_by_request_hash(h).await
+            }
+            async fn get_preview(
+                &self,
+                id: &str,
+            ) -> Result<Option<PreviewEnvelope>, TransactionStoreError> {
+                self.0.get_preview(id).await
+            }
+            async fn update_status(
+                &self,
+                id: &str,
+                _s: JobState,
+            ) -> Result<(), TransactionStoreError> {
+                Err(TransactionStoreError::NotFound(id.to_string()))
+            }
+            async fn claim_for_execution(&self, id: &str) -> Result<bool, TransactionStoreError> {
+                self.0.claim_for_execution(id).await
+            }
+            async fn cleanup_stale_queued(&self) -> Result<u64, TransactionStoreError> {
+                self.0.cleanup_stale_queued().await
+            }
+            async fn list_transactions(
+                &self,
+                limit: u32,
+                status: Option<&str>,
+                action: Option<&str>,
+                since: Option<u32>,
+            ) -> Result<Vec<TransactionRecord>, TransactionStoreError> {
+                self.0.list_transactions(limit, status, action, since).await
+            }
+            async fn fetch_chain_row(
+                &self,
+                id: &str,
+            ) -> Result<Option<ChainRow>, TransactionStoreError> {
+                self.0.fetch_chain_row(id).await
+            }
+            async fn fetch_chain_rows(&self) -> Result<Vec<ChainRow>, TransactionStoreError> {
+                self.0.fetch_chain_rows().await
+            }
+            async fn verify_audit_chain(
+                &self,
+                k: &AuditKey,
+            ) -> Result<VerifyOutcome, TransactionStoreError> {
+                self.0.verify_audit_chain(k).await
+            }
+        }
+
+        let dir = tempdir().unwrap();
+        let real = test_state(&dir);
+        // Wrap the inner audit store with our update-status-failing decorator.
+        let faulty: std::sync::Arc<dyn AuditStore> =
+            std::sync::Arc::new(UpdateStatusFails(real.audit.clone()));
+        let cfg = real.config.clone();
+        let state = crate::state::DaemonState::open_with_audit(
+            cfg,
+            crate::policy::PolicyTable::empty(),
+            None,
+            faulty,
+        );
+
+        let (client, server) = tokio::net::UnixStream::pair().unwrap();
+        tokio::spawn(async move {
+            connection_handler(server, state, runner(), CallerRole::Observer).await;
+        });
+        let mut framed = FramedStream::new(client);
+
+        // Preview + execute against a low-risk action so Observer can run it.
+        framed
+            .send(
+                &serde_json::to_vec(&json!({
+                    "type": "preview",
+                    "request_id": "r1",
+                    "action_name": "GetSystemState",
+                    "params": {}
+                }))
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        let preview_resp: Value = serde_json::from_slice(&framed.recv().await.unwrap()).unwrap();
+        let approval_hash = preview_resp["preview"]["request_hash"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        framed
+            .send(
+                &serde_json::to_vec(&json!({
+                    "type": "execute",
+                    "request_id": "r2",
+                    "action_name": "GetSystemState",
+                    "params": {},
+                    "approval_hash": approval_hash
+                }))
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Drain frames until we hit job_completed.
+        let mut completed: Option<Value> = None;
+        for _ in 0..30 {
+            let raw = framed.recv().await.unwrap();
+            let msg: Value = serde_json::from_slice(&raw).unwrap();
+            if msg["type"] == "job_completed" {
+                completed = Some(msg);
+                break;
+            }
+        }
+        let completed = completed.expect("dispatcher must emit job_completed");
+        let warnings = completed["result"]["warnings"]
+            .as_array()
+            .expect("warnings array on job_completed");
+
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.as_str().unwrap_or("").contains("audit trail update failed")),
+            "expected an `audit trail update failed` warning when update_status returns Err; got: {warnings:#?}"
+        );
+    }
+
+    // ------------------------------------------------------------------
     // T4 — concurrent execute race at the dispatcher boundary
     //
     // The transactions store guarantees that `claim_for_execution`'s
