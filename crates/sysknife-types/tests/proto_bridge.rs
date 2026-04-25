@@ -144,3 +144,113 @@ fn preview_envelope_rejects_invalid_json() {
         other => panic!("unexpected error: {other:?}"),
     }
 }
+
+// ---------------------------------------------------------------------------
+// T15 — wire-format negative tests through `prost`
+//
+// The round-trip tests above prove the local <-> proto type bridge works
+// when both sides have the right shape.  These tests round-trip the proto
+// types **through their on-the-wire bytes**, then assert that:
+//
+//   (a) a valid encoding decodes back to the exact value, and
+//   (b) malformed bytes are rejected by `prost::Message::decode` (and the
+//       failure is observable to the caller, not silently ignored).
+//
+// Without these, a proto schema drift that swapped field tags would still
+// pass the local-only round-trips because nothing actually exercises
+// prost's encoder/decoder.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn request_envelope_round_trips_through_prost_bytes() {
+    use prost::Message;
+
+    let local = RequestEnvelope {
+        action_name: "InstallFlatpak".to_string(),
+        request_id: "req-1".to_string(),
+        params: serde_json::json!({"app_id": "org.mozilla.firefox"}),
+        caller_role: CallerRole::Dev,
+        request_hash: sysknife_types::RequestHash::new("abc123".to_string()),
+    };
+
+    let proto_value: proto::RequestEnvelope = local.clone().into();
+    let bytes = proto_value.encode_to_vec();
+
+    let decoded_proto = proto::RequestEnvelope::decode(bytes.as_slice())
+        .expect("encoded bytes must decode back to the same proto type");
+    let decoded_local =
+        RequestEnvelope::try_from(decoded_proto).expect("decoded proto must convert back");
+
+    assert_eq!(decoded_local, local);
+}
+
+#[test]
+fn preview_envelope_round_trips_through_prost_bytes() {
+    use prost::Message;
+
+    let local = PreviewEnvelope {
+        summary: "Install Firefox".to_string(),
+        risk_level: RiskLevel::Medium,
+        current_state: serde_json::json!({"flatpaks": []}),
+        proposed_change: serde_json::json!({"flatpaks": ["org.mozilla.firefox"]}),
+        expected_side_effects: vec!["downloads application metadata".to_string()],
+        reboot_required: false,
+        rollback_available: true,
+        warnings: vec!["network required".to_string()],
+        request_hash: sysknife_types::RequestHash::new("abc123".to_string()),
+    };
+
+    let proto_value: proto::PreviewEnvelope = local.clone().into();
+    let bytes = proto_value.encode_to_vec();
+
+    let decoded_proto = proto::PreviewEnvelope::decode(bytes.as_slice()).unwrap();
+    let decoded_local = PreviewEnvelope::try_from(decoded_proto).unwrap();
+
+    assert_eq!(decoded_local, local);
+}
+
+#[test]
+fn malformed_bytes_fail_to_decode_as_request_envelope() {
+    use prost::Message;
+
+    // Random non-protobuf bytes — should NOT decode as a RequestEnvelope.
+    // The exact failure mode (truncated, bad varint, unknown wire type)
+    // depends on the bytes; what matters is that prost surfaces an error
+    // rather than silently returning a default-initialised struct.
+    let garbage: Vec<u8> = vec![0xFF, 0x00, 0xAB, 0xCD, 0xEF, 0x42, 0x42, 0x42];
+    let result = proto::RequestEnvelope::decode(garbage.as_slice());
+    assert!(
+        result.is_err(),
+        "prost must reject garbage bytes; got Ok({:?})",
+        result.ok()
+    );
+}
+
+#[test]
+fn truncated_bytes_fail_to_decode_as_preview_envelope() {
+    use prost::Message;
+
+    // Take a valid encoding and truncate it mid-message — prost must
+    // surface the truncation rather than return a partial envelope.
+    let valid = proto::PreviewEnvelope {
+        summary: "Install Firefox".to_string(),
+        risk_level: 2,
+        current_state_json: "{}".to_string(),
+        proposed_change_json: "{}".to_string(),
+        expected_side_effects: vec![],
+        reboot_required: false,
+        rollback_available: false,
+        warnings: vec![],
+        request_hash: "deadbeef".to_string(),
+    };
+    let bytes = valid.encode_to_vec();
+    let cut = bytes.len() / 2;
+    let truncated = &bytes[..cut];
+
+    let result = proto::PreviewEnvelope::decode(truncated);
+    assert!(
+        result.is_err(),
+        "prost must reject truncated PreviewEnvelope; got Ok({:?})",
+        result.ok()
+    );
+}

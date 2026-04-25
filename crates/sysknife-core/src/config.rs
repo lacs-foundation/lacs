@@ -362,9 +362,16 @@ impl LacsConfig {
 /// `XDG_CONFIG_HOME=/etc` to redirect config and prefs writes to system
 /// directories. Invalid values are ignored and the default `~/.config` is used.
 ///
-/// If `HOME` is also unset a warning is emitted and `./.config` (relative to
-/// CWD) is used as a last resort — callers that write to the config path
-/// (daemon, shell) should ensure `HOME` is set at startup.
+/// **Panics** when both `XDG_CONFIG_HOME` (or its validated form) and `HOME`
+/// are unset.  The previous behaviour silently fell back to `./.config`
+/// (relative to the daemon's CWD), which routinely surprised operators —
+/// the daemon would write its prefs file under whatever directory the
+/// systemd unit happened to be working in, often `/tmp` on a fresh boot.
+/// Failing loudly at the first call site forces the deployment manifest
+/// (or shell environment) to make HOME explicit.  Production
+/// daemon/shell paths already do — every systemd unit ships with
+/// `Environment=HOME=…` — so this panic is the right place to surface
+/// the misconfiguration.
 fn config_dir() -> PathBuf {
     // Validate XDG_CONFIG_HOME: must be absolute and contain no `..` components.
     let xdg_valid = std::env::var("XDG_CONFIG_HOME").ok().and_then(|v| {
@@ -382,13 +389,13 @@ fn config_dir() -> PathBuf {
 
     let base = xdg_valid.unwrap_or_else(|| match std::env::var("HOME") {
         Ok(home) => PathBuf::from(home).join(".config"),
-        Err(_) => {
-            eprintln!(
-                "[sysknife] warning: HOME is not set; using relative path ./.config \
-                     for config and preferences — ensure HOME is set in production"
-            );
-            PathBuf::from(".config")
-        }
+        Err(_) => panic!(
+            "[sysknife] FATAL: HOME and XDG_CONFIG_HOME are both unset — refusing \
+             to fall back to ./.config (relative paths produce ./.config/sysknife/ \
+             under whatever CWD the daemon was launched in, typically a tempdir or \
+             worse).  Set `HOME` (or `XDG_CONFIG_HOME` to an absolute path) in the \
+             systemd unit / shell session and try again."
+        ),
     });
     base.join("sysknife")
 }
@@ -737,6 +744,50 @@ model = "qwen3:8b"
         assert!(
             resolved.starts_with(&link),
             "current resolver keeps the symlink path verbatim — got {resolved:?}"
+        );
+    }
+
+    /// MD-12 — `config_dir` must panic loudly when both `HOME` and
+    /// `XDG_CONFIG_HOME` are unset.  The previous behaviour silently fell
+    /// back to `./.config`, which writes prefs under whatever CWD the
+    /// daemon happened to be launched in (often a tempdir) — a class of
+    /// data-loss footgun the operator never sees until rotation moves
+    /// CWD.  Fail loud at startup instead.
+    #[test]
+    fn config_dir_panics_when_home_and_xdg_config_home_are_both_unset() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev_home = std::env::var("HOME").ok();
+        let prev_xdg = std::env::var("XDG_CONFIG_HOME").ok();
+        unsafe {
+            std::env::remove_var("HOME");
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
+
+        let result = std::panic::catch_unwind(config_dir);
+
+        // Restore env before any assertion so a failed test cannot leak
+        // state into sibling tests in the same process.
+        unsafe {
+            match prev_home {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+            match prev_xdg {
+                Some(v) => std::env::set_var("XDG_CONFIG_HOME", v),
+                None => std::env::remove_var("XDG_CONFIG_HOME"),
+            }
+        }
+
+        let panic = result
+            .expect_err("config_dir() must panic when both HOME and XDG_CONFIG_HOME are unset");
+        let msg: String = panic
+            .downcast::<String>()
+            .map(|b| *b)
+            .or_else(|p| p.downcast::<&'static str>().map(|b| (*b).to_string()))
+            .unwrap_or_else(|_| "<non-string panic>".to_string());
+        assert!(
+            msg.contains("HOME") && msg.contains("XDG_CONFIG_HOME"),
+            "panic message must mention both env vars; got: {msg}"
         );
     }
 

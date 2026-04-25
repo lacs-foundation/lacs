@@ -1916,6 +1916,243 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
+    // T4 — concurrent execute race at the dispatcher boundary
+    //
+    // The transactions store guarantees that `claim_for_execution`'s
+    // conditional UPDATE only flips a row from Queued to Running once;
+    // the second caller observes status != Queued and bails.  Drive
+    // that contract through TWO concurrent connection_handler instances
+    // sharing one DaemonState: one preview produces a Queued row, then
+    // two executes race for it.  Exactly one must reach job_started;
+    // the other must surface `stale_approval`.
+    //
+    // The test runs against the multi-thread tokio runtime so the two
+    // handlers are genuinely parallel — single-thread would serialise
+    // them and never exercise the conditional UPDATE.
+    // ------------------------------------------------------------------
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_executes_against_one_preview_serialise_to_one_winner() {
+        let dir = tempdir().unwrap();
+        let state = test_state(&dir);
+
+        // ── Producer: one preview to seed a Queued row ───────────────
+        let (pc, ps) = tokio::net::UnixStream::pair().unwrap();
+        {
+            let state = state.clone();
+            tokio::spawn(async move {
+                connection_handler(ps, state, runner(), CallerRole::Observer).await;
+            });
+        }
+        let mut framed_p = FramedStream::new(pc);
+        framed_p
+            .send(
+                &serde_json::to_vec(&json!({
+                    "type": "preview",
+                    "request_id": "preview-once",
+                    "action_name": "GetSystemState",
+                    "params": {}
+                }))
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        let raw = framed_p.recv().await.unwrap();
+        let preview_resp: Value = serde_json::from_slice(&raw).unwrap();
+        let approval_hash = preview_resp["preview"]["request_hash"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        // ── Two execute connections sharing the same DaemonState ─────
+        async fn exec_once(
+            state: crate::state::DaemonState,
+            approval_hash: String,
+            request_id: &'static str,
+        ) -> Vec<Value> {
+            let (c, s) = tokio::net::UnixStream::pair().unwrap();
+            tokio::spawn(async move {
+                connection_handler(s, state, runner(), CallerRole::Observer).await;
+            });
+            let mut f = FramedStream::new(c);
+            f.send(
+                &serde_json::to_vec(&json!({
+                    "type": "execute",
+                    "request_id": request_id,
+                    "action_name": "GetSystemState",
+                    "params": {},
+                    "approval_hash": approval_hash
+                }))
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+
+            // Read frames until we hit either job_completed (winner path)
+            // or error_response (loser path). Cap at 30 frames so a stuck
+            // handler can't hang the test.
+            let mut frames = Vec::new();
+            for _ in 0..30 {
+                let raw = match f.recv().await {
+                    Ok(b) => b,
+                    Err(_) => break,
+                };
+                let v: Value = serde_json::from_slice(&raw).unwrap();
+                let kind = v["type"].as_str().unwrap_or("").to_string();
+                frames.push(v);
+                if kind == "job_completed" || kind == "error_response" {
+                    break;
+                }
+            }
+            frames
+        }
+
+        let (a, b) = tokio::join!(
+            exec_once(state.clone(), approval_hash.clone(), "exec-A"),
+            exec_once(state.clone(), approval_hash.clone(), "exec-B"),
+        );
+
+        // Each side must end in either job_completed or error_response.
+        let terminal = |frames: &[Value]| -> &'static str {
+            for f in frames {
+                match f["type"].as_str().unwrap_or("") {
+                    "job_completed" => return "win",
+                    "error_response" => return "lose",
+                    _ => {}
+                }
+            }
+            "neither"
+        };
+        let outcomes = [terminal(&a), terminal(&b)];
+
+        // Exactly one winner, exactly one loser. Order is unspecified.
+        let mut sorted = outcomes;
+        sorted.sort();
+        assert_eq!(
+            sorted,
+            ["lose", "win"],
+            "exactly one execute must win and one must lose; got {outcomes:?}\n A={a:#?}\n B={b:#?}"
+        );
+
+        // The loser must be flagged as stale_approval, not some other
+        // category — that's the contract `claim_for_execution` enforces.
+        let loser = if outcomes[0] == "lose" { &a } else { &b };
+        let err_frame = loser
+            .iter()
+            .find(|f| f["type"] == "error_response")
+            .expect("loser has an error_response");
+        assert_eq!(
+            err_frame["category"], "stale_approval",
+            "loser must be classified stale_approval; got {err_frame:#?}"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // T5 — replay attack at the dispatcher boundary
+    //
+    // The transactions store flips a row from Queued to Running on the
+    // first execute, and `find_by_request_hash` filters on `status =
+    // Queued`.  That single conditional UPDATE is the entire defence
+    // against replay: a captured (request_hash, approval_hash) tuple
+    // submitted a second time must miss the Queued row and surface as
+    // `stale_approval`.  Pin that contract through the live dispatcher
+    // (preview → execute → drain → re-execute), not just the store.
+    // ------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn re_executing_a_completed_approval_returns_stale_approval() {
+        let dir = tempdir().unwrap();
+        let state = test_state(&dir);
+        let (client, server) = tokio::net::UnixStream::pair().unwrap();
+
+        tokio::spawn(async move {
+            connection_handler(server, state, runner(), CallerRole::Observer).await;
+        });
+
+        let mut framed = FramedStream::new(client);
+
+        // Step 1: preview a low-risk action so we can drive the full
+        // execute path under Observer (which can run Get* actions).
+        framed
+            .send(
+                &serde_json::to_vec(&json!({
+                    "type": "preview",
+                    "request_id": "r1",
+                    "action_name": "GetSystemState",
+                    "params": {}
+                }))
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let raw = framed.recv().await.unwrap();
+        let preview_resp: Value = serde_json::from_slice(&raw).unwrap();
+        assert_eq!(preview_resp["type"], "preview_response");
+        let approval_hash = preview_resp["preview"]["request_hash"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        // Step 2: first execute — must succeed and reach a terminal state.
+        framed
+            .send(
+                &serde_json::to_vec(&json!({
+                    "type": "execute",
+                    "request_id": "r2",
+                    "action_name": "GetSystemState",
+                    "params": {},
+                    "approval_hash": approval_hash
+                }))
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Drain everything until job_completed so the transaction row
+        // has been moved out of Queued.
+        loop {
+            let raw = framed.recv().await.unwrap();
+            let msg: Value = serde_json::from_slice(&raw).unwrap();
+            match msg["type"].as_str().unwrap() {
+                "job_started" | "job_progress" => continue,
+                "job_completed" => break,
+                other => panic!("unexpected message during first execute: {other}"),
+            }
+        }
+
+        // Step 3: replay the same approval_hash on a fresh execute.
+        // The Queued row is gone, so the dispatcher must reject this
+        // with `stale_approval` rather than re-executing the action.
+        framed
+            .send(
+                &serde_json::to_vec(&json!({
+                    "type": "execute",
+                    "request_id": "r3-replay",
+                    "action_name": "GetSystemState",
+                    "params": {},
+                    "approval_hash": approval_hash
+                }))
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let raw = framed.recv().await.unwrap();
+        let resp: Value = serde_json::from_slice(&raw).unwrap();
+        assert_eq!(
+            resp["type"], "error_response",
+            "replay must produce error_response, got: {resp}"
+        );
+        assert_eq!(
+            resp["category"], "stale_approval",
+            "replay must be classified as stale_approval, got: {}",
+            resp["category"]
+        );
+        assert_eq!(resp["request_id"], "r3-replay");
+    }
+
+    // ------------------------------------------------------------------
     // describe
     // ------------------------------------------------------------------
 
