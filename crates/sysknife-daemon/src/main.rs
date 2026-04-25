@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use sysknife_core::{config::LacsConfig, default_database_path, default_listen_uri};
+use sysknife_daemon::audit_forward::{self, AuditForwarder, AuditSinkSpec};
 use sysknife_daemon::dispatcher::{connection_handler, resolve_caller_role};
 use sysknife_daemon::policy::PolicyTable;
 use sysknife_daemon::state::{DaemonConfig, DaemonState};
@@ -50,9 +51,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // Optional external audit log forwarding (#150). Spawned before
+    // DaemonState is constructed so the state can hold the handle.
+    let forwarder: Option<AuditForwarder> = match build_forwarder(lacs_config.audit.as_ref()) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("[sysknife-daemon] FATAL: audit forwarder config invalid: {e}");
+            return Err(e.into());
+        }
+    };
+    if forwarder.is_some() {
+        eprintln!("[sysknife-daemon] audit-forward: external sink active");
+    }
+
     let listen_target = ListenTarget::try_from_uri(&listen_uri)?;
     let config = DaemonConfig::new(listen_target.clone(), &database_path);
-    let state = DaemonState::open_with_policy(config, policy)?;
+    let state = DaemonState::open_full(config, policy, forwarder)?;
 
     let runner = Arc::new(RealCommandRunner);
     let semaphore = Arc::new(Semaphore::new(MAX_CONNECTIONS));
@@ -182,6 +196,36 @@ async fn vsock_accept_loop(
             }
         }
     }
+}
+
+/// Build the audit forwarder from `[audit.forward]` config. Returns `None` if
+/// no sinks are configured. Returns `Err` if a sink is enabled but its
+/// configuration is invalid (e.g. unparseable host).
+fn build_forwarder(
+    audit: Option<&sysknife_core::config::AuditSection>,
+) -> Result<Option<AuditForwarder>, std::io::Error> {
+    let Some(audit) = audit else {
+        return Ok(None);
+    };
+    let Some(forward) = audit.forward.as_ref() else {
+        return Ok(None);
+    };
+    let Some(syslog) = forward.syslog.as_ref() else {
+        return Ok(None);
+    };
+    let host: std::net::SocketAddr = syslog.host.parse().map_err(|e| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "[audit.forward.syslog] host {:?} is not a valid host:port: {e}",
+                syslog.host
+            ),
+        )
+    })?;
+    Ok(Some(audit_forward::spawn(AuditSinkSpec::SyslogUdp {
+        host,
+        facility: syslog.facility,
+    })))
 }
 
 #[cfg(test)]

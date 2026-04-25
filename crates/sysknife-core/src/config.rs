@@ -56,6 +56,7 @@ pub struct LacsConfig {
     pub daemon: Option<DaemonSection>,
     pub llm: Option<LlmSection>,
     pub policy: Option<PolicySection>,
+    pub audit: Option<AuditSection>,
 }
 
 /// `[daemon]` section.
@@ -66,6 +67,48 @@ pub struct DaemonSection {
     pub socket: Option<String>,
     /// SQLite database path. Maps to `SYSKNIFE_DATABASE_PATH`.
     pub database: Option<String>,
+}
+
+/// `[audit]` section.
+///
+/// Absent → no SIEM forwarding (the daemon's local hash-chained log is the
+/// only audit sink). When present, [`AuditSection::forward`] enables one or
+/// more external receivers.
+#[derive(Debug, Default, Deserialize)]
+pub struct AuditSection {
+    pub forward: Option<AuditForwardSection>,
+}
+
+/// `[audit.forward]` section. Each subsection enables one external sink.
+///
+/// All sinks are best-effort: forwarding failures never block the daemon's
+/// audit-log INSERT. Phase 1 ships RFC 5424 syslog over UDP; CEF and
+/// NDJSON-over-TCP arrive in follow-up PRs.
+#[derive(Debug, Default, Deserialize)]
+pub struct AuditForwardSection {
+    /// `[audit.forward.syslog]` — RFC 5424 over UDP.
+    pub syslog: Option<SyslogForwardSection>,
+}
+
+/// `[audit.forward.syslog]` section.
+///
+/// Example:
+/// ```toml
+/// [audit.forward.syslog]
+/// host = "siem.internal:514"
+/// facility = 1            # 1 = user-level (default)
+/// ```
+#[derive(Debug, Deserialize)]
+pub struct SyslogForwardSection {
+    /// Receiver address (`host:port`). Mandatory.
+    pub host: String,
+    /// Syslog facility number (default 1 = user-level messages).
+    #[serde(default = "default_syslog_facility")]
+    pub facility: u8,
+}
+
+fn default_syslog_facility() -> u8 {
+    1
 }
 
 /// `[policy]` section. Currently holds per-action risk-level overrides.

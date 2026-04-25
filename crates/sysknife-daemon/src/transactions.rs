@@ -477,6 +477,47 @@ impl TransactionStore {
         Ok(audit_chain::verify_chain(key, &rows))
     }
 
+    /// Fetch a single row's chain metadata by `transaction_id`. Used by the
+    /// audit-log forwarder to construct an `AuditEvent` after insert.
+    pub fn fetch_chain_row(
+        &self,
+        transaction_id: &str,
+    ) -> Result<Option<ChainRow>, TransactionStoreError> {
+        let conn = self.connection()?;
+        let mut stmt = conn.prepare(
+            "SELECT seq, key_id, transaction_id, request_id, request_hash, \
+                    action_name, risk_level, summary, approval_id, warnings_json, \
+                    created_at, prev_chain_hash, chain_hash \
+             FROM transactions WHERE transaction_id = ?1",
+        )?;
+        let mut rows = stmt.query(params![transaction_id])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(ChainRow {
+                seq: row.get::<_, i64>(0)? as u64,
+                key_id: row.get(1)?,
+                transaction_id: row.get(2)?,
+                request_id: row.get(3)?,
+                request_hash: row.get(4)?,
+                action_name: row.get(5)?,
+                risk_level: deserialize_field(&row.get::<_, String>(6)?).map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        6,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?,
+                summary: row.get(7)?,
+                approval_id: row.get(8)?,
+                warnings_json: row.get(9)?,
+                created_at: row.get(10)?,
+                prev_chain_hash: row.get(11)?,
+                chain_hash: row.get(12)?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Allocate the next monotonic `seq` and fetch the previous row's
     /// `chain_hash`. Caller must hold a transaction so the (seq, prev_hash)
     /// pair is consistent against concurrent writers.

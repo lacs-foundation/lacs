@@ -1,5 +1,6 @@
 pub mod actions;
 pub mod audit_chain;
+pub mod audit_forward;
 pub mod auth;
 pub mod dispatcher;
 pub mod distro;
