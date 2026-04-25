@@ -33,17 +33,22 @@
 //!
 //! ## Key management
 //!
-//! The HMAC key lives in a file (default: `$XDG_STATE_HOME/sysknife/audit-key`,
-//! production override: `/etc/sysknife/audit-key`). The file is created with
+//! The HMAC key lives in a file. By default the path is `<db_dir>/audit-key`
+//! (sibling of the SQLite database, or sibling of whatever directory
+//! `sysknife_core::default_database_path` resolves to in production), and
+//! the env var `SYSKNIFE_AUDIT_KEY_PATH` overrides it for systemd unit
+//! drop-ins (typically `/etc/sysknife/audit-key`). The file is created with
 //! mode `0o600` on first daemon start if it does not exist; subsequent runs
 //! refuse to start if the file is world-readable.
 //!
-//! Future epochs (key rotation): each row carries `key_id`. Rotation appends a
-//! checkpoint row signed with the outgoing key whose payload references both
-//! key fingerprints; verification walks the chain through epoch boundaries by
-//! looking up each row's `key_id` in `/etc/sysknife/audit-keys.d/<key_id>`.
-//! Phase 2 — for now, all rows use `key_id = "v1"` and rotation is manual
-//! (delete the chain, regenerate a new key file).
+//! Future epochs (key rotation): each row already carries a `key_id`
+//! column. A planned Phase 2 rotation flow appends a checkpoint row
+//! signed with the outgoing key whose payload references both key
+//! fingerprints; verification walks the chain through epoch boundaries by
+//! looking up each row's `key_id` in a directory of retired keys (path
+//! TBD when the rotation tool ships). For now, all rows use
+//! `key_id = "v1"` and rotation is manual (delete the chain, regenerate
+//! a new key file).
 
 use hmac::digest::KeyInit;
 use hmac::{Hmac, Mac};
@@ -61,7 +66,11 @@ pub const CURRENT_KEY_ID: &str = "v1";
 pub const HASH_HEX_LEN: usize = 64;
 
 /// Loaded HMAC key + its identifier. Construct via [`AuditKey::load_or_generate`].
-#[derive(Debug)]
+///
+/// `Clone` is intentional: the audit-verify CLI needs to load the key once
+/// and share it between the SQLite read-only path and the Postgres pool.
+/// The clone is cheap (`Vec<u8>` of 32 bytes + a short `String`).
+#[derive(Debug, Clone)]
 pub struct AuditKey {
     key_id: String,
     key_bytes: Vec<u8>,
@@ -216,11 +225,13 @@ fn fill_random(buf: &mut [u8]) -> std::io::Result<()> {
 /// Immutable fields hashed into the chain. Status is intentionally absent —
 /// see module docs.
 ///
-/// The canonical serialisation is stable across SQLite/Postgres backends:
-/// each field is emitted on its own line in fixed order with a NUL byte
-/// separator between value and the next field tag. NUL bytes inside string
-/// fields are escaped as `\0` (decimal 92, 48) so any value can be injected
-/// without ambiguity in the byte stream.
+/// The canonical serialisation is stable across SQLite/Postgres backends.
+/// Each field is emitted as `tag<RS>value<US>` where `RS = 0x1E` (record
+/// separator) and `US = 0x1F` (field separator). Inside a value, the four
+/// bytes `\\`, NUL, `RS`, `US` are escaped to `\\\\`, `\\0`, `\\1E`, `\\1F`
+/// respectively. The escape table is **prefix-free** (every escape starts
+/// with `\\`), so any value can be injected without ambiguity. See
+/// [`push_field`] for the implementation and tests for the round-trip.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChainContent<'a> {
     pub seq: u64,

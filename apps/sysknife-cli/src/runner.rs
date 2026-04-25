@@ -391,24 +391,22 @@ impl RunOpts {
 /// tampered — the result is unknown until the operator resolves the
 /// underlying access problem.
 pub async fn run_audit_verify(args: AuditVerifyArgs, log: &Logger) -> Result<(), CliError> {
+    use sysknife_core::config::LacsConfig;
     use sysknife_daemon::audit_chain::{self, AuditKey, VerifyOutcome};
-    use sysknife_daemon::transactions::TransactionStore;
 
+    // Honour the same `[storage]` config the daemon uses, so `sysknife audit
+    // verify` works against whichever backend is in production. Without this,
+    // a Postgres-backed deployment can never verify its chain from the CLI.
+    let lacs_config = LacsConfig::load();
+
+    let label_for_diag = match lacs_config.storage.as_ref() {
+        Some(s) if s.backend.eq_ignore_ascii_case("postgres") => "postgres".to_string(),
+        _ => sysknife_core::default_database_path().display().to_string(),
+    };
+
+    // Load the audit HMAC key. Its location is the same across SQLite and
+    // Postgres (sibling of the SQLite path, or `$SYSKNIFE_AUDIT_KEY_PATH`).
     let db_path = sysknife_core::default_database_path();
-    if !db_path.exists() {
-        let reason = format!(
-            "audit database not found at {}; set $SYSKNIFE_DATABASE_PATH or run the daemon first",
-            db_path.display()
-        );
-        emit_verify_outcome(
-            &args,
-            log,
-            &VerifyOutcome::CannotVerify { reason },
-            &db_path,
-        );
-        return Err(CliError::Exit(2));
-    }
-
     let key_path = std::env::var("SYSKNIFE_AUDIT_KEY_PATH")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| {
@@ -428,12 +426,11 @@ pub async fn run_audit_verify(args: AuditVerifyArgs, log: &Logger) -> Result<(),
             &args,
             log,
             &VerifyOutcome::CannotVerify { reason },
-            &db_path,
+            &label_for_diag,
         );
         return Err(CliError::Exit(2));
     }
 
-    // Load the key first; we need it to verify even when the store is empty.
     let key = match AuditKey::load_or_generate(&key_path) {
         Ok(k) => k,
         Err(e) => {
@@ -442,37 +439,21 @@ pub async fn run_audit_verify(args: AuditVerifyArgs, log: &Logger) -> Result<(),
                 &args,
                 log,
                 &VerifyOutcome::CannotVerify { reason },
-                &db_path,
+                &label_for_diag,
             );
             return Err(CliError::Exit(2));
         }
     };
 
-    // Open read-only — we never write rows from the verify command.
-    let store = match TransactionStore::open_read_only(&db_path) {
-        Ok(s) => s,
-        Err(e) => {
-            let reason = format!("opening audit database failed: {e}");
-            emit_verify_outcome(
-                &args,
-                log,
-                &VerifyOutcome::CannotVerify { reason },
-                &db_path,
-            );
-            return Err(CliError::Exit(2));
-        }
-    };
-
-    let outcome = match store.verify_audit_chain(&key) {
-        Ok(o) => o,
-        Err(e) => {
-            let reason = format!("audit chain query failed: {e}");
-            VerifyOutcome::CannotVerify { reason }
-        }
+    // Branch on storage backend. SQLite: open the local file read-only.
+    // Postgres: connect via sqlx and verify against the remote chain.
+    let outcome = match lacs_config.storage.as_ref() {
+        Some(s) if s.backend.eq_ignore_ascii_case("postgres") => verify_postgres(s, &key).await,
+        _ => verify_sqlite(&db_path, &key).await,
     };
 
     let exit_code = audit_chain::outcome_to_exit_code(&outcome);
-    emit_verify_outcome(&args, log, &outcome, &db_path);
+    emit_verify_outcome(&args, log, &outcome, &label_for_diag);
     if exit_code == 0 {
         Ok(())
     } else {
@@ -480,11 +461,94 @@ pub async fn run_audit_verify(args: AuditVerifyArgs, log: &Logger) -> Result<(),
     }
 }
 
+async fn verify_sqlite(
+    db_path: &std::path::Path,
+    key: &sysknife_daemon::audit_chain::AuditKey,
+) -> sysknife_daemon::audit_chain::VerifyOutcome {
+    use sysknife_daemon::audit_chain::VerifyOutcome;
+    use sysknife_daemon::transactions::TransactionStore;
+
+    if !db_path.exists() {
+        return VerifyOutcome::CannotVerify {
+            reason: format!(
+                "audit database not found at {}; set $SYSKNIFE_DATABASE_PATH \
+                 or run the daemon first",
+                db_path.display()
+            ),
+        };
+    }
+    let store = match TransactionStore::open_read_only(db_path) {
+        Ok(s) => s,
+        Err(e) => {
+            return VerifyOutcome::CannotVerify {
+                reason: format!("opening audit database failed: {e}"),
+            };
+        }
+    };
+    match store.verify_audit_chain(key) {
+        Ok(o) => o,
+        Err(e) => VerifyOutcome::CannotVerify {
+            reason: format!("audit chain query failed: {e}"),
+        },
+    }
+}
+
+async fn verify_postgres(
+    storage: &sysknife_core::config::StorageSection,
+    key: &sysknife_daemon::audit_chain::AuditKey,
+) -> sysknife_daemon::audit_chain::VerifyOutcome {
+    use sysknife_daemon::audit_chain::VerifyOutcome;
+    use sysknife_daemon::store::postgres::{PostgresConfig, PostgresStore};
+    use sysknife_daemon::store::AuditStore;
+
+    let Some(url) = storage.url.as_deref() else {
+        return VerifyOutcome::CannotVerify {
+            reason: "[storage] backend = \"postgres\" requires url = \"postgres://...\""
+                .to_string(),
+        };
+    };
+
+    let mut cfg = PostgresConfig {
+        url: url.to_string(),
+        ..PostgresConfig::default()
+    };
+    if let Some(pool) = storage.pool.as_ref() {
+        if let Some(n) = pool.max_connections {
+            cfg.max_connections = n;
+        }
+        if let Some(s) = pool.acquire_timeout_secs {
+            cfg.acquire_timeout = std::time::Duration::from_secs(s);
+        }
+        if let Some(c) = pool.statement_cache_capacity {
+            cfg.statement_cache_capacity = c;
+        }
+    }
+
+    // PostgresStore::connect takes ownership of the key inside an Arc.
+    // Clone the loaded key so the SQLite verify path can still use it if
+    // both backends are ever queried in sequence (today only one runs).
+    let key_arc = std::sync::Arc::new(key.clone());
+    let store = match PostgresStore::connect(&cfg, key_arc).await {
+        Ok(s) => s,
+        Err(e) => {
+            return VerifyOutcome::CannotVerify {
+                reason: format!("postgres connect failed: {e}"),
+            };
+        }
+    };
+    match store.verify_audit_chain(key).await {
+        Ok(o) => o,
+        Err(e) => VerifyOutcome::CannotVerify {
+            reason: format!("postgres audit chain query failed: {e}"),
+        },
+    }
+}
+
 fn emit_verify_outcome(
     args: &AuditVerifyArgs,
     log: &Logger,
     outcome: &sysknife_daemon::audit_chain::VerifyOutcome,
-    db_path: &std::path::Path,
+    backend_label: &str,
 ) {
     use sysknife_daemon::audit_chain::VerifyOutcome;
     if args.json {
@@ -492,7 +556,7 @@ fn emit_verify_outcome(
             VerifyOutcome::Intact { rows_checked } => json!({
                 "status": "intact",
                 "rows_checked": rows_checked,
-                "database": db_path.display().to_string(),
+                "backend": backend_label,
             }),
             VerifyOutcome::Broken {
                 rows_checked,
@@ -507,12 +571,12 @@ fn emit_verify_outcome(
                 "first_broken_transaction_id": first_broken_transaction_id,
                 "expected": expected,
                 "actual": actual,
-                "database": db_path.display().to_string(),
+                "backend": backend_label,
             }),
             VerifyOutcome::CannotVerify { reason } => json!({
                 "status": "cannot_verify",
                 "reason": reason,
-                "database": db_path.display().to_string(),
+                "backend": backend_label,
             }),
         };
         log.println(&serde_json::to_string_pretty(&payload).unwrap_or_default());
@@ -520,8 +584,7 @@ fn emit_verify_outcome(
         match outcome {
             VerifyOutcome::Intact { rows_checked } => {
                 log.println(&format!(
-                    "OK: {rows_checked} row(s) verified in {}",
-                    db_path.display()
+                    "OK: {rows_checked} row(s) verified in {backend_label}"
                 ));
             }
             VerifyOutcome::Broken {

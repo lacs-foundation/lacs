@@ -68,9 +68,10 @@ raw connection string.
 postgres://<user>:<pass>@<server>.postgres.database.azure.com:5432/<db>?sslmode=verify-full&sslrootcert=/etc/sysknife/azure-digicert-g2.pem
 ```
 
-- TLS 1.2+ required. Azure rotated DigiCert Global Root **G1 → G2** in
-  early 2026; trust both during the cutover window or ship the full Azure
-  root bundle.
+- TLS 1.2+ required. Azure rotated the **intermediate CAs** under DigiCert
+  Global Root in Q1 2026; the recommended trust set is **DigiCert Global
+  Root CA + DigiCert Global Root G2 + Microsoft RSA Root Certificate
+  Authority 2017** simultaneously, or ship the full Azure root bundle.
 - **Microsoft Entra (Azure AD) tokens** supported. Token TTL ~1h; the same
   per-connection rebuild pattern as RDS IAM applies (Phase 2).
 
