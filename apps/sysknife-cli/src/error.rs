@@ -32,6 +32,12 @@ pub enum CliError {
     /// a human decision is required before this can run".
     #[error("plan requires interactive approval but --non-interactive was set")]
     NonInteractive,
+
+    /// Produced by subcommands that have their own exit-code semantics (e.g.
+    /// `sysknife audit verify` uses 0/1/2). The wrapped value is the literal
+    /// exit code the process should return.
+    #[error("subcommand exit code {0}")]
+    Exit(i32),
 }
 
 impl CliError {
@@ -41,6 +47,7 @@ impl CliError {
             Self::ExecutionFailed(_) => 2,
             Self::PlanningFailed(_) => 3,
             Self::ConfigOrDaemon(_) => 4,
+            Self::Exit(code) => *code,
         }
     }
 }
