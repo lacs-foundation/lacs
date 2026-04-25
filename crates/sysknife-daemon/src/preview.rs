@@ -1,3 +1,32 @@
+//! Static safety profile for every action the daemon recognises.
+//!
+//! The dispatcher calls [`preview_action`] *before* execution to produce a
+//! [`PreviewEnvelope`] that the shell shows the operator. The envelope's
+//! risk level, side-effect list, reboot flag, and rollback flag come from
+//! the per-action [`PreviewProfile`] table in this module — **not** from
+//! the live system or from anything the planner suggested.
+//!
+//! ## Invariant: profile ↔ policy ↔ rollback consistency
+//!
+//! Three independent tables describe each action and they must stay in sync:
+//!
+//! 1. `PreviewProfile` (here) — risk + side effects shown to the operator.
+//! 2. `policy::min_role_for_action` — the minimum [`CallerRole`] that may
+//!    invoke the action.
+//! 3. The executor's per-action rollback spec.
+//!
+//! If `PreviewProfile` says `risk_level = Low` but `min_role_for_action`
+//! says `Admin`, an operator gets a misleadingly soft preview before being
+//! denied — or, worse, the dispatcher could allow a Dev caller through
+//! because the preview "looked safe". Likewise, `rollback_available = true`
+//! must imply that the executor records a rollback ref the daemon can
+//! later use; a true value with no executor support produces an undoable
+//! "undo" button in the GUI. The cross-module test
+//! `every_spec_action_has_a_policy_entry` (in `tests/action_consistency.rs`)
+//! pins these tables together.
+//!
+//! [`CallerRole`]: sysknife_types::CallerRole
+
 use serde_json::Value;
 use sysknife_types::{PreviewEnvelope, RequestEnvelope, RiskLevel};
 

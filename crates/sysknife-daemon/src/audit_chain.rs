@@ -62,7 +62,7 @@ type HmacSha256 = Hmac<Sha256>;
 /// Tied to the schema, not the key bytes — rotation will introduce `"v2"` etc.
 pub const CURRENT_KEY_ID: &str = "v1";
 
-/// Hex-encoded HMAC length for SHA-256 (32 bytes × 2).
+/// Hex-encoded HMAC length for SHA-256.
 pub const HASH_HEX_LEN: usize = 64;
 
 /// Loaded HMAC key + its identifier. Construct via [`AuditKey::load_or_generate`].
@@ -242,8 +242,7 @@ fn generate_key_at(path: &Path) -> Result<(), AuditKeyError> {
     Ok(())
 }
 
-/// Fill `buf` with bytes from `/dev/urandom`. Avoids a `getrandom` dep — the
-/// kernel CSPRNG is the right source on every Linux system the daemon runs on.
+/// Fill `buf` with bytes from the kernel CSPRNG via `/dev/urandom`.
 fn fill_random(buf: &mut [u8]) -> std::io::Result<()> {
     use std::io::Read as _;
     let mut f = std::fs::File::open("/dev/urandom")?;
@@ -254,15 +253,20 @@ fn fill_random(buf: &mut [u8]) -> std::io::Result<()> {
 /// see module docs.
 ///
 /// The canonical serialisation is stable across SQLite/Postgres backends.
-/// Each field is emitted as `tag<RS>value<US>` where `RS = 0x1E` (record
-/// separator) and `US = 0x1F` (field separator).
+/// Each field is emitted as
 ///
-/// **Note on RS/US semantics:** the byte names match ASCII RS (`0x1E`) and
-/// US (`0x1F`), but our usage swaps the conventional record/unit roles —
-/// here RS separates fields **within** a record (between the tag and its
-/// value) and US **terminates** the record (between successive fields).
-/// The names are kept for byte-level traceability against the canonical
-/// buffer, not as a claim about ASCII C0 conventions.
+/// ```text
+///     <tag-name> 0x1E <tag-value> 0x1F
+/// ```
+///
+/// where `0x1E` is the *tag/value* separator within a single field and `0x1F`
+/// is the *field* separator that terminates the field and introduces the
+/// next one. We use the ASCII C0 byte values RS (0x1E) and US (0x1F)
+/// because they are guaranteed not to appear in any normal text field, but
+/// **our role assignment is the inverse of the ASCII C0 convention**
+/// (where RS = "record separator" and US = "unit separator"). The names
+/// are kept in the source for byte-level traceability against the canonical
+/// buffer, not as a claim about ASCII semantics.
 ///
 /// Inside a value, the four
 /// bytes `\\`, NUL, `RS`, `US` are escaped to `\\\\`, `\\0`, `\\1E`, `\\1F`
@@ -287,8 +291,9 @@ pub struct ChainContent<'a> {
 }
 
 impl<'a> ChainContent<'a> {
-    /// Stable canonical encoding of every field. Field separator is `\x1F`
-    /// (Unit Separator); within a field, raw NUL becomes `\0`.
+    /// Stable canonical encoding of every field. Within each field the
+    /// `0x1E` byte separates tag from value, and `0x1F` terminates the field;
+    /// raw NUL becomes the two-byte escape `\0`.
     pub fn canonical_bytes(&self) -> Vec<u8> {
         let risk_level_str = match self.risk_level {
             RiskLevel::Low => "low",
@@ -298,8 +303,8 @@ impl<'a> ChainContent<'a> {
         let approval = self.approval_id.unwrap_or("");
 
         let mut buf = Vec::with_capacity(512);
-        // Each field: tag = value, separated by US (0x1F).
-        // Tags make the canonical form self-describing for forensics.
+        // Each field is `tag 0x1E value 0x1F`; tags make the canonical form
+        // self-describing for forensics.
         push_field(&mut buf, "seq", &self.seq.to_string());
         push_field(&mut buf, "key_id", self.key_id);
         push_field(&mut buf, "transaction_id", self.transaction_id);
@@ -334,7 +339,7 @@ impl<'a> ChainContent<'a> {
 /// as a raw NUL and produce an HMAC collision.
 fn push_field(buf: &mut Vec<u8>, tag: &str, value: &str) {
     buf.extend_from_slice(tag.as_bytes());
-    buf.push(0x1E); // RS — record separator between tag and value
+    buf.push(0x1E); // tag/value separator (ASCII RS byte, but used inversely — see ChainContent doc)
     for b in value.bytes() {
         match b {
             b'\\' => buf.extend_from_slice(b"\\\\"),
@@ -344,7 +349,7 @@ fn push_field(buf: &mut Vec<u8>, tag: &str, value: &str) {
             other => buf.push(other),
         }
     }
-    buf.push(0x1F); // US — field separator
+    buf.push(0x1F); // field terminator (ASCII US byte, but used inversely — see ChainContent doc)
 }
 
 /// Result of `verify_chain`.
@@ -554,9 +559,9 @@ mod tests {
         assert!(String::from_utf8_lossy(&bytes).contains("before\\0after"));
     }
 
-    /// Red-team finding F1: an attacker who could craft a row with
-    /// `summary = "before\\0after"` (literal backslash + zero) must NOT
-    /// produce the same canonical bytes as one with raw `\x00`. Without
+    /// Backslash-NUL collision regression: an attacker who could craft a
+    /// row with `summary = "before\\0after"` (literal backslash + zero) must
+    /// NOT produce the same canonical bytes as one with raw `\x00`. Without
     /// the `\\` → `\\\\` escape, the two collide and the attacker can
     /// substitute one for the other while the chain hash matches.
     #[test]
@@ -568,7 +573,7 @@ mod tests {
         assert_ne!(
             a.canonical_bytes(),
             b.canonical_bytes(),
-            "F1 collision: backslash escape must run before NUL escape"
+            "backslash escape must run before NUL escape to prevent collision"
         );
     }
 
@@ -586,7 +591,7 @@ mod tests {
         assert_ne!(
             key.chain_hash(&a, ""),
             key.chain_hash(&b, ""),
-            "F1: HMAC must distinguish escape from raw byte"
+            "HMAC must distinguish escape from raw byte"
         );
     }
 

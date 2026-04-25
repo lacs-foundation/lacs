@@ -23,10 +23,14 @@
 //! - **Local audit-log INSERT** (with hash chain, #149) is the durable record.
 //! - **External forwarding** is best-effort. A SIEM outage, a routing flap, or
 //!   a misconfigured collector must NEVER block daemon execution.
-//! - We do not retry-with-backoff in-process: the SIEM is the long-lived
-//!   accumulator; if it's down, the local hash-chained log will catch up the
-//!   operator on the next ingest. (A future "tail watermark + replay" Phase 2
-//!   bridge can reconcile gaps from the local log.)
+//! - We do not retry the *send* in-process: a frame that the kernel could not
+//!   hand to the SIEM is dropped and the next event continues.  Bind failures
+//!   *are* retried with exponential backoff (1s → 60s) so a transient outage
+//!   does not poison the socket forever, but neither path tries to replay the
+//!   missed event — the SIEM is the long-lived accumulator and the local
+//!   hash-chained log will catch up the operator on the next ingest.  (A
+//!   future "tail watermark + replay" Phase 2 bridge can reconcile gaps from
+//!   the local log.)
 
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -158,16 +162,24 @@ async fn forwarder_task(spec: AuditSinkSpec, mut rx: mpsc::Receiver<AuditEvent>)
     match spec {
         AuditSinkSpec::SyslogUdp { host, facility } => {
             let mut socket = open_udp(host).await;
-            // Exponential backoff on consecutive bind failures (F11).
+            // Exponential backoff on consecutive bind failures so a transient
+            // outage does not produce a tight retry loop that pegs a CPU.
             // 1s → 2s → 4s → … capped at 60s. Reset to 1s on first success.
             let mut backoff_secs: u64 = 1;
             while let Some(event) = rx.recv().await {
                 let frame = format_rfc5424(&event, facility);
+                // **Event-drop semantics:** if the socket is `None` (bind has
+                // never succeeded, or a previous send failed and we have not
+                // yet rebound) the formatted frame is computed and then
+                // dropped. The local hash-chained audit log already has a
+                // durable copy of the same row, so the SIEM gap is by
+                // design — a future "tail watermark + replay" Phase 2 bridge
+                // can backfill from the local log.
                 if let Some(s) = &socket {
                     if let Err(e) = s.send_to(frame.as_bytes(), host).await {
                         eprintln!(
                             "[sysknife-daemon] audit-forward: UDP send to {host} failed: {e} \
-                             — dropping socket and reopening"
+                             — dropping socket and reopening (current event is lost)"
                         );
                         socket = None;
                     }
@@ -195,7 +207,7 @@ async fn forwarder_task(spec: AuditSinkSpec, mut rx: mpsc::Receiver<AuditEvent>)
 /// IPv4 host → bind on `0.0.0.0:0`; IPv6 host → bind on `[::]:0`. Without
 /// this, an operator with an IPv6-only SIEM (e.g. Sentinel at
 /// `[2001:db8::5]:514`) would never receive any events because every send
-/// would fail with `AddrNotAvailable` (F8).
+/// would fail with `AddrNotAvailable`.
 ///
 /// Returns `None` on bind failure — caller retries with backoff.
 async fn open_udp(host: SocketAddr) -> Option<tokio::net::UdpSocket> {
@@ -238,9 +250,16 @@ pub fn format_rfc5424(event: &AuditEvent, facility: u8) -> String {
         RiskLevel::High => "high",
     };
 
-    // RFC 5424 §6.3 — structured data. Use a private enterprise number 32473
-    // (RFC 5612 reserved test PEN) for the SD-ID; production deployments
-    // should change this to their org's PEN.
+    // RFC 5424 §6.3 structured data.
+    //
+    // **PEN 32473 is RFC 5612's documentation/test PEN — it MUST be replaced
+    // before production deployment.** RFC 5424 §7.2.2 requires an
+    // IANA-assigned Private Enterprise Number on `SD-ID`s emitted in
+    // production frames. The SysKnife project does not yet hold a PEN; the
+    // 32473 reservation is used here only so the formatter is bytewise
+    // testable. Operators running a SIEM under a regulated framework should
+    // either patch `SD@32473` to their own PEN at build time or treat this
+    // as a known gap (see issue tracker).
     //
     // `terminal_status` is appended ONLY for the execute-time forward, so
     // preview frames remain byte-for-byte unchanged.
@@ -355,7 +374,7 @@ mod tests {
         }
     }
 
-    // ── Hostname validation (red-team finding F2) ────────────────────────
+    // ── Hostname validation ──────────────────────────────────────────────
 
     #[test]
     fn hostname_with_space_is_rejected() {
@@ -391,7 +410,7 @@ mod tests {
         assert_eq!(validate_hostname_for_test(&long), "-");
     }
 
-    // ── SD-VALUE strict ASCII (F3) ───────────────────────────────────────
+    // ── SD-VALUE strict ASCII ────────────────────────────────────────────
 
     #[test]
     fn sd_escape_strips_del_and_c1_controls() {
@@ -563,5 +582,25 @@ mod tests {
         assert!(frame.starts_with("<13>1 "), "unexpected frame: {frame}");
         assert!(frame.contains("seq=\"42\""));
         assert!(frame.contains("[InstallFlatpak] Install Firefox"));
+    }
+
+    /// IPv6 bind path: `open_udp` must select `[::]:0` for an IPv6 host so
+    /// an IPv6-only SIEM (e.g. Sentinel at `[2001:db8::5]:514`) is reachable.
+    /// Skipped when the kernel has IPv6 disabled (e.g. some hardened CI
+    /// images with `net.ipv6.conf.all.disable_ipv6=1`); the assertion path
+    /// only runs when bind genuinely succeeds.
+    #[tokio::test(flavor = "current_thread")]
+    async fn open_udp_ipv6_host_binds_ipv6_local_socket() {
+        let host: SocketAddr = "[::1]:514".parse().unwrap();
+        let Some(socket) = open_udp(host).await else {
+            // IPv6 disabled in this environment — bind unavailable. The
+            // production guard is exercised by the IPv4 test above.
+            return;
+        };
+        let local = socket.local_addr().expect("bound socket has a local addr");
+        assert!(
+            local.is_ipv6(),
+            "open_udp(IPv6 host) bound to non-IPv6 socket {local}"
+        );
     }
 }

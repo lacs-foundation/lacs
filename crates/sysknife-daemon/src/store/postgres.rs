@@ -1,4 +1,4 @@
-//! Postgres backend for the audit log (#147).
+//! Postgres backend for the audit log.
 //!
 //! Wire-compatible with AWS RDS / Aurora, GCP Cloud SQL + AlloyDB, Azure
 //! Database for PostgreSQL Flexible Server, Supabase (direct + pooler),

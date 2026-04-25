@@ -127,14 +127,29 @@ enum DaemonResponse {
     },
 }
 
+/// IPC payload included in `job_completed` and related response frames.
+///
+/// Although the type itself is private to the dispatcher module, every field
+/// is serialised on the wire and parsed by the shell, the CLI, and the MCP
+/// adapter — treat changes here as breaking IPC changes.
 #[derive(Debug, Serialize)]
 struct JobResult {
+    /// Terminal job status: `"succeeded"`, `"failed"`, `"canceled"`,
+    /// `"rolled_back"`, or `"needs_reboot"`. Mirrors `JobState`'s `Display`.
     status: String,
+    /// One-line human-readable summary of the outcome.
     summary: String,
+    /// Per-step warning strings preserved verbatim from the executor.
     warnings: Vec<String>,
+    /// Daemon-assigned identifier for this job (UUID v4).
     job_id: String,
+    /// `true` when the action requires a reboot to take effect.
     needs_reboot: bool,
+    /// OSTree commit reference recorded for rollback, or `None` when the
+    /// action is not rollbackable.
     rollback_ref: Option<String>,
+    /// Audit-log transaction ID for this job — also the join key for SIEM
+    /// correlation against forwarded events.
     transaction_id: String,
 }
 
@@ -329,14 +344,23 @@ fn canonical_json(v: &Value) -> String {
 // Connection handler
 // ---------------------------------------------------------------------------
 
-/// Handle a single accepted connection until the peer closes it.
+/// Handle a single Unix-socket (or test duplex) connection until the peer
+/// closes it.
 ///
-/// Works with any `AsyncRead + AsyncWrite + Unpin + Send` stream — Unix sockets,
-/// vsock streams, or duplex streams used in tests.
+/// **Do not call directly for vsock streams.** Vsock connections MUST enter
+/// the daemon through [`vsock_connection_handler`], which reads and validates
+/// the auth token from the first frame before dispatching here. Calling this
+/// function with a raw vsock stream skips token authentication entirely —
+/// the function trusts whatever `caller_role` it is handed and does not
+/// re-validate the peer.
 ///
-/// `caller_role` MUST be resolved before this function is called:
-/// - Unix: via `SO_PEERCRED` in the accept loop.
-/// - Vsock: via `vsock_connection_handler`, which validates the token first.
+/// Permitted stream types:
+/// - Unix sockets — `caller_role` is resolved from `SO_PEERCRED` in the
+///   accept loop, so no in-band auth is needed.
+/// - In-process duplex streams used by integration tests, with the test
+///   passing the role explicitly.
+///
+/// `caller_role` MUST be resolved before this function is called.
 pub async fn connection_handler<S>(
     stream: S,
     state: DaemonState,
@@ -976,11 +1000,10 @@ async fn handle_preview(
 /// audit-store fetch (true fire-and-forget across both SQLite and Postgres
 /// backends).
 fn forward_audit_event(state: &DaemonState, transaction_id: &str, caller: &CallerRole) {
-    if state.forwarder.is_none() {
+    let Some(forwarder) = state.forwarder.clone() else {
         return;
-    }
+    };
     let audit = std::sync::Arc::clone(&state.audit);
-    let forwarder = state.forwarder.clone().expect("checked above");
     let transaction_id = transaction_id.to_string();
     let caller_label = format!("{caller:?}");
     tokio::spawn(async move {

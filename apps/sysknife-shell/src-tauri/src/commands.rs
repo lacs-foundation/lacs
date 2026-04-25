@@ -360,7 +360,7 @@ pub async fn review_execution(
     }
 
     let summary_intent = format!(
-        "Summarize the following LACS execution result in 2-3 plain-language sentences for the user. \
+        "Summarize the following SysKnife execution result in 2-3 plain-language sentences for the user. \
          The user's original task was: {safe_intent}. \
          Explain what happened and whether the task was successful. \
          If there were errors, mention them briefly. Do not propose a plan — just summarize.\n\n\

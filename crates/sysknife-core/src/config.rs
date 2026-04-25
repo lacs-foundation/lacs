@@ -4,7 +4,7 @@
 //!
 //! 1. Environment variables (always win — set by the caller or systemd unit)
 //! 2. Values in `~/.config/sysknife/config.toml`
-//! 3. Built-in defaults (defined in `sysknife-brain` and `sysknife-core`))
+//! 3. Built-in defaults (defined in `sysknife-brain` and `sysknife-core`)
 //!
 //! # Usage
 //!
@@ -190,7 +190,9 @@ pub struct PolicySection {
 /// `[llm]` section.
 #[derive(Debug, Deserialize)]
 pub struct LlmSection {
-    /// LLM provider: `"ollama"` or `"anthropic"`. Maps to `SYSKNIFE_LLM_PROVIDER`.
+    /// LLM provider. One of: `"anthropic"`, `"ollama"`, `"openai"`,
+    /// `"gemini"`, `"groq"`, `"deepseek"`, `"mistral"`, `"xai"`.
+    /// Maps to `SYSKNIFE_LLM_PROVIDER`.
     pub provider: Option<String>,
     /// Model identifier. Maps to `SYSKNIFE_LLM_MODEL`.
     pub model: Option<String>,

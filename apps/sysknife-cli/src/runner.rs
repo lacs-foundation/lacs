@@ -301,7 +301,7 @@ pub async fn run_doctor(
 // run_history
 // ---------------------------------------------------------------------------
 
-/// Query past LACS execution history via `ListJobHistory`.
+/// Query past SysKnife execution history via `ListJobHistory`.
 pub async fn run_history(
     args: HistoryArgs,
     socket: SocketTarget,
@@ -948,11 +948,11 @@ async fn prompt_confirm(msg: &str) -> bool {
 
     match reader.read_line(&mut buf).await {
         Ok(0) => {
-            eprintln!("\nlacs: stdin closed (EOF) — treating as 'no'");
+            eprintln!("\nsysknife: stdin closed (EOF) — treating as 'no'");
             false
         }
         Err(e) => {
-            eprintln!("\nlacs: stdin read error ({e}) — treating as 'no'");
+            eprintln!("\nsysknife: stdin read error ({e}) — treating as 'no'");
             false
         }
         Ok(_) => matches!(buf.trim().to_ascii_lowercase().as_str(), "y" | "yes"),

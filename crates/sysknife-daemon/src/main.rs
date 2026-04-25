@@ -51,7 +51,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Optional external audit log forwarding (#150). Spawned before
+    // Optional external audit log forwarding (UDP/TCP syslog). Spawned before
     // DaemonState is constructed so the state can hold the handle.
     let forwarder: Option<AuditForwarder> = match build_forwarder(lacs_config.audit.as_ref()) {
         Ok(f) => f,
@@ -67,7 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listen_target = ListenTarget::try_from_uri(&listen_uri)?;
     let config = DaemonConfig::new(listen_target.clone(), &database_path);
 
-    // Storage backend selection (#147). Default: SQLite at the database path.
+    // Storage backend selection. Default: SQLite at the database path.
     // `[storage] backend = "postgres"` connects to a managed Postgres (RDS,
     // Cloud SQL, Azure Flexible, Supabase, Neon, CockroachDB Cloud, or
     // self-hosted) — strongly recommended for production.
