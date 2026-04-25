@@ -773,7 +773,7 @@ async fn handle_query_action(
     let is_informational_exit =
         matches!((action_name, output.exit_code), ("GetServiceStatus", 1..=4));
 
-    if output.exit_code != 0 && !is_informational_exit {
+    if output.is_nonzero() && !is_informational_exit {
         return send_error(
             framed,
             request_id,
@@ -946,7 +946,7 @@ async fn handle_preview(
         request_id: request_id.to_string(),
         params: params.clone(),
         caller_role: *caller_role,
-        request_hash: request_hash.clone(),
+        request_hash: sysknife_types::RequestHash::new(request_hash.to_string()),
     };
 
     let preview = preview_action(&envelope, current_state, proposed_change);
@@ -1225,7 +1225,7 @@ async fn handle_execute(
     };
 
     let (initial_status, initial_summary) = match &output {
-        Ok(out) if out.exit_code == 0 => {
+        Ok(out) if out.is_success() => {
             if spec.reboot_required {
                 (
                     JobState::NeedsReboot,
@@ -1417,7 +1417,7 @@ async fn attempt_rollback_if_needed(
     .await;
 
     match executor.execute(&rb_spec).await {
-        Ok(rb_out) if rb_out.exit_code == 0 => {
+        Ok(rb_out) if rb_out.is_success() => {
             let _ = send_response(
                 framed,
                 &DaemonResponse::JobProgress {

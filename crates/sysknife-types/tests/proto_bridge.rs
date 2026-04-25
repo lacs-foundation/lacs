@@ -35,7 +35,7 @@ fn request_envelope_round_trips_through_proto() {
         request_id: "req-1".to_string(),
         params: serde_json::json!({"app_id": "org.mozilla.firefox"}),
         caller_role: CallerRole::Dev,
-        request_hash: "abc123".to_string(),
+        request_hash: sysknife_types::RequestHash::new("abc123".to_string()),
     };
 
     let proto_value: proto::RequestEnvelope = value.clone().into();
@@ -55,7 +55,7 @@ fn preview_envelope_round_trips_through_proto() {
         reboot_required: false,
         rollback_available: true,
         warnings: vec!["network required".to_string()],
-        request_hash: "abc123".to_string(),
+        request_hash: sysknife_types::RequestHash::new("abc123".to_string()),
     };
 
     let proto_value: proto::PreviewEnvelope = value.clone().into();

@@ -13,6 +13,7 @@ categories = ["command-line-utilities", "os::linux-apis"]
 sysknife-proto = { path = "../sysknife-proto" }
 serde = { workspace = true }
 serde_json = { workspace = true }
+subtle = "2"
 thiserror = { workspace = true }
 
 [dev-dependencies]

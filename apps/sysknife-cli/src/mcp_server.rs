@@ -427,7 +427,7 @@ async fn execute_steps_inner(
             .execute(
                 &step.action_name,
                 &step.params,
-                &preview.request_hash,
+                preview.request_hash.as_str(),
                 |line| output_lines.push(line.to_owned()),
             )
             .await

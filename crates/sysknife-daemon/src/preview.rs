@@ -258,7 +258,7 @@ mod tests {
             request_id: "test-req".to_string(),
             params: serde_json::Value::Null,
             caller_role: CallerRole::Dev,
-            request_hash: "hash".to_string(),
+            request_hash: sysknife_types::RequestHash::new("hash".to_string()),
         }
     }
 
@@ -522,8 +522,8 @@ mod tests {
     #[test]
     fn preview_action_preserves_request_hash() {
         let mut r = req("GetDiskUsage");
-        r.request_hash = "deadbeef".to_string();
+        r.request_hash = sysknife_types::RequestHash::new("deadbeef".to_string());
         let envelope = preview_action(&r, serde_json::Value::Null, serde_json::Value::Null);
-        assert_eq!(envelope.request_hash, "deadbeef");
+        assert_eq!(envelope.request_hash.as_str(), "deadbeef");
     }
 }

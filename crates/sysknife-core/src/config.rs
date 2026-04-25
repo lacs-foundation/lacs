@@ -589,6 +589,48 @@ model = "qwen3:8b"
         assert_eq!(prefs.file_name().unwrap(), "prefs.md");
     }
 
+    /// XDG_CONFIG_HOME validation must reject obvious traversal attempts
+    /// (relative paths, `..` components).  The remaining attack surface is a
+    /// **symlink-based** redirect — an attacker who cannot write to
+    /// XDG_CONFIG_HOME but CAN create a symlink at the resolved path.  We
+    /// don't dereference symlinks today: this regression test pins that
+    /// behaviour so a future change either documents the trade-off or
+    /// upgrades to canonicalising the path.
+    #[test]
+    #[cfg(unix)]
+    fn xdg_config_home_does_not_follow_symlinks() {
+        use std::os::unix::fs::symlink;
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        let link = dir.path().join("link");
+        std::fs::create_dir_all(&real).unwrap();
+        symlink(&real, &link).unwrap();
+
+        let prev = std::env::var("XDG_CONFIG_HOME").ok();
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", &link);
+        }
+
+        let resolved = config_path();
+
+        // Restore env before asserting so a panic does not leak state.
+        match prev {
+            Some(v) => unsafe { std::env::set_var("XDG_CONFIG_HOME", v) },
+            None => unsafe { std::env::remove_var("XDG_CONFIG_HOME") },
+        }
+
+        // Today: symlinks ARE accepted (resolver only rejects relative + `..`),
+        // and the returned path keeps the symlink form. If a future change
+        // adds canonicalize(), this assert will need updating to point at
+        // `real` and the symlink-redirect threat will be neutralised.
+        assert!(
+            resolved.starts_with(&link),
+            "current resolver keeps the symlink path verbatim — got {resolved:?}"
+        );
+    }
+
     use std::sync::Mutex;
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 }

@@ -26,11 +26,52 @@ pub enum ExecutorError {
     Io(#[from] io::Error),
 }
 
+/// Output of a single executed action.
+///
+/// `exit_code` is the discriminant between success and failure. Prefer the
+/// [`is_success`](Self::is_success) / [`is_nonzero`](Self::is_nonzero)
+/// helpers and [`outcome`](Self::outcome) enum at call sites — they make
+/// the success/failure branch explicit and impossible to forget. The raw
+/// `exit_code` is kept public because the dispatcher echoes it back to
+/// callers and rollback paths use the precise code for diagnostics.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecutionOutput {
     pub stdout: String,
     pub stderr: String,
     pub exit_code: i32,
+}
+
+impl ExecutionOutput {
+    /// `true` when the action exited cleanly (`exit_code == 0`).
+    pub fn is_success(&self) -> bool {
+        self.exit_code == 0
+    }
+
+    /// `true` when the action failed (`exit_code != 0`).
+    pub fn is_nonzero(&self) -> bool {
+        self.exit_code != 0
+    }
+
+    /// Match this output against the success/failure pattern. Forces every
+    /// caller that cares about the distinction to handle both branches —
+    /// the type-state version of `if output.exit_code == 0`.
+    pub fn outcome(&self) -> ExecutionOutcome<'_> {
+        if self.is_success() {
+            ExecutionOutcome::Success(self)
+        } else {
+            ExecutionOutcome::NonZero(self)
+        }
+    }
+}
+
+/// Borrowed view of an [`ExecutionOutput`] split on its exit code.
+///
+/// The dispatcher and rollback paths match on this enum so the failure
+/// branch can never be forgotten. See [`ExecutionOutput::outcome`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutionOutcome<'a> {
+    Success(&'a ExecutionOutput),
+    NonZero(&'a ExecutionOutput),
 }
 
 /// Abstraction over action execution, making the execute + rollback path

@@ -333,6 +333,18 @@ pub fn approval_matches_request(request_hash: &str, approval_hash: &str) -> bool
         == 1
 }
 
+/// Typed counterpart to [`approval_matches_request`] — takes
+/// [`RequestHash`](sysknife_types::RequestHash) and
+/// [`ApprovalHash`](sysknife_types::ApprovalHash) so the caller cannot swap
+/// the two arguments by mistake. New callers should prefer this; the
+/// `&str` form is kept for legacy daemon paths that still hold raw strings.
+pub fn approval_matches_request_typed(
+    request_hash: &sysknife_types::RequestHash,
+    approval_hash: &sysknife_types::ApprovalHash,
+) -> bool {
+    sysknife_types::approval_matches_request(request_hash, approval_hash)
+}
+
 pub fn require_fresh_approval(
     request_hash: &str,
     approval_hash: &str,
@@ -343,6 +355,22 @@ pub fn require_fresh_approval(
         Err(ApprovalError::StaleApproval {
             request_hash: request_hash.to_string(),
             approval_hash: approval_hash.to_string(),
+        })
+    }
+}
+
+/// Typed counterpart to [`require_fresh_approval`].  See
+/// [`approval_matches_request_typed`] for the rationale.
+pub fn require_fresh_approval_typed(
+    request_hash: &sysknife_types::RequestHash,
+    approval_hash: &sysknife_types::ApprovalHash,
+) -> Result<(), ApprovalError> {
+    if approval_matches_request_typed(request_hash, approval_hash) {
+        Ok(())
+    } else {
+        Err(ApprovalError::StaleApproval {
+            request_hash: request_hash.as_str().to_string(),
+            approval_hash: approval_hash.as_str().to_string(),
         })
     }
 }

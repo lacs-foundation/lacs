@@ -499,6 +499,38 @@ mod tests {
         assert!(normalised.ends_with("[...truncated]"));
     }
 
+    #[test]
+    fn truncation_respects_4_byte_chars_at_every_boundary() {
+        // Emoji and ZWJ sequences are 4 bytes per scalar value. The truncation
+        // budget is `MAX_OUTPUT_BYTES - len("\n[...truncated]")` = 8177 bytes.
+        // We construct three inputs that place a 4-byte 😀 (U+1F600, bytes
+        // f0 9f 98 80) such that the budget falls exactly 1, 2, or 3 bytes
+        // INTO the emoji's 4-byte sequence. truncate_with_marker must walk
+        // back to the start of the emoji each time — never split it — so the
+        // resulting string stays valid UTF-8.
+        for offset in [1, 2, 3] {
+            let head =
+                "a".repeat(MAX_OUTPUT_BYTES.saturating_sub("\n[...truncated]".len() + offset));
+            let mut raw = head;
+            raw.push('😀'); // 4 bytes — first `offset` bytes fall inside budget
+            raw.push_str(&"b".repeat(MAX_OUTPUT_BYTES));
+
+            let normalised = normalise_free_text(&raw);
+            assert!(
+                normalised.is_char_boundary(normalised.len()),
+                "offset={offset}: truncation produced invalid UTF-8 length"
+            );
+            // Sanity: result must be valid UTF-8 (Rust strings already are,
+            // but assert it round-trips through bytes back to a String).
+            let bytes = normalised.as_bytes();
+            assert!(
+                std::str::from_utf8(bytes).is_ok(),
+                "offset={offset}: truncated string is not valid UTF-8"
+            );
+            assert!(normalised.ends_with("[...truncated]"));
+        }
+    }
+
     // ------------------------------------------------------------------
     // Newline collapse
     // ------------------------------------------------------------------

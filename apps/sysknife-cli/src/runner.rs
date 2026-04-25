@@ -806,7 +806,7 @@ pub async fn run_intent(intent: String, opts: &RunOpts, log: &Logger) -> Result<
             .execute(
                 step.action_name(),
                 step.params(),
-                &preview.request_hash,
+                preview.request_hash.as_str(),
                 |line| {
                     if first_line {
                         if let Some(ref pb) = exec_spinner_ref {
