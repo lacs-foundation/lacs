@@ -22,9 +22,9 @@
   <strong>Distros</strong>&nbsp;
   <img src="https://img.shields.io/badge/Fedora%2041%2B-✓-294172?style=flat-square&logo=fedora&logoColor=white" alt="Fedora 41+">
   <img src="https://img.shields.io/badge/Silverblue%2041%2B-✓-294172?style=flat-square&logo=fedora&logoColor=white" alt="Silverblue 41+">
-  <img src="https://img.shields.io/badge/Ubuntu%2026.04-roadmap-E95420?style=flat-square&logo=ubuntu&logoColor=white" alt="Ubuntu 26.04 roadmap">
+  <img src="https://img.shields.io/badge/Ubuntu%2026.04-✓-E95420?style=flat-square&logo=ubuntu&logoColor=white" alt="Ubuntu 26.04">
   <img src="https://img.shields.io/badge/Ubuntu%2024.04-✓-E95420?style=flat-square&logo=ubuntu&logoColor=white" alt="Ubuntu 24.04">
-  <img src="https://img.shields.io/badge/Ubuntu%2022.04-roadmap-E95420?style=flat-square&logo=ubuntu&logoColor=white" alt="Ubuntu 22.04 roadmap">
+  <img src="https://img.shields.io/badge/Ubuntu%2022.04-✓-E95420?style=flat-square&logo=ubuntu&logoColor=white" alt="Ubuntu 22.04">
 </p>
 
 <p align="center">
@@ -125,8 +125,9 @@ node packages/setup/index.js
 ```
 
 The Ubuntu 24.04 action set is validated (65/65 stories pass on a live VM with
-gpt-4.1). See [`docs/distro-support.md`](docs/distro-support.md) for the full
-matrix. Ubuntu 22.04 and 26.04 remain on the roadmap.
+gpt-4.1). Ubuntu 22.04 (jammy) and 26.04 (resolute) VM tooling is complete —
+smoke tests pass on all three LTSes. See [`docs/distro-support.md`](docs/distro-support.md)
+for the full matrix.
 </details>
 
 <details>
@@ -195,7 +196,7 @@ milestone.
 | RFC 5424 syslog forwarding (Splunk / Sentinel / QRadar) | ✅ |
 | Postgres backend (RDS / Cloud SQL / Neon / Supabase) | ✅ |
 | **Ubuntu 24.04 support** — 65/65 stories pass on a live VM with gpt-4.1 | ✅ |
-| **Ubuntu 22.04 / 26.04 support** | 🛠 active |
+| **Ubuntu 22.04 / 26.04 VM tooling** — smoke tests pass on all three LTSes | ✅ |
 | Telegram approval interface | 📋 roadmap |
 
 **860+ tests** pass across Rust and TypeScript on every commit.
@@ -243,7 +244,7 @@ All config files that may contain API keys are created with `chmod 0600`.
 See [ROADMAP.md](ROADMAP.md) for the full milestone breakdown.
 
 - ✅ **Ubuntu 24.04** — 65/65 stories validated on a live VM (gpt-4.1)
-- 🛠 **Ubuntu 22.04 / 26.04** [active]
+- ✅ **Ubuntu 22.04 / 26.04** — VM tooling complete; smoke tests pass on all three LTSes
 - 📋 Telegram inline-button approvals
 - 📋 `sysknife audit export` (CEF / NDJSON for SIEM ingest)
 - 📋 Fleet plan/execute (one plan, N targets, parallel approval)

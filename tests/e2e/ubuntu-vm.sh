@@ -1,16 +1,20 @@
 #!/usr/bin/env bash
 #
-# ubuntu-vm.sh — boot a real Ubuntu 24.04 VM for SysKnife E2E testing.
+# ubuntu-vm.sh — boot a real Ubuntu LTS VM for SysKnife E2E testing.
+#
+# Supports Ubuntu 22.04 (jammy), 24.04 (noble), and 26.04 (resolute).
+# Select the release with UBUNTU_RELEASE=<codename> (default: noble).
 #
 # Uses qemu-system-x86_64 directly with a cloud-init seed ISO. The base
-# image is an official Ubuntu 24.04 (Noble) cloud image; a writable qcow2
-# overlay is created on top so the base image is never modified.
+# image is an official Ubuntu cloud image; a writable qcow2 overlay is
+# created on top so the base image is never modified.
 #
 # Subcommands:
 #   download    — prepare the base image and create the writable qcow2 overlay
 #   install     — boot the VM once with the cloud-init seed so it finishes
 #                 first-boot provisioning; polls SSH until the VM is ready
-#   start       — boot the installed overlay headlessly with SSH on localhost:2223
+#   start       — boot the installed overlay headlessly with SSH on the
+#                 per-release port (jammy:2222, noble:2223, resolute:2224)
 #   stop        — graceful shutdown via SSH
 #   ssh         — open an SSH shell (or run a command) inside the VM
 #   sync        — rsync the repo into the VM (no build, no provision)
@@ -22,14 +26,21 @@
 #   help        — print this help
 #
 # Environment:
+#   UBUNTU_RELEASE         — which Ubuntu LTS: jammy | noble | resolute (default: noble)
 #   UBUNTU_VM_MEM          — guest RAM in MB (default: 4096)
 #   UBUNTU_VM_CPUS         — guest vCPUs (default: 2)
 #   UBUNTU_VM_DISK         — overlay size (default: 20G)
-#   UBUNTU_VM_SSH_PORT     — host port forwarded to guest :22 (default: 2223)
+#   UBUNTU_VM_SSH_PORT     — host port forwarded to guest :22 (per-release default)
 #   UBUNTU_VM_USER         — guest username (default: ubuntu)
 #   UBUNTU_VM_IMAGE_CACHE  — directory for the base image (default: ~/.cache/sysknife-vms)
-#   UBUNTU_VM_BASE_IMAGE   — base image filename (default: noble-server-cloudimg-amd64.img)
-#   UBUNTU_VM_DIR          — overlay + runtime files dir (default: tests/e2e/ubuntu-vm)
+#   UBUNTU_VM_BASE_IMAGE   — base image filename (per-release default)
+#   UBUNTU_VM_DIR          — overlay + runtime files dir (per-release default)
+#   UBUNTU_CLOUD_IMG_URL   — download URL for the base image (per-release default)
+#
+# Per-release SSH ports (for simultaneous parallel runs):
+#   jammy    → 2222
+#   noble    → 2223  (historical default)
+#   resolute → 2224
 #
 # Dedicated SSH key:
 #   ~/.ssh/sysknife-vm (shared with atomic-vm.sh). Generated if missing.
@@ -51,11 +62,13 @@ CONF="${SCRIPT_DIR}/ubuntu-vm.conf"
 MEM="${UBUNTU_VM_MEM:-4096}"
 CPUS="${UBUNTU_VM_CPUS:-2}"
 DISK="${UBUNTU_VM_DISK:-20G}"
-SSH_PORT="${UBUNTU_VM_SSH_PORT:-2223}"
+# SSH_PORT, BASE_IMAGE, VM_DIR, and UBUNTU_CLOUD_IMG_URL are set by the conf
+# case statement; honour explicit env overrides if provided.
+SSH_PORT="${UBUNTU_VM_SSH_PORT}"
 VM_USER="${UBUNTU_VM_USER:-ubuntu}"
 IMAGE_CACHE="${UBUNTU_VM_IMAGE_CACHE:-$HOME/.cache/sysknife-vms}"
-BASE_IMAGE="${UBUNTU_VM_BASE_IMAGE:-noble-server-cloudimg-amd64.img}"
-VM_DIR="${UBUNTU_VM_DIR:-tests/e2e/ubuntu-vm}"
+BASE_IMAGE="${UBUNTU_VM_BASE_IMAGE}"
+VM_DIR="${UBUNTU_VM_DIR}"
 
 # Resolve relative VM_DIR against repo root.
 case "$VM_DIR" in
@@ -64,22 +77,50 @@ case "$VM_DIR" in
 esac
 
 BASE_IMG_PATH="${IMAGE_CACHE}/${BASE_IMAGE}"
-OVERLAY="${VM_DIR}/ubuntu-overlay.qcow2"
+OVERLAY="${VM_DIR}/overlay.qcow2"
 SEED="${VM_DIR}/seed.iso"
-PID_FILE="${VM_DIR}/ubuntu-vm.pid"
+PID_FILE="${VM_DIR}/vm.pid"
 CLOUD_INIT_DIR="${VM_DIR}/cloud-init"
+
+# ---------------------------------------------------------------------------
+# Legacy noble migration shim
+# ---------------------------------------------------------------------------
+# Prior to the multi-LTS refactor, noble used tests/e2e/ubuntu-vm/ with
+# different filenames (ubuntu-overlay.qcow2, ubuntu-vm.pid).  When running
+# as noble and the per-release directory does not yet exist but the legacy
+# path does, emit a one-time migration notice.  The user must either:
+#   a) run 'download' to create a fresh noble overlay in the new location, or
+#   b) manually move the files:
+#        mv tests/e2e/ubuntu-vm/ubuntu-overlay.qcow2 tests/e2e/ubuntu-vm/noble/overlay.qcow2
+#        mv tests/e2e/ubuntu-vm/seed.iso             tests/e2e/ubuntu-vm/noble/seed.iso
+# Noble VMs provisioned before this change are unaffected until merge.
+if [ "$UBUNTU_RELEASE" = "noble" ] && [ ! -d "$VM_DIR" ]; then
+    _LEGACY_DIR="${REPO_ROOT}/tests/e2e/ubuntu-vm"
+    if [ -f "${_LEGACY_DIR}/ubuntu-overlay.qcow2" ]; then
+        log "MIGRATION NOTICE: Noble VM files found at legacy path ${_LEGACY_DIR}."
+        log "  New path: ${VM_DIR}/"
+        log "  To migrate, run:"
+        log "    mkdir -p '${VM_DIR}'"
+        log "    mv '${_LEGACY_DIR}/ubuntu-overlay.qcow2' '${VM_DIR}/overlay.qcow2'"
+        log "    mv '${_LEGACY_DIR}/seed.iso'             '${VM_DIR}/seed.iso'"
+        log "  Or run '$0 download' to create a fresh noble overlay."
+    fi
+fi
 
 # Dedicated passphrase-less SSH key for the VM. Shared with atomic-vm.sh.
 SSH_KEY="${SYSKNIFE_VM_SSH_KEY:-$HOME/.ssh/sysknife-vm}"
 
-# Ubuntu cloud image download URL (fallback if the image is not cached).
-UBUNTU_CLOUD_IMG_URL="https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"
+# Approximate minimum size check for cloud images. All Ubuntu LTS cloud images
+# are at least 300 MB; 314572800 = 300 * 1024 * 1024.
+# The original noble check used 550 MB but jammy images are smaller (~450 MB).
+# 300 MB is safe for all three releases.
+_MIN_IMAGE_SIZE=314572800
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-log()  { printf '[ubuntu-vm] %s\n' "$*" >&2; }
+log()  { printf '[ubuntu-vm:%s] %s\n' "$UBUNTU_RELEASE" "$*" >&2; }
 die()  { log "ERROR: $*"; exit 1; }
 
 require_tools() {
@@ -153,14 +194,12 @@ cmd_download() {
 
     # --- Ensure the base image is present ---
     if [ ! -f "$BASE_IMG_PATH" ]; then
-        # Check for a partial download that the background process may have
+        # Check for a partial download that a background process may have
         # finished or may still be writing.
         if [ -f "${BASE_IMG_PATH}.tmp" ]; then
             local tmpsize
             tmpsize=$(stat -c%s "${BASE_IMG_PATH}.tmp" 2>/dev/null || echo 0)
-            # Ubuntu 24.04 cloud image is ~600 MB. Accept as complete if >550 MB.
-            # 550 * 1024 * 1024 = 576716800
-            if [ "$tmpsize" -gt 576716800 ]; then
+            if [ "$tmpsize" -gt "$_MIN_IMAGE_SIZE" ]; then
                 log "Renaming completed download ${BASE_IMG_PATH}.tmp → ${BASE_IMG_PATH}"
                 mv "${BASE_IMG_PATH}.tmp" "$BASE_IMG_PATH"
             else
@@ -169,11 +208,10 @@ cmd_download() {
                     -o "$BASE_IMG_PATH" \
                     "$UBUNTU_CLOUD_IMG_URL" \
                     || die "Download failed: $UBUNTU_CLOUD_IMG_URL"
-                # Remove stale .tmp if it exists
                 rm -f "${BASE_IMG_PATH}.tmp"
             fi
         else
-            log "Downloading Ubuntu 24.04 cloud image (~600 MB)..."
+            log "Downloading Ubuntu ${UBUNTU_RELEASE} cloud image..."
             curl -fL --progress-bar \
                 -o "$BASE_IMG_PATH" \
                 "$UBUNTU_CLOUD_IMG_URL" \
@@ -212,12 +250,16 @@ _build_seed_iso() {
     # meta-data is mandatory; instance-id prevents cloud-init from running
     # more than once per boot even if we reuse the same overlay.
     cat > "${CLOUD_INIT_DIR}/meta-data" <<EOF
-instance-id: sysknife-ubuntu-e2e
-local-hostname: sysknife-ubuntu
+instance-id: sysknife-ubuntu-e2e-${UBUNTU_RELEASE}
+local-hostname: sysknife-ubuntu-${UBUNTU_RELEASE}
 EOF
 
     # user-data configures the 'ubuntu' user with our SSH key and does an
     # initial apt install + rootfs resize on first boot.
+    #
+    # software-properties-common provides add-apt-repository.  It is not
+    # pre-installed in the jammy (22.04) cloud image, so install it
+    # explicitly — it is a no-op on noble/resolute where it is already present.
     cat > "${CLOUD_INIT_DIR}/user-data" <<EOF
 #cloud-config
 users:
@@ -240,12 +282,12 @@ resize_rootfs: true
 runcmd:
   - mkdir -p /var/lib/sysknife-e2e
   - apt-get update -y
-  - DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential pkg-config libssl-dev libsqlite3-dev curl wget jq rsync netcat-openbsd ufw firewalld snapd distrobox netplan.io
+  - DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential pkg-config libssl-dev libsqlite3-dev curl wget jq rsync netcat-openbsd software-properties-common ufw firewalld snapd distrobox netplan.io
   - systemctl disable --now firewalld 2>/dev/null || true
   - echo "cloud-init first-boot complete" > /var/lib/sysknife-e2e/cloud-init-done
 
 final_message: |
-  Ubuntu 24.04 cloud-init setup finished.
+  Ubuntu ${UBUNTU_RELEASE} cloud-init setup finished.
   uptime: \$UPTIME seconds
 EOF
 

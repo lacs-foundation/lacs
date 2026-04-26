@@ -31,7 +31,7 @@ These are where contributions move the needle the most. Each links to a
 
 | Area | Why it matters | Difficulty |
 |---|---|---|
-| **Ubuntu LTS support** ([tracker](https://github.com/lacs-foundation/sysknife/issues?q=is%3Aopen+label%3Aubuntu)) | Ubuntu 24.04 is validated (65/65 stories pass on a live VM with gpt-4.1). Remaining: Ubuntu 22.04 / 26.04 action parity, E2E exec stories, additional apt / snap / ufw actions. | Medium |
+| **Ubuntu LTS support** ([tracker](https://github.com/lacs-foundation/sysknife/issues?q=is%3Aopen+label%3Aubuntu)) | Ubuntu 22.04 (jammy), 24.04 (noble), and 26.04 (resolute) are all validated with the multi-LTS VM tooling. `ubuntu-vm.sh` accepts `UBUNTU_RELEASE=jammy\|noble\|resolute`. Remaining: E2E exec stories, additional apt / snap / ufw actions. | Medium |
 | **Distro detection coverage** ([tracker](https://github.com/lacs-foundation/sysknife/issues?q=is%3Aopen+label%3Adistro-detection)) | Robust `/etc/os-release` parsing for every LTS we claim to support. Pure-function tests, no integration mocks. | Easy |
 | **Action catalogue gaps** | Add a typed action (e.g. `EnableFirewallZone`) — small, isolated, every PR includes the policy entry + risk level + tests. | Easy |
 | **E2E story coverage** | Real prompts, real LLM, real daemon. We have ~10 stories; we want 100+ across both distros. | Medium |

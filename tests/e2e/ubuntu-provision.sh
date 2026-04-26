@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# ubuntu-provision.sh — run inside the Ubuntu 24.04 E2E VM as root.
+# ubuntu-provision.sh — run inside an Ubuntu LTS E2E VM as root.
 #
+# Supports Ubuntu 22.04 (jammy), 24.04 (noble), and 26.04 (resolute).
 # Mirrors tests/e2e/provision.sh (Fedora Atomic) but for Ubuntu:
 #   - apt-get installs all action-target tools
 #   - Rust via rustup
@@ -40,6 +41,53 @@ fail() {
 }
 
 # ---------------------------------------------------------------------------
+# Detect Ubuntu version
+# ---------------------------------------------------------------------------
+
+# shellcheck source=/dev/null
+. /etc/os-release
+UBUNTU_VERSION_ID="${VERSION_ID:-unknown}"
+echo "Detected Ubuntu VERSION_ID=${UBUNTU_VERSION_ID}"
+
+case "$UBUNTU_VERSION_ID" in
+  22.04) UBUNTU_CODENAME="jammy"    ;;
+  24.04) UBUNTU_CODENAME="noble"    ;;
+  26.04) UBUNTU_CODENAME="resolute" ;;
+  *)
+    echo "WARNING: Unrecognised Ubuntu version ${UBUNTU_VERSION_ID}. Proceeding with best-effort provisioning."
+    UBUNTU_CODENAME="unknown"
+    ;;
+esac
+echo "Ubuntu codename: ${UBUNTU_CODENAME}"
+
+# ---------------------------------------------------------------------------
+# Smoke-check apt — fail fast if the package manager is broken
+# ---------------------------------------------------------------------------
+
+step "Smoke-check apt"
+apt-get --version || fail "apt-get --version"
+# apt list --upgradable may emit "WARNING: apt does not have a stable CLI
+# interface" on older releases — suppress stderr for the check, but propagate
+# failures.
+apt list --upgradable 2>/dev/null | head -5 || fail "apt list --upgradable"
+echo "apt smoke check passed."
+
+# ---------------------------------------------------------------------------
+# jammy (22.04) pre-flight: ensure software-properties-common is installed
+# ---------------------------------------------------------------------------
+
+if [ "$UBUNTU_CODENAME" = "jammy" ]; then
+    step "jammy pre-flight: install software-properties-common if missing"
+    if ! command -v add-apt-repository &>/dev/null; then
+        echo "add-apt-repository not found — installing software-properties-common..."
+        DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common \
+            || fail "Install software-properties-common (jammy pre-flight)"
+    else
+        echo "add-apt-repository already present: $(which add-apt-repository)"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # Step 1: apt-get — install all tools the action suite needs
 # ---------------------------------------------------------------------------
 
@@ -58,16 +106,19 @@ apt-get install -y \
     jq \
     rsync \
     netcat-openbsd \
+    software-properties-common \
     || fail "Install build tools"
 
-# Tools exercised by Ubuntu user stories
-apt-get install -y \
-    ufw \
-    firewalld \
-    snapd \
-    distrobox \
-    netplan.io \
-    || fail "Install story target tools"
+# Tools exercised by Ubuntu user stories.
+# Install each optional tool with a fallback warning so a missing package in a
+# new release does not abort the entire provision.  firewalld may be renamed or
+# moved across LTS generations; attempt install and warn on failure.
+apt-get install -y ufw || { echo "WARNING: ufw not available on ${UBUNTU_CODENAME}"; }
+apt-get install -y firewalld || { echo "WARNING: firewalld not available on ${UBUNTU_CODENAME}"; }
+apt-get install -y snapd || { echo "WARNING: snapd not available on ${UBUNTU_CODENAME}"; }
+apt-get install -y distrobox || { echo "WARNING: distrobox not available on ${UBUNTU_CODENAME}"; }
+apt-get install -y netplan.io || { echo "WARNING: netplan.io not available on ${UBUNTU_CODENAME}"; }
+echo "Story target tools installed (warnings above are non-fatal)."
 
 # ---------------------------------------------------------------------------
 # Step 2: Rust via rustup (as the VM user, not root)
