@@ -3,6 +3,9 @@
 use std::path::PathBuf;
 
 pub mod config;
+pub mod distro;
+
+pub use distro::{detect, detect_distro, parse_os_release, DistroFamily, DistroId};
 
 /// Production socket URI written by the systemd unit (`sysknife-daemon.service`).
 ///
