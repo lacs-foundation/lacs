@@ -452,6 +452,52 @@ async function main() {
   console.log();
 }
 
+// ---------------------------------------------------------------------------
+// --help flag
+// ---------------------------------------------------------------------------
+
+if (process.argv.includes('--help') || process.argv.includes('-h')) {
+  console.log(`
+${B}sysknife-setup${X}
+
+  Zero-friction setup for the SysKnife MCP server and Claude Code hooks.
+
+${B}USAGE${X}
+  npx sysknife-setup [OPTIONS]
+
+${B}OPTIONS${X}
+  --help, -h    Show this help message and exit.
+
+${B}DESCRIPTION${X}
+  Interactive wizard that creates:
+
+    .mcp.json                                 MCP server config (chmod 0600)
+    .claude/hookify.require-sysknife-approval.local.md
+    .claude/hookify.sysknife-schema-fetch.local.md
+    .claude/hookify.sysknife-bash-guard.local.md
+
+  Supports single-VM and multi-VM (fleet) configurations.
+  Run from the root of your project directory.
+
+${B}ENVIRONMENT${X}
+  OPENAI_API_KEY / ANTHROPIC_API_KEY / GEMINI_API_KEY
+      If set in your shell environment the wizard detects them and avoids
+      writing them to .mcp.json in plain text.
+
+${B}EXAMPLES${X}
+  ${D}# Single VM — defaults to /run/sysknife/daemon.sock${X}
+  npx sysknife-setup
+
+  ${D}# From an SSH-tunnelled socket${X}
+  ${D}# (answer socket prompt with the tunnel path)${X}
+  npx sysknife-setup
+
+${B}SEE ALSO${X}
+  https://github.com/lacs-foundation/lacs/blob/main/docs/release.md
+`);
+  process.exit(0);
+}
+
 main().catch((e) => {
   console.error(`\n  ${R}✗${X}  ${e.message}`);
   process.exit(1);

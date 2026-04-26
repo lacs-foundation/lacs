@@ -17,5 +17,11 @@
     "claude",
     "linux"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "prepublishOnly": "node index.js --help"
+  }
 }
