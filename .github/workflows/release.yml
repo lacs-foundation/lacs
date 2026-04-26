@@ -150,6 +150,11 @@ jobs:
             --generate-notes
 
       - name: Upload release assets
+        # `dist/sysknife-*-linux-x86_64` matches BOTH `sysknife-v…-x86_64`
+        # AND `sysknife-daemon-v…-x86_64` (the latter starts with the same
+        # prefix). Listing `sysknife-daemon-*` separately on the same line
+        # produces a duplicate file argument that breaks `gh release upload`.
+        # Enumerate explicit paths instead — no globs, no duplicates.
         # --clobber allows the workflow to be re-run on the same tag.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -159,9 +164,9 @@ jobs:
           gh release upload "$VERSION" \
             --repo "$REPO" \
             --clobber \
-            dist/sysknife-*-linux-x86_64 \
-            dist/sysknife-daemon-*-linux-x86_64 \
-            dist/sysknife-*-linux-aarch64 \
-            dist/sysknife-daemon-*-linux-aarch64 \
-            dist/sha256sums-linux-x86_64.txt \
-            dist/sha256sums-linux-aarch64.txt
+            "dist/sysknife-${VERSION}-linux-x86_64" \
+            "dist/sysknife-daemon-${VERSION}-linux-x86_64" \
+            "dist/sysknife-${VERSION}-linux-aarch64" \
+            "dist/sysknife-daemon-${VERSION}-linux-aarch64" \
+            "dist/sha256sums-linux-x86_64.txt" \
+            "dist/sha256sums-linux-aarch64.txt"
