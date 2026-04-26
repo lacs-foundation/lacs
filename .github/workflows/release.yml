@@ -133,7 +133,12 @@ jobs:
       - name: List dist contents
         run: ls -lh dist/
 
-      - name: Create GitHub release
+      - name: Create GitHub release (metadata only)
+        # Split create from upload: a single gh release create with assets
+        # that fails partway deletes the release object, which then 404s on
+        # subsequent uploads (observed on v0.2.0). Two-phase avoids the race.
+        # All env vars are server-controlled (github.ref_name = tag name,
+        # github.repository = static repo path) — no user input is shelled.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ github.ref_name }}
@@ -142,7 +147,18 @@ jobs:
           gh release create "$VERSION" \
             --repo "$REPO" \
             --title "$VERSION" \
-            --generate-notes \
+            --generate-notes
+
+      - name: Upload release assets
+        # --clobber allows the workflow to be re-run on the same tag.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh release upload "$VERSION" \
+            --repo "$REPO" \
+            --clobber \
             dist/sysknife-*-linux-x86_64 \
             dist/sysknife-daemon-*-linux-x86_64 \
             dist/sysknife-*-linux-aarch64 \
