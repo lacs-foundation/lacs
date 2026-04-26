@@ -27,17 +27,46 @@ use sysknife_types::RiskLevel;
 // Error type
 // ---------------------------------------------------------------------------
 
-/// Returned when the supplied IP string is not a valid IPv4 or IPv6 address.
+/// Returned when an input fails fail2ban-action validation.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct InvalidIpAddress(pub String);
+pub enum Fail2banError {
+    /// Supplied IP string is not a valid IPv4 or IPv6 address. Carries the
+    /// offending value so callers can surface an actionable diagnostic.
+    InvalidIpAddress(String),
+    /// Jail name failed `validated_safe_arg`-style allowlist check (rejects
+    /// shell metachars, leading dash, non-ASCII, oversize). Defense in depth
+    /// at the constructor — the executor also validates, but a future caller
+    /// (internal Rust use, fleet plan/execute path) cannot bypass this.
+    InvalidJail(String),
+}
 
-impl std::fmt::Display for InvalidIpAddress {
+impl std::fmt::Display for Fail2banError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "invalid IP address: '{}'", self.0)
+        match self {
+            Self::InvalidIpAddress(v) => write!(f, "invalid IP address: '{}'", v),
+            Self::InvalidJail(v) => write!(f, "invalid jail name: '{}'", v),
+        }
     }
 }
 
-impl std::error::Error for InvalidIpAddress {}
+impl std::error::Error for Fail2banError {}
+
+/// Backwards-compat alias so existing call sites keep compiling.
+pub type InvalidIpAddress = Fail2banError;
+
+/// Allowlist for fail2ban jail names: alphanumeric + `_-` + `.` (no leading
+/// dash, no shell metachars, length ≤ 64). Mirrors the `validated_safe_arg`
+/// shape used at the executor seam.
+fn jail_is_valid(jail: &str) -> bool {
+    if jail.is_empty() || jail.len() > 64 {
+        return false;
+    }
+    if jail.starts_with('-') {
+        return false;
+    }
+    jail.chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+}
 
 // ---------------------------------------------------------------------------
 // specs() — for action_consistency tests
@@ -84,9 +113,11 @@ pub fn fail2ban_status(jail: Option<&str>) -> ActionSpec {
 ///
 /// Returns `Err(InvalidIpAddress)` when `ip` is not a valid IPv4 or IPv6
 /// address.
-pub fn fail2ban_ban_ip(jail: &str, ip: &str) -> Result<ActionSpec, InvalidIpAddress> {
-    // Validate before constructing the spec so a bad value never reaches the daemon.
-    IpAddr::from_str(ip).map_err(|_| InvalidIpAddress(ip.to_string()))?;
+pub fn fail2ban_ban_ip(jail: &str, ip: &str) -> Result<ActionSpec, Fail2banError> {
+    if !jail_is_valid(jail) {
+        return Err(Fail2banError::InvalidJail(jail.to_string()));
+    }
+    IpAddr::from_str(ip).map_err(|_| Fail2banError::InvalidIpAddress(ip.to_string()))?;
     Ok(ActionSpec {
         action_name: "Fail2banBanIp",
         mechanism: command_mechanism("sudo", ["fail2ban-client", "set", jail, "banip", ip]),
@@ -104,8 +135,11 @@ pub fn fail2ban_ban_ip(jail: &str, ip: &str) -> Result<ActionSpec, InvalidIpAddr
 ///
 /// Returns `Err(InvalidIpAddress)` when `ip` is not a valid IPv4 or IPv6
 /// address.
-pub fn fail2ban_unban_ip(jail: &str, ip: &str) -> Result<ActionSpec, InvalidIpAddress> {
-    IpAddr::from_str(ip).map_err(|_| InvalidIpAddress(ip.to_string()))?;
+pub fn fail2ban_unban_ip(jail: &str, ip: &str) -> Result<ActionSpec, Fail2banError> {
+    if !jail_is_valid(jail) {
+        return Err(Fail2banError::InvalidJail(jail.to_string()));
+    }
+    IpAddr::from_str(ip).map_err(|_| Fail2banError::InvalidIpAddress(ip.to_string()))?;
     Ok(ActionSpec {
         action_name: "Fail2banUnbanIp",
         mechanism: command_mechanism("sudo", ["fail2ban-client", "set", jail, "unbanip", ip]),
@@ -198,7 +232,24 @@ mod tests {
     #[test]
     fn fail2ban_ban_ip_rejects_invalid_ip() {
         let err = fail2ban_ban_ip("sshd", "not-an-ip").unwrap_err();
-        assert_eq!(err, InvalidIpAddress("not-an-ip".to_string()));
+        assert_eq!(
+            err,
+            Fail2banError::InvalidIpAddress("not-an-ip".to_string())
+        );
+    }
+
+    #[test]
+    fn fail2ban_ban_ip_rejects_jail_with_shell_metachars() {
+        // Defense in depth: the constructor itself rejects malformed jail names,
+        // not just the executor. A future internal Rust caller can't bypass.
+        let err = fail2ban_ban_ip("sshd; rm -rf /", "10.0.0.1").unwrap_err();
+        assert!(matches!(err, Fail2banError::InvalidJail(_)));
+    }
+
+    #[test]
+    fn fail2ban_ban_ip_rejects_leading_dash_jail() {
+        let err = fail2ban_ban_ip("--bypass", "10.0.0.1").unwrap_err();
+        assert!(matches!(err, Fail2banError::InvalidJail(_)));
     }
 
     #[test]
@@ -243,7 +294,16 @@ mod tests {
     #[test]
     fn fail2ban_unban_ip_rejects_invalid_ip() {
         let err = fail2ban_unban_ip("sshd", "256.0.0.1").unwrap_err();
-        assert_eq!(err, InvalidIpAddress("256.0.0.1".to_string()));
+        assert_eq!(
+            err,
+            Fail2banError::InvalidIpAddress("256.0.0.1".to_string())
+        );
+    }
+
+    #[test]
+    fn fail2ban_unban_ip_rejects_invalid_jail() {
+        let err = fail2ban_unban_ip("bad jail name", "10.0.0.1").unwrap_err();
+        assert!(matches!(err, Fail2banError::InvalidJail(_)));
     }
 
     // ── specs() completeness ─────────────────────────────────────────────────

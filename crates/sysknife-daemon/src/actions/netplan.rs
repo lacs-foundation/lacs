@@ -41,18 +41,34 @@ pub fn specs() -> Vec<ActionSpec> {
 // Action constructors
 // ---------------------------------------------------------------------------
 
-/// Read current netplan configuration files (`cat /etc/netplan/*.yaml`).
+/// Read current netplan configuration files via
+/// `find /etc/netplan -name '*.yaml' -print -exec cat {} +`.
 ///
 /// Risk: Low / Observer. Reads YAML config from `/etc/netplan/`. Does not
 /// apply or change anything.
+///
+/// Uses `find` with no shell so error states surface distinctly:
+/// `/etc/netplan` missing or permission-denied causes `find` to exit non-zero
+/// with a stderr diagnostic, while a directory with no YAML files exits 0
+/// with empty stdout. The previous `bash -c "cat ... 2>/dev/null || echo
+/// 'no netplan files found'"` pattern collapsed all three states into a
+/// single fake-success exit 0, hiding real diagnostics from operators.
 pub fn netplan_get_config() -> ActionSpec {
     ActionSpec {
         action_name: "NetplanGetConfig",
         mechanism: command_mechanism(
-            "bash",
+            "find",
             [
-                "-c",
-                "cat /etc/netplan/*.yaml 2>/dev/null || echo 'no netplan files found'",
+                "/etc/netplan",
+                "-maxdepth",
+                "1",
+                "-name",
+                "*.yaml",
+                "-print",
+                "-exec",
+                "cat",
+                "{}",
+                "+",
             ],
         ),
         risk_level: RiskLevel::Low,
@@ -66,15 +82,12 @@ pub fn netplan_get_config() -> ActionSpec {
 /// Risk: High / Admin. Modifies the active netplan configuration in-memory.
 /// Run `NetplanApply` afterward to apply the change to the live network stack.
 ///
-/// `value` is quoted with shell single-quotes when it contains spaces to
-/// prevent word splitting by the shell.
+/// The argv passes `<key>=<value>` as a single argument with no shell
+/// involvement — `validated_safe_arg` (applied at the executor boundary)
+/// rejects spaces in `value`, so any further quoting would only inject
+/// literal quote bytes that netplan would then read as part of the value.
 pub fn netplan_set(key: &str, value: &str) -> ActionSpec {
-    // Quote the value if it contains whitespace to avoid shell word-splitting.
-    let kv = if value.contains(' ') {
-        format!("{}='{}'", key, value)
-    } else {
-        format!("{}={}", key, value)
-    };
+    let kv = format!("{}={}", key, value);
     ActionSpec {
         action_name: "NetplanSet",
         mechanism: command_mechanism("sudo", ["netplan", "set", &kv]),
@@ -156,16 +169,19 @@ mod tests {
     }
 
     #[test]
-    fn netplan_get_config_reads_yaml_files() {
+    fn netplan_get_config_uses_find_directly() {
+        // Regression: previously shelled out to `bash -c "cat ... 2>/dev/null
+        // || echo 'no netplan files found'"`, which collapsed three distinct
+        // error states into one fake-success exit 0. Now invokes `find`
+        // directly so missing-dir vs no-files vs permission-denied are
+        // distinguishable.
         let spec = netplan_get_config();
         let (prog, args) = extract_cmd(&spec);
-        // Uses bash -c to glob /etc/netplan/*.yaml.
-        assert_eq!(prog, "bash");
-        let cmd = args.join(" ");
-        assert!(
-            cmd.contains("netplan"),
-            "should reference /etc/netplan: {cmd}"
-        );
+        assert_eq!(prog, "find");
+        // Must reference /etc/netplan and the *.yaml glob; no shell in argv.
+        assert!(!args.contains(&"-c"));
+        assert!(args.contains(&"/etc/netplan"));
+        assert!(args.contains(&"*.yaml"));
     }
 
     // ── netplan_apply ────────────────────────────────────────────────────────
@@ -239,16 +255,20 @@ mod tests {
     }
 
     #[test]
-    fn netplan_set_argv_value_with_spaces_is_quoted() {
-        let spec = netplan_set("renderer", "NetworkManager with fallback");
+    fn netplan_set_argv_never_contains_literal_quote_bytes() {
+        // Regression test: an earlier version wrapped values containing spaces
+        // in literal single-quotes, which (because there's no shell in the
+        // execve path) made netplan see the quotes as part of the value.
+        // Now `validated_safe_arg` at the executor rejects spaces in `value`,
+        // so the kv string never carries quote characters.
+        let spec = netplan_set("renderer", "NetworkManager");
         let (_, args) = extract_cmd(&spec);
-        // value contains spaces — must be wrapped in single-quotes.
-        assert!(
-            args.iter()
-                .any(|a| a.contains("'NetworkManager with fallback'")),
-            "value with spaces must be single-quoted: {:?}",
-            args
-        );
+        for a in &args {
+            assert!(
+                !a.contains('\''),
+                "argv must not contain literal '\\'' bytes"
+            );
+        }
     }
 
     // ── netplan_generate ─────────────────────────────────────────────────────

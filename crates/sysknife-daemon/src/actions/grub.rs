@@ -45,7 +45,10 @@ const GRUB_BACKUP: &str = "/etc/default/grub.sysknife.bak";
 
 /// Return one representative `ActionSpec` per GRUB action name.
 pub fn specs() -> Vec<ActionSpec> {
-    vec![grub_get_kargs(), grub_set_kargs(&["quiet"], &["splash"])]
+    vec![
+        grub_get_kargs(),
+        grub_set_kargs(&["quiet"], &["splash"]).expect("non-empty kargs"),
+    ]
 }
 
 // ---------------------------------------------------------------------------
@@ -75,10 +78,24 @@ pub fn grub_get_kargs() -> ActionSpec {
 /// `append` — arguments to add (shell-safe strings, validated before call).
 /// `delete` — arguments to remove (shell-safe strings, validated before call).
 ///
+/// At least one of `append` / `delete` MUST be non-empty — calling with both
+/// empty is a no-op that still rewrites the GRUB config and runs `update-grub`,
+/// which is wasteful and misleading. The constructor returns
+/// `Err(KargsError::BothEmpty)` in that case.
+///
 /// The implementation uses a Python one-liner to perform the in-line edit so
 /// the operation is portable across `sed` variants and handles quoting
 /// correctly.
-pub fn grub_set_kargs(append: &[&str], delete: &[&str]) -> ActionSpec {
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum KargsError {
+    #[error("at least one of append or delete must be non-empty")]
+    BothEmpty,
+}
+
+pub fn grub_set_kargs(append: &[&str], delete: &[&str]) -> Result<ActionSpec, KargsError> {
+    if append.is_empty() && delete.is_empty() {
+        return Err(KargsError::BothEmpty);
+    }
     let append_str = append.join(" ");
     let delete_args: Vec<String> = delete
         .iter()
@@ -137,13 +154,13 @@ with open('{grub}', 'w') as f: f.writelines(out)
         script = python_script,
     );
 
-    ActionSpec {
+    Ok(ActionSpec {
         action_name: "GrubSetKargs",
         mechanism: command_mechanism("bash", ["-c", &shell_cmd]),
         risk_level: RiskLevel::High,
         reboot_required: true,
         rollback_available: true,
-    }
+    })
 }
 
 /// Minimal regex escaping for literal argument strings.
@@ -215,19 +232,22 @@ mod tests {
 
     #[test]
     fn grub_set_kargs_action_name() {
-        assert_eq!(grub_set_kargs(&["quiet"], &[]).action_name, "GrubSetKargs");
+        assert_eq!(
+            grub_set_kargs(&["quiet"], &[]).unwrap().action_name,
+            "GrubSetKargs"
+        );
     }
 
     #[test]
     fn grub_set_kargs_uses_bash() {
-        let spec = grub_set_kargs(&["quiet"], &["splash"]);
+        let spec = grub_set_kargs(&["quiet"], &["splash"]).unwrap();
         let (prog, _) = extract_cmd(&spec);
         assert_eq!(prog, "bash");
     }
 
     #[test]
     fn grub_set_kargs_shell_fragment_contains_backup_path() {
-        let spec = grub_set_kargs(&["quiet"], &[]);
+        let spec = grub_set_kargs(&["quiet"], &[]).unwrap();
         let (_, args) = extract_cmd(&spec);
         let joined = args.join(" ");
         assert!(
@@ -238,7 +258,7 @@ mod tests {
 
     #[test]
     fn grub_set_kargs_shell_fragment_contains_update_grub() {
-        let spec = grub_set_kargs(&["quiet"], &[]);
+        let spec = grub_set_kargs(&["quiet"], &[]).unwrap();
         let (_, args) = extract_cmd(&spec);
         let joined = args.join(" ");
         assert!(
@@ -249,7 +269,7 @@ mod tests {
 
     #[test]
     fn grub_set_kargs_append_args_appear_in_script() {
-        let spec = grub_set_kargs(&["nomodeset", "quiet"], &[]);
+        let spec = grub_set_kargs(&["nomodeset", "quiet"], &[]).unwrap();
         let (_, args) = extract_cmd(&spec);
         let joined = args.join(" ");
         assert!(joined.contains("nomodeset"), "missing nomodeset: {joined}");
@@ -258,7 +278,7 @@ mod tests {
 
     #[test]
     fn grub_set_kargs_delete_args_appear_in_script() {
-        let spec = grub_set_kargs(&[], &["splash"]);
+        let spec = grub_set_kargs(&[], &["splash"]).unwrap();
         let (_, args) = extract_cmd(&spec);
         let joined = args.join(" ");
         assert!(joined.contains("splash"), "missing splash: {joined}");
@@ -266,17 +286,28 @@ mod tests {
 
     #[test]
     fn grub_set_kargs_risk_is_high() {
-        assert_eq!(grub_set_kargs(&["quiet"], &[]).risk_level, RiskLevel::High);
+        assert_eq!(
+            grub_set_kargs(&["quiet"], &[]).unwrap().risk_level,
+            RiskLevel::High
+        );
     }
 
     #[test]
     fn grub_set_kargs_reboot_required() {
-        assert!(grub_set_kargs(&["quiet"], &[]).reboot_required);
+        assert!(grub_set_kargs(&["quiet"], &[]).unwrap().reboot_required);
     }
 
     #[test]
     fn grub_set_kargs_rollback_available() {
-        assert!(grub_set_kargs(&["quiet"], &[]).rollback_available);
+        assert!(grub_set_kargs(&["quiet"], &[]).unwrap().rollback_available);
+    }
+
+    #[test]
+    fn grub_set_kargs_rejects_both_empty() {
+        // The constructor — not just the executor — enforces "at least one of
+        // append/delete must be non-empty". A direct Rust caller can't bypass.
+        let err = grub_set_kargs(&[], &[]).unwrap_err();
+        assert_eq!(err, KargsError::BothEmpty);
     }
 
     // ── regex_escape ──────────────────────────────────────────────────────────

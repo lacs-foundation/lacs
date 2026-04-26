@@ -12,6 +12,8 @@ use crate::actions::{
 use async_trait::async_trait;
 use serde_json::Value;
 use std::io;
+use std::net::IpAddr;
+use std::str::FromStr;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ExecutorError {
@@ -23,6 +25,14 @@ pub enum ExecutorError {
 
     #[error("invalid param type for: {0}")]
     InvalidParam(&'static str),
+
+    /// Richer variant that carries the offending value for actionable diagnostics.
+    ///
+    /// Used when an action constructor returns a typed `InvalidIpAddress` error —
+    /// the value is forwarded to user-facing output rather than being silently
+    /// discarded as in the generic `InvalidParam` path.
+    #[error("invalid IP address for param '{param}': '{value}'")]
+    InvalidIpAddress { param: &'static str, value: String },
 
     #[error("io error: {0}")]
     Io(#[from] io::Error),
@@ -585,12 +595,12 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
             for d in &delete {
                 validated_safe_arg(d, "delete")?;
             }
-            if append.is_empty() && delete.is_empty() {
-                return Err(ExecutorError::MissingParam("append or delete"));
-            }
+            // The constructor itself enforces "at least one of append/delete
+            // non-empty" — this is the single source of truth for the invariant.
             let append_refs: Vec<&str> = append.iter().map(String::as_str).collect();
             let delete_refs: Vec<&str> = delete.iter().map(String::as_str).collect();
-            Ok(grub::grub_set_kargs(&append_refs, &delete_refs))
+            grub::grub_set_kargs(&append_refs, &delete_refs)
+                .map_err(|_| ExecutorError::MissingParam("append or delete"))
         }
 
         // ── reboot ────────────────────────────────────────────────────────
@@ -669,7 +679,7 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
         "ResolvectlStatus" => Ok(resolvectl::resolvectl_status()),
         "ResolvectlSetDns" => {
             let interface = validated_safe_arg(require_str(params, "interface")?, "interface")?;
-            let servers: Vec<String> = params
+            let raw_servers: Vec<String> = params
                 .get("servers")
                 .and_then(|v| v.as_array())
                 .map(|arr| {
@@ -679,11 +689,21 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
                         .collect()
                 })
                 .unwrap_or_default();
-            if servers.is_empty() {
+            if raw_servers.is_empty() {
                 return Err(ExecutorError::MissingParam("servers"));
             }
-            let server_refs: Vec<&str> = servers.iter().map(String::as_str).collect();
-            Ok(resolvectl::resolvectl_set_dns(&interface, &server_refs))
+            // Parse every server string as a typed IpAddr before passing to the
+            // constructor. This rejects leading-dash strings (flag injection) and
+            // malformed addresses that would silently misconfigure systemd-resolved.
+            let mut parsed_servers: Vec<IpAddr> = Vec::with_capacity(raw_servers.len());
+            for s in &raw_servers {
+                let addr = IpAddr::from_str(s).map_err(|_| ExecutorError::InvalidIpAddress {
+                    param: "servers",
+                    value: s.clone(),
+                })?;
+                parsed_servers.push(addr);
+            }
+            Ok(resolvectl::resolvectl_set_dns(&interface, &parsed_servers))
         }
 
         // ── apparmor ──────────────────────────────────────────────────────
@@ -742,12 +762,24 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
         "Fail2banBanIp" => {
             let jail = validated_safe_arg(require_str(params, "jail")?, "jail")?;
             let ip = require_str(params, "ip")?;
-            fail2ban::fail2ban_ban_ip(&jail, ip).map_err(|_| ExecutorError::InvalidParam("ip"))
+            fail2ban::fail2ban_ban_ip(&jail, ip).map_err(|e| match e {
+                fail2ban::Fail2banError::InvalidIpAddress(v) => ExecutorError::InvalidIpAddress {
+                    param: "ip",
+                    value: v,
+                },
+                fail2ban::Fail2banError::InvalidJail(_) => ExecutorError::InvalidParam("jail"),
+            })
         }
         "Fail2banUnbanIp" => {
             let jail = validated_safe_arg(require_str(params, "jail")?, "jail")?;
             let ip = require_str(params, "ip")?;
-            fail2ban::fail2ban_unban_ip(&jail, ip).map_err(|_| ExecutorError::InvalidParam("ip"))
+            fail2ban::fail2ban_unban_ip(&jail, ip).map_err(|e| match e {
+                fail2ban::Fail2banError::InvalidIpAddress(v) => ExecutorError::InvalidIpAddress {
+                    param: "ip",
+                    value: v,
+                },
+                fail2ban::Fail2banError::InvalidJail(_) => ExecutorError::InvalidParam("jail"),
+            })
         }
 
         _ => Err(ExecutorError::UnknownAction(action_name.to_string())),
