@@ -22,6 +22,11 @@ not skip or ignore the test.
 - Request a code review before merge.
 - Apply review fixes, commit them, and push the branch again.
 - Merge only after the branch is reviewed and the checks pass.
+- **Never leave green PRs hanging.** A PR with all required checks
+  passing is ready to merge. Dependabot PRs included — once their CI
+  is green, merge them the same day. Open PRs accumulate merge
+  conflicts, blow up signal-to-noise, and leave security fixes
+  effectively unshipped.
 - Delete the remote branch after merge.
 - Delete the local branch after merge.
 - Delete the worktree directory after merge.

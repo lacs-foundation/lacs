@@ -102,17 +102,18 @@ jobs:
       - name: Smoke-test the package
         run: node packages/setup/index.js --help
 
-      - name: Publish to npm
-        if: ${{ secrets.NPM_TOKEN != '' }}
-        run: cd packages/setup && npm publish --access public
+      - name: Publish to npm (or skip if NPM_TOKEN absent)
+        # Secrets cannot be referenced directly in `if:` expressions, so
+        # surface NPM_TOKEN through env and gate inside the script.
+        # Empty token → log a notice and exit 0 (workflow stays green).
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Notice when NPM_TOKEN is absent
-        if: ${{ secrets.NPM_TOKEN == '' }}
         run: |
-          echo "::notice title=npm publish skipped::NPM_TOKEN secret is not set; \
-          configure it in Settings -> Secrets -> Actions to enable automatic publishing."
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::notice title=npm publish skipped::NPM_TOKEN secret is not set."
+            exit 0
+          fi
+          cd packages/setup && npm publish --access public
 
   release:
     name: Create GitHub release
@@ -138,31 +139,13 @@ jobs:
           VERSION: ${{ github.ref_name }}
           REPO: ${{ github.repository }}
         run: |
-          gh release create "${VERSION}" \
-            --title "SysKnife ${VERSION}" \
-            --notes "## SysKnife ${VERSION}
-
-          ### Installation
-
-          **Linux x86_64:**
-          \`\`\`bash
-          curl -Lo sysknife https://github.com/${REPO}/releases/download/${VERSION}/sysknife-${VERSION}-linux-x86_64
-          curl -Lo sysknife-daemon https://github.com/${REPO}/releases/download/${VERSION}/sysknife-daemon-${VERSION}-linux-x86_64
-          chmod +x sysknife sysknife-daemon
-          sudo mv sysknife sysknife-daemon /usr/local/bin/
-          \`\`\`
-
-          **Linux aarch64:**
-          \`\`\`bash
-          curl -Lo sysknife https://github.com/${REPO}/releases/download/${VERSION}/sysknife-${VERSION}-linux-aarch64
-          curl -Lo sysknife-daemon https://github.com/${REPO}/releases/download/${VERSION}/sysknife-daemon-${VERSION}-linux-aarch64
-          chmod +x sysknife sysknife-daemon
-          sudo mv sysknife sysknife-daemon /usr/local/bin/
-          \`\`\`
-
-          After installing the binaries, run \`sudo make install\` from the repo to set up the systemd unit, polkit rules, and sysusers configuration." \
+          gh release create "$VERSION" \
+            --repo "$REPO" \
+            --title "$VERSION" \
+            --generate-notes \
             dist/sysknife-*-linux-x86_64 \
             dist/sysknife-daemon-*-linux-x86_64 \
             dist/sysknife-*-linux-aarch64 \
             dist/sysknife-daemon-*-linux-aarch64 \
-            dist/sha256sums-*.txt
+            dist/sha256sums-linux-x86_64.txt \
+            dist/sha256sums-linux-aarch64.txt
