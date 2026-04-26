@@ -1,6 +1,6 @@
 [package]
 name = "sysknife-daemon-test"
-version = "0.2.1"
+version = "0.2.2"
 publish = false
 edition.workspace = true
 license.workspace = true
