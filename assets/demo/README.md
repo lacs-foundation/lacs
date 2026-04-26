@@ -1,7 +1,12 @@
 # Demo assets
 
-`demo.tape` is a [VHS](https://github.com/charmbracelet/vhs) script that drives the
-top-of-README demo GIF.
+`demo.tape` is a [VHS](https://github.com/charmbracelet/vhs) script that drives
+the top-of-README demo GIF. The tape calls `demo-mock.sh`, a deterministic
+offline replay that mirrors the styling of `apps/sysknife-cli/src/render.rs`.
+
+We use a mock instead of the live `sysknife` CLI so the recording is
+reproducible from a fresh checkout — no LLM key, daemon, or network
+round-trip needed, and every regeneration produces the same frames.
 
 ## Regenerate
 
@@ -14,28 +19,22 @@ go install github.com/charmbracelet/vhs@latest
 vhs assets/demo/demo.tape
 ```
 
-Outputs:
-
-- `demo.gif` — embedded in `README.md`
-- `demo.webm` — embedded in the launch landing page (smaller, autoplay-friendly)
+Output: `demo.gif` — embedded in `README.md`.
 
 ## Sizing rules
 
-- **Width × Height = 1200 × 700**, FontSize 36 — VHS's documented defaults.
-- **GIF must stay under 2 MB**; under 5 MB hard-limit. GitHub's mobile renderer
+- **Width × Height = 1200 × 720**, FontSize 24.
+- **GIF should stay under 2 MB**; 3 MB hard ceiling. GitHub's mobile renderer
   chokes above that.
-- WebM is smaller than GIF and supported on every modern browser, but GitHub
-  README rendering still prefers GIF — keep both.
 
-## Re-recording the demo against a real daemon
+## Updating the recording
 
-The .tape commands assume `sysknife` is on `$PATH` and a running daemon is
-reachable. Live regeneration requires:
+Edit `demo-mock.sh` to change the streamed lines, then re-run `vhs`. Keep the
+mock visually faithful to the real CLI render (risk badges, ▶ step header,
+› output line, ✓ success summary).
 
-1. `cargo install --path apps/sysknife-cli`
-2. `systemctl --user start sysknife-daemon` (or run `cargo run -p sysknife-daemon` in a side terminal)
-3. An LLM provider key in env (`OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / Ollama
-   running locally).
-
-If you don't have credentials, leave the GIF as-is — the bundled one was
-recorded against a known-good plan.
+If you ever need to record against a real daemon (e.g. for a feature demo
+that the mock cannot capture), point the .tape at the live CLI directly and
+ensure `sysknife` is on `$PATH`, the daemon is running, and an LLM provider
+key is set — but commit the resulting GIF only, not a tape that depends on
+those side conditions.
