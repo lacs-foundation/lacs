@@ -114,12 +114,47 @@ echo "Installed:"
 ls -lh /usr/local/bin/sysknife-daemon /usr/local/bin/sysknife
 
 # ---------------------------------------------------------------------------
-# Step 5: Run make install for sysusers / tmpfiles / polkit fragments
+# Step 5: Install side-files (sysusers, tmpfiles, polkit, sudoers, unit)
 # ---------------------------------------------------------------------------
+#
+# We don't call `make install` here: that target depends on `build`, which
+# invokes `cargo build --release --locked` as root. Rustup is installed in
+# the unprivileged user's home, so the root-side cargo has no default
+# toolchain and the build fails. The binaries are already installed in
+# step 4 above, so we only need the rest of the install side-files.
 
-step "Run make install (sysusers, tmpfiles, polkit, systemd unit)"
+step "Install sysknife packaging side-files (sysusers, tmpfiles, polkit, sudoers, unit)"
 cd "$REPO_DIR"
-make install || fail "make install"
+
+SYSUSERS_DIR=/usr/lib/sysusers.d
+TMPFILES_DIR=/usr/lib/tmpfiles.d
+SYSTEMD_DIR=/usr/lib/systemd/system
+POLKIT_DIR=/usr/share/polkit-1/rules.d
+SUDOERS_DIR=/etc/sudoers.d
+
+# System user + group.
+install -Dm 644 packaging/sysknife-sysusers.conf "${SYSUSERS_DIR}/sysknife.conf" \
+    || fail "Install sysknife-sysusers.conf"
+systemd-sysusers "${SYSUSERS_DIR}/sysknife.conf" || fail "systemd-sysusers"
+
+# Runtime + state dirs.
+install -Dm 644 packaging/sysknife-tmpfiles.conf "${TMPFILES_DIR}/sysknife.conf" \
+    || fail "Install sysknife-tmpfiles.conf"
+systemd-tmpfiles --create "${TMPFILES_DIR}/sysknife.conf" || fail "systemd-tmpfiles"
+
+# systemd unit.
+install -Dm 644 packaging/sysknife-daemon.service "${SYSTEMD_DIR}/sysknife-daemon.service" \
+    || fail "Install sysknife-daemon.service"
+systemctl daemon-reload || fail "systemctl daemon-reload"
+
+# polkit rules.
+install -Dm 644 packaging/50-sysknife.rules "${POLKIT_DIR}/50-sysknife.rules" \
+    || fail "Install 50-sysknife.rules"
+
+# sudoers fragment (visudo validates before install).
+visudo -cf packaging/sysknife-sudoers || fail "visudo validate"
+install -Dm 440 packaging/sysknife-sudoers "${SUDOERS_DIR}/sysknife" \
+    || fail "Install sudoers fragment"
 
 # ---------------------------------------------------------------------------
 # Step 6: Add VM user to sysknife groups
