@@ -78,7 +78,7 @@ What this gets you:
 
 Current state: Fedora 41+ and Silverblue 41+ are fully supported.
 Ubuntu action families landed; planner-side hints and live E2E validation
-against a Ubuntu VM are in flight. AGPL-3.0 license. 1 026 tests pass on every
+against a Ubuntu VM are in flight. MIT license. 1 026 tests pass on every
 commit. 80+ typed actions.
 
 The spec (LACS — Linux Agent Control Standard) is CC0 and lives separately at

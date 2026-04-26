@@ -287,13 +287,11 @@ are scoped with clear acceptance criteria.
 
 ## License
 
-[AGPL-3.0-only](LICENSE). Free to use, modify, and distribute under the terms
-of the GNU Affero General Public License v3. Any modifications deployed as a
-network service must be published under the same license.
+[MIT](LICENSE). Free to use, modify, distribute, and embed in proprietary
+products without restriction.
 
-**Commercial license available** for organisations that need to build
-proprietary products on SysKnife or offer it as a service without AGPL
-obligations. Contact [vladimir@entropia.ai](mailto:vladimir@entropia.ai).
+The [LACS specification](https://github.com/lacs-foundation/specification) is
+[CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) — public domain.
 
 ---
 

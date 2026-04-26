@@ -115,7 +115,7 @@ SysKnife auto-detects it. See [Quick Start](quickstart.md).
 
 ## Status
 
-80+ typed actions · 1,026 tests · Fedora / Silverblue fully supported · AGPL-3.0
+80+ typed actions · 1,026 tests · Fedora / Silverblue fully supported · MIT
 
 SysKnife is the reference implementation of the
 [LACS specification](https://github.com/lacs-foundation/specification) — a

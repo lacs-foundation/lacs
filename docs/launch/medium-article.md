@@ -215,4 +215,4 @@ The audit chain only means something if the thing it is auditing is reliable.
 - GitHub: <https://github.com/lacs-foundation/sysknife>
 - Docs: <https://lacs-foundation.github.io/sysknife/>
 - LACS spec: <https://github.com/lacs-foundation/specification>
-- AGPL-3.0 license.
+- MIT license.
