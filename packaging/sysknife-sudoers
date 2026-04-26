@@ -55,18 +55,22 @@ sysknife ALL=(root) NOPASSWD: /usr/bin/ostree
 # Shell for multi-step operations that require root and involve piping or conditional
 # logic (firewall --permanent + --reload, group membership ensure + usermod/gpasswd).
 # Restricted to NOPASSWD invocations only — sysknife cannot launch an interactive shell.
+# ME1 audit (2026-04-26): /usr/bin/sh is used by ConfigureFirewall (network.rs) for the
+# compound `firewall-cmd --permanent ... && firewall-cmd --reload` operation. No direct
+# argv alternative exists for firewalld's two-step permanent+reload flow. This entry is
+# kept and documented here rather than silently present with no explanation.
 sysknife ALL=(root) NOPASSWD: /usr/bin/sh
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Ubuntu / Debian-family binaries
 # ─────────────────────────────────────────────────────────────────────────────
 
-# `sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get …`
+# `sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a /usr/bin/apt-get …`
 # Apt actions wrap apt-get in env to set non-interactive flags past sudo's
-# default env-stripping. Allowing /usr/bin/env grants the daemon the ability
-# to launch apt under controlled environment — the daemon's typed action layer
-# constrains which programs env actually runs.
-sysknife ALL=(root) NOPASSWD: /usr/bin/env
+# default env-stripping. The grant is restricted to the exact env-var prefix
+# that apt.rs produces — no other env-var combinations or binaries are reachable.
+# (Red-team HI1 fix: previously granted unrestricted /usr/bin/env NOPASSWD.)
+sysknife ALL=(root) NOPASSWD: /usr/bin/env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a /usr/bin/apt-get *
 
 # Apt write operations:
 #   apt-mark hold/unhold             → AptHold / AptUnhold
@@ -110,9 +114,8 @@ sysknife ALL=(root) NOPASSWD: /usr/bin/canonical-livepatch
 # warning for operators.
 sysknife ALL=(root) NOPASSWD: /usr/bin/do-release-upgrade
 
-# GRUB karg edit — GrubSetKargs runs `sudo cp`, `sudo python3`, `sudo update-grub`
-# inside its bash script to back up /etc/default/grub, edit it via Python,
-# then regenerate GRUB config. Each binary needs its own line.
-sysknife ALL=(root) NOPASSWD: /usr/bin/cp
-sysknife ALL=(root) NOPASSWD: /usr/bin/python3
-sysknife ALL=(root) NOPASSWD: /usr/sbin/update-grub
+# GRUB karg edit — GrubSetKargs delegates to this root-owned helper script.
+# The helper encapsulates the backup, in-place edit, and update-grub steps,
+# eliminating the previous unconstrained grants for cp, python3, and
+# update-grub (red-team findings HI2 and HI3).
+sysknife ALL=(root) NOPASSWD: /usr/lib/sysknife/grub-kargs-edit *

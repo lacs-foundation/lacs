@@ -24,6 +24,7 @@ TMPFILES    ?= /usr/lib/tmpfiles.d
 SYSTEMD     ?= /usr/lib/systemd/system
 POLKIT      ?= /usr/share/polkit-1/rules.d
 SUDOERS     ?= /etc/sudoers.d
+HELPERS     ?= /usr/lib/sysknife
 
 CARGO_BUILD_FLAGS ?= --release --locked
 
@@ -63,6 +64,9 @@ daemon-install: build
 	visudo -cf packaging/sysknife-sudoers
 	install -Dm 440 packaging/sysknife-sudoers $(SUDOERS)/sysknife
 
+	# Privileged helper scripts — root-owned, not writable by sysknife.
+	install -Dm 755 packaging/sysknife-grub-kargs-edit $(HELPERS)/grub-kargs-edit
+
 ## ── Uninstall ────────────────────────────────────────────────────────────────
 
 uninstall: daemon-uninstall
@@ -76,6 +80,7 @@ daemon-uninstall:
 	rm -f $(SUDOERS)/sysknife
 	rm -f $(SYSUSERS)/sysknife.conf
 	rm -f $(TMPFILES)/sysknife.conf
+	rm -f $(HELPERS)/grub-kargs-edit
 	@echo "Daemon uninstalled. User 'sysknife' and /var/lib/sysknife data were NOT removed."
 	@echo "To remove them manually: userdel sysknife && rm -rf /var/lib/sysknife /run/sysknife"
 

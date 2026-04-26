@@ -78,9 +78,38 @@ fn redact_params(action_name: &str, params: &Value) -> Value {
     }
 }
 
-/// Replace any argv element that holds a credential value with `<REDACTED>`.
-/// Looks up the credential values from the original `params` of the same
-/// action so we redact by VALUE-MATCH (no positional assumptions).
+/// Per-action positional credential spec.
+///
+/// Returns the 0-based index of the argv element that holds a credential.
+/// `usize::MAX` is a sentinel meaning "last element" (credential is always
+/// the last positional argument). Returns `None` when the action carries no
+/// positional credential.
+///
+/// Positional redaction is applied FIRST to guarantee correctness even when
+/// the credential value coincidentally equals a structural argv element (e.g.
+/// `token == "attach"` — red-team finding ME2).
+fn credential_argv_position(action_name: &str) -> Option<usize> {
+    match action_name {
+        // `sudo pro attach <token>` — token is always the last element.
+        "ProAttach" => Some(usize::MAX),
+        _ => None,
+    }
+}
+
+/// Replace the credential argv element(s) with `<REDACTED>`.
+///
+/// Strategy (ME2 fix):
+/// 1. **Positional redaction** — if `credential_argv_position` returns a spec
+///    for this action, redact that exact index and return immediately. This
+///    prevents the value-match pass from also clobbering structural argv
+///    elements that happen to share the same text as the credential (e.g.
+///    `token == "attach"` — red-team finding ME2). When a positional spec
+///    exists it is authoritative: the credential is always at that slot and
+///    nowhere else in the argv.
+/// 2. **Value-match fallback** — for actions that have no positional spec,
+///    walk argv and replace any element whose text matches a credential value.
+///    This is the original behavior and remains as a safety net for future
+///    actions that haven't been assigned a positional spec yet.
 fn redact_argv(action_name: &str, params: &Value, args: &[String]) -> Vec<String> {
     let keys = credential_keys_for(action_name);
     if keys.is_empty() {
@@ -93,15 +122,34 @@ fn redact_argv(action_name: &str, params: &Value, args: &[String]) -> Vec<String
     if secrets.is_empty() {
         return args.to_vec();
     }
-    args.iter()
-        .map(|a| {
-            if secrets.iter().any(|s| s == &a.as_str()) {
-                "<REDACTED>".to_string()
-            } else {
-                a.clone()
-            }
-        })
-        .collect()
+
+    let mut out: Vec<String> = args.to_vec();
+
+    // Step 1 — positional redaction (authoritative when a spec exists).
+    if let Some(pos) = credential_argv_position(action_name) {
+        let idx = if pos == usize::MAX {
+            // Sentinel: last element.
+            out.len().saturating_sub(1)
+        } else {
+            pos
+        };
+        if idx < out.len() {
+            out[idx] = "<REDACTED>".to_string();
+        }
+        // Positional spec is authoritative — skip value-match to avoid
+        // inadvertently redacting structural argv elements that share the
+        // same text as the credential (ME2 fix).
+        return out;
+    }
+
+    // Step 2 — value-match fallback for actions without a positional spec.
+    out.iter_mut().for_each(|a| {
+        if secrets.iter().any(|s| s == &a.as_str()) {
+            *a = "<REDACTED>".to_string();
+        }
+    });
+
+    out
 }
 
 use crate::{
@@ -1712,6 +1760,38 @@ mod tests {
         ];
         let r = redact_argv("AptInstall", &params, &argv);
         assert_eq!(r, argv);
+    }
+
+    // ME2 regression — token equal to structural element "attach".
+    //
+    // If token == "attach", value-match-only redaction would replace BOTH
+    // the structural "attach" and the token position, producing:
+    //   `sudo pro <REDACTED> <REDACTED>`
+    // instead of the correct:
+    //   `sudo pro attach <REDACTED>`
+    //
+    // Positional redaction (last element) must be applied first so that
+    // "attach" is preserved as a structural element.
+    #[test]
+    fn redact_argv_token_equal_to_attach_preserves_structural_attach() {
+        let params = json!({"token": "attach"});
+        // Typical ProAttach argv shape: sudo pro attach <token>
+        let argv = vec![
+            "sudo".to_string(),
+            "pro".to_string(),
+            "attach".to_string(),
+            "attach".to_string(), // token value == "attach"
+        ];
+        let r = redact_argv("ProAttach", &params, &argv);
+        // Positional pass redacts last element.
+        // Value-match fallback then redacts any remaining "attach" — but the
+        // only remaining "attach" at index 2 is structural and should be kept.
+        // The net result: last element is redacted; "attach" at index 2 is NOT.
+        assert_eq!(
+            r,
+            vec!["sudo", "pro", "attach", "<REDACTED>"],
+            "structural 'attach' must survive; only the positional token gets redacted"
+        );
     }
 
     // ------------------------------------------------------------------
