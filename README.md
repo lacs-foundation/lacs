@@ -273,7 +273,16 @@ are scoped with clear acceptance criteria.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+[AGPL-3.0-only](LICENSE). Free to use, modify, and distribute under the terms
+of the GNU Affero General Public License v3. Any modifications deployed as a
+network service must be published under the same license.
+
+**Commercial license available** for organisations that need to build
+proprietary products on SysKnife or offer it as a service without AGPL
+obligations. Contact [vladimir@entropia.ai](mailto:vladimir@entropia.ai).
+
+Contributors must sign the [Contributor License Agreement](.github/CONTRIBUTOR_LICENSE_AGREEMENT.md)
+before their first pull request is merged.
 
 ---
 

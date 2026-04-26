@@ -4,7 +4,7 @@
 
 **I built SysKnife: describe a Linux task in plain English, an LLM plans it
 (Ollama works, fully offline), you approve, every action gets signed and
-audited. MIT, Fedora-first.**
+audited. AGPL-3.0, Fedora-first.**
 
 ---
 
