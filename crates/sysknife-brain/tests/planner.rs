@@ -1468,11 +1468,24 @@ async fn prompt_with_fedora_hint_contains_fedora_actions_and_excludes_apt() {
         "Fedora prompt must mention the version string"
     );
 
-    // Must explicitly exclude apt on Fedora.
-    assert!(
-        system.contains("AptInstall") && system.contains("NOT available"),
-        "Fedora prompt must call out AptInstall as NOT available"
-    );
+    // Per ADR 0004 (per-distro prompt dispatch), the Fedora prompt must
+    // not mention any Debian-family action by name. Exclusion is by
+    // absence, not by enumeration in a "NOT available" list — the goal
+    // is zero token spend on actions the LLM will never propose here.
+    for forbidden in [
+        "AptInstall",
+        "AptUpdate",
+        "SnapInstall",
+        "UfwAllow",
+        "UfwStatus",
+        "NetplanApply",
+        "DistroboxCreate",
+    ] {
+        assert!(
+            !system.contains(forbidden),
+            "Fedora prompt leaked Debian action: {forbidden}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1510,11 +1523,24 @@ async fn prompt_with_ubuntu_hint_contains_apt_and_excludes_rpm_ostree() {
         "Ubuntu prompt must mention the version string"
     );
 
-    // Must explicitly exclude rpm-ostree actions on Ubuntu.
-    assert!(
-        system.contains("AddLayeredPackage") && system.contains("NOT available"),
-        "Ubuntu prompt must call out AddLayeredPackage as NOT available"
-    );
+    // Per ADR 0004, the Ubuntu prompt must not mention any Fedora-family
+    // action by name. Exclusion is by absence.
+    for forbidden in [
+        "AddLayeredPackage",
+        "RemoveLayeredPackage",
+        "RebaseSystem",
+        "RollbackDeployment",
+        "GetLayeredPackages",
+        "InstallFlatpak",
+        "CreateToolbox",
+        "ConfigureFirewall",
+        "GetFirewallState",
+    ] {
+        assert!(
+            !system.contains(forbidden),
+            "Ubuntu prompt leaked Fedora action: {forbidden}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1552,10 +1578,10 @@ async fn prompt_with_no_distro_hint_is_unchanged_from_baseline() {
 // post-plan execution guard separately.
 
 /// For each (intent_keyword, fedora_action, ubuntu_action) triple, assert:
-/// - the Fedora prompt contains `fedora_action` as available and
-///   marks `ubuntu_action` as NOT available;
-/// - the Ubuntu prompt contains `ubuntu_action` as available and
-///   marks `fedora_action` as NOT available.
+/// - the Fedora prompt contains `fedora_action` and **does not** contain
+///   `ubuntu_action` anywhere (per ADR 0004 — exclusion is by absence);
+/// - the Ubuntu prompt contains `ubuntu_action` and **does not** contain
+///   `fedora_action` anywhere.
 struct StoryCoverage {
     description: &'static str,
     fedora_action: &'static str,
@@ -1602,10 +1628,14 @@ async fn story_coverage_fedora_prompt_contains_fedora_actions_and_excludes_ubunt
             case.fedora_action
         );
     }
-    // AptInstall and AptRemove must be called out as NOT available on Fedora.
+    // Per ADR 0004, the Fedora prompt must not contain any Debian action.
     assert!(
-        system.contains("AptInstall") && system.contains("NOT available"),
-        "Fedora prompt must mark AptInstall as NOT available"
+        !system.contains("AptInstall"),
+        "Fedora prompt leaked AptInstall"
+    );
+    assert!(
+        !system.contains("SnapInstall"),
+        "Fedora prompt leaked SnapInstall"
     );
 }
 
@@ -1629,10 +1659,14 @@ async fn story_coverage_ubuntu_prompt_contains_ubuntu_actions_and_excludes_fedor
             case.ubuntu_action
         );
     }
-    // AddLayeredPackage must be called out as NOT available on Ubuntu.
+    // Per ADR 0004, the Ubuntu prompt must not contain any Fedora action.
     assert!(
-        system.contains("AddLayeredPackage") && system.contains("NOT available"),
-        "Ubuntu prompt must mark AddLayeredPackage as NOT available"
+        !system.contains("AddLayeredPackage"),
+        "Ubuntu prompt leaked AddLayeredPackage"
+    );
+    assert!(
+        !system.contains("RebaseSystem"),
+        "Ubuntu prompt leaked RebaseSystem"
     );
 }
 
@@ -1657,8 +1691,8 @@ async fn story_coverage_second_fedora_case_install_packages() {
         "prompt must list AddLayeredPackage"
     );
     assert!(
-        system.contains("NOT available") && system.contains("AptInstall"),
-        "prompt must note AptInstall not available on Fedora"
+        !system.contains("AptInstall"),
+        "Fedora prompt must not mention AptInstall"
     );
 }
 
@@ -1683,8 +1717,8 @@ async fn story_coverage_third_fedora_case_rollback() {
         "Fedora prompt must include RollbackDeployment"
     );
     assert!(
-        system.contains("NOT available") && system.contains("AptInstall"),
-        "Fedora prompt must exclude apt actions"
+        !system.contains("AptInstall"),
+        "Fedora prompt must not mention AptInstall"
     );
 }
 
@@ -1709,8 +1743,8 @@ async fn story_coverage_second_ubuntu_case_snap_install() {
         "Ubuntu prompt must include SnapInstall"
     );
     assert!(
-        system.contains("NOT available") && system.contains("AddLayeredPackage"),
-        "Ubuntu prompt must exclude rpm-ostree actions"
+        !system.contains("AddLayeredPackage"),
+        "Ubuntu prompt must not mention AddLayeredPackage"
     );
 }
 
@@ -1735,7 +1769,7 @@ async fn story_coverage_third_ubuntu_case_apt_search() {
         "Ubuntu prompt must include AptSearch"
     );
     assert!(
-        system.contains("NOT available") && system.contains("AddLayeredPackage"),
-        "Ubuntu prompt must exclude rpm-ostree actions"
+        !system.contains("AddLayeredPackage"),
+        "Ubuntu prompt must not mention AddLayeredPackage"
     );
 }
