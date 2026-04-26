@@ -4,8 +4,9 @@ use crate::actions::{
     processes, reboot, release_upgrade, resolvectl, services, snap, ssh, system_info, toolbox,
     ubuntu_pro, ufw, users,
     validate::{
-        validated_group, validated_hostname, validated_locale, validated_ppa_name,
-        validated_safe_arg, validated_timezone, validated_unit_name, validated_username,
+        validated_apparmor_profile, validated_group, validated_hostname, validated_locale,
+        validated_port_or_service, validated_ppa_name, validated_safe_arg, validated_timezone,
+        validated_unit_name, validated_username,
     },
     ActionMechanism, ActionSpec,
 };
@@ -610,13 +611,17 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
         "UfwEnable" => Ok(ufw::ufw_enable()),
         "UfwDisable" => Ok(ufw::ufw_disable()),
         "UfwAllow" => {
-            let port_or_service =
-                validated_safe_arg(require_str(params, "port_or_service")?, "port_or_service")?;
+            let port_or_service = validated_port_or_service(
+                require_str(params, "port_or_service")?,
+                "port_or_service",
+            )?;
             Ok(ufw::ufw_allow(&port_or_service))
         }
         "UfwDeny" => {
-            let port_or_service =
-                validated_safe_arg(require_str(params, "port_or_service")?, "port_or_service")?;
+            let port_or_service = validated_port_or_service(
+                require_str(params, "port_or_service")?,
+                "port_or_service",
+            )?;
             Ok(ufw::ufw_deny(&port_or_service))
         }
         "UfwReset" => Ok(ufw::ufw_reset()),
@@ -651,7 +656,7 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
                 .map_err(|_| ExecutorError::InvalidParam("rule_number"))
         }
         "UfwLimit" => {
-            let target = validated_safe_arg(require_str(params, "target")?, "target")?;
+            let target = validated_port_or_service(require_str(params, "target")?, "target")?;
             Ok(ufw::ufw_limit(&target))
         }
 
@@ -710,12 +715,12 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
         "AppArmorStatus" => Ok(apparmor::apparmor_status()),
         "AppArmorEnforce" => {
             let profile_path =
-                validated_safe_arg(require_str(params, "profile_path")?, "profile_path")?;
+                validated_apparmor_profile(require_str(params, "profile_path")?, "profile_path")?;
             Ok(apparmor::apparmor_enforce(&profile_path))
         }
         "AppArmorComplain" => {
             let profile_path =
-                validated_safe_arg(require_str(params, "profile_path")?, "profile_path")?;
+                validated_apparmor_profile(require_str(params, "profile_path")?, "profile_path")?;
             Ok(apparmor::apparmor_complain(&profile_path))
         }
 

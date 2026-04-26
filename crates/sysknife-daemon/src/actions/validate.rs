@@ -117,6 +117,134 @@ pub fn validated_ppa_name(s: &str, param: &'static str) -> Result<String, Execut
     Ok(s.to_string())
 }
 
+/// Maximum byte length for an AppArmor profile name (no-slash form).
+///
+/// AppArmor profile names are short identifiers — the cap is intentionally
+/// tight to prevent log-flooding and to match realistic profile name lengths
+/// seen under `/etc/apparmor.d/`.
+const APPARMOR_PROFILE_NAME_MAX: usize = 128;
+
+/// Validate an AppArmor profile argument.
+///
+/// Accepts two forms:
+///
+/// - **Absolute path** — must start with `/etc/apparmor.d/`, must not contain
+///   `..` anywhere, and the suffix after the prefix must consist only of
+///   `[A-Za-z0-9._/-]`.
+/// - **Profile name** (no `/`) — `[A-Za-z0-9._-]` only, no leading dot,
+///   length 1–[`APPARMOR_PROFILE_NAME_MAX`].
+pub fn validated_apparmor_profile(s: &str, param: &'static str) -> Result<String, ExecutorError> {
+    const PREFIX: &str = "/etc/apparmor.d/";
+
+    if s.is_empty() {
+        return Err(ExecutorError::InvalidParam(param));
+    }
+
+    if s.starts_with('/') {
+        // Absolute path form.
+        if !s.starts_with(PREFIX) {
+            return Err(ExecutorError::InvalidParam(param));
+        }
+        if s.contains("..") {
+            return Err(ExecutorError::InvalidParam(param));
+        }
+        let suffix = &s[PREFIX.len()..];
+        if suffix.is_empty() {
+            return Err(ExecutorError::InvalidParam(param));
+        }
+        let ok = suffix
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '/'));
+        if !ok {
+            return Err(ExecutorError::InvalidParam(param));
+        }
+    } else {
+        // Profile name form — no slash allowed.
+        if s.contains('/') {
+            return Err(ExecutorError::InvalidParam(param));
+        }
+        if s.starts_with('.') {
+            return Err(ExecutorError::InvalidParam(param));
+        }
+        if s.len() > APPARMOR_PROFILE_NAME_MAX {
+            return Err(ExecutorError::InvalidParam(param));
+        }
+        let ok = s
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+        if !ok {
+            return Err(ExecutorError::InvalidParam(param));
+        }
+    }
+
+    Ok(s.to_string())
+}
+
+/// Maximum byte length for a UFW app-profile name.
+///
+/// UFW app profile names are short identifiers defined in
+/// `/etc/ufw/applications.d/`; 64 bytes is well above the longest real-world
+/// name while still tight enough to prevent padding attacks.
+const UFW_APP_NAME_MAX: usize = 64;
+
+/// Validate a UFW port-or-service argument.
+///
+/// Accepts three forms:
+///
+/// - **Bare port** — `^\d+$` — integer 1–65535.
+/// - **Port/protocol** — `^\d+/(tcp|udp)$` — same numeric range.
+/// - **App profile name** — starts with a letter, then `[A-Za-z0-9_-]*`,
+///   length 1–[`UFW_APP_NAME_MAX`].
+pub fn validated_port_or_service(s: &str, param: &'static str) -> Result<String, ExecutorError> {
+    if s.is_empty() {
+        return Err(ExecutorError::InvalidParam(param));
+    }
+
+    // Port/protocol form: digits, a slash, then "tcp" or "udp" — nothing else.
+    if let Some(slash_pos) = s.find('/') {
+        let port_part = &s[..slash_pos];
+        let proto_part = &s[slash_pos + 1..];
+        if proto_part != "tcp" && proto_part != "udp" {
+            return Err(ExecutorError::InvalidParam(param));
+        }
+        if port_part.is_empty() || !port_part.chars().all(|c| c.is_ascii_digit()) {
+            return Err(ExecutorError::InvalidParam(param));
+        }
+        let port: u32 = port_part
+            .parse()
+            .map_err(|_| ExecutorError::InvalidParam(param))?;
+        if port == 0 || port > 65535 {
+            return Err(ExecutorError::InvalidParam(param));
+        }
+        return Ok(s.to_string());
+    }
+
+    // Bare-port form: all digits.
+    if s.chars().all(|c| c.is_ascii_digit()) {
+        let port: u32 = s.parse().map_err(|_| ExecutorError::InvalidParam(param))?;
+        if port == 0 || port > 65535 {
+            return Err(ExecutorError::InvalidParam(param));
+        }
+        return Ok(s.to_string());
+    }
+
+    // App profile name form: first char must be a letter.
+    if !s.starts_with(|c: char| c.is_ascii_alphabetic()) {
+        return Err(ExecutorError::InvalidParam(param));
+    }
+    if s.len() > UFW_APP_NAME_MAX {
+        return Err(ExecutorError::InvalidParam(param));
+    }
+    let ok = s
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'));
+    if !ok {
+        return Err(ExecutorError::InvalidParam(param));
+    }
+
+    Ok(s.to_string())
+}
+
 /// Maximum byte length for any string passed through [`validated_safe_arg`].
 ///
 /// 254 bytes is one byte under the Linux per-argument limit imposed by the
@@ -490,6 +618,131 @@ mod tests {
     fn ppa_name_rejects_shell_metacharacters() {
         assert!(validated_ppa_name("user/ppa;evil", "name").is_err());
         assert!(validated_ppa_name("user$(cmd)/ppa", "name").is_err());
+    }
+
+    // ── validated_apparmor_profile ───────────────────────────────────────
+
+    #[test]
+    fn apparmor_profile_accepts_absolute_path() {
+        assert!(
+            validated_apparmor_profile("/etc/apparmor.d/usr.bin.firefox", "profile_path").is_ok()
+        );
+        assert!(
+            validated_apparmor_profile("/etc/apparmor.d/abstractions/base", "profile_path").is_ok()
+        );
+    }
+
+    #[test]
+    fn apparmor_profile_accepts_profile_name() {
+        assert!(validated_apparmor_profile("usr.bin.firefox", "profile_path").is_ok());
+    }
+
+    #[test]
+    fn apparmor_profile_rejects_traversal_relative() {
+        assert!(validated_apparmor_profile("../../../tmp/evil", "profile_path").is_err());
+    }
+
+    #[test]
+    fn apparmor_profile_rejects_wrong_prefix() {
+        assert!(validated_apparmor_profile("/etc/passwd", "profile_path").is_err());
+    }
+
+    #[test]
+    fn apparmor_profile_rejects_traversal_in_path() {
+        assert!(
+            validated_apparmor_profile("/etc/apparmor.d/../../etc/passwd", "profile_path").is_err()
+        );
+    }
+
+    #[test]
+    fn apparmor_profile_rejects_relative_with_slash() {
+        assert!(validated_apparmor_profile("evil/profile", "profile_path").is_err());
+    }
+
+    #[test]
+    fn apparmor_profile_rejects_shell_metachars() {
+        assert!(validated_apparmor_profile("; rm -rf /", "profile_path").is_err());
+    }
+
+    #[test]
+    fn apparmor_profile_rejects_empty() {
+        assert!(validated_apparmor_profile("", "profile_path").is_err());
+    }
+
+    #[test]
+    fn apparmor_profile_rejects_too_long() {
+        let long = "a".repeat(APPARMOR_PROFILE_NAME_MAX + 1);
+        assert!(validated_apparmor_profile(&long, "profile_path").is_err());
+    }
+
+    // ── validated_port_or_service ─────────────────────────────────────────
+
+    #[test]
+    fn port_or_service_accepts_bare_ports() {
+        assert!(validated_port_or_service("22", "port_or_service").is_ok());
+        assert!(validated_port_or_service("1", "port_or_service").is_ok());
+        assert!(validated_port_or_service("65535", "port_or_service").is_ok());
+    }
+
+    #[test]
+    fn port_or_service_accepts_port_protocol() {
+        assert!(validated_port_or_service("22/tcp", "port_or_service").is_ok());
+        assert!(validated_port_or_service("53/udp", "port_or_service").is_ok());
+        assert!(validated_port_or_service("8080/tcp", "port_or_service").is_ok());
+    }
+
+    #[test]
+    fn port_or_service_accepts_app_profile_names() {
+        assert!(validated_port_or_service("OpenSSH", "port_or_service").is_ok());
+        assert!(validated_port_or_service("Apache", "port_or_service").is_ok());
+        assert!(validated_port_or_service("Nginx-Full", "port_or_service").is_ok());
+    }
+
+    #[test]
+    fn port_or_service_rejects_out_of_range_ports() {
+        assert!(validated_port_or_service("0", "port_or_service").is_err());
+        assert!(validated_port_or_service("65536", "port_or_service").is_err());
+        assert!(validated_port_or_service("99999", "port_or_service").is_err());
+    }
+
+    #[test]
+    fn port_or_service_rejects_bad_protocol_forms() {
+        assert!(validated_port_or_service("22/sctp", "port_or_service").is_err());
+        assert!(validated_port_or_service("22/tcp/extra", "port_or_service").is_err());
+        assert!(validated_port_or_service("22/", "port_or_service").is_err());
+    }
+
+    #[test]
+    fn port_or_service_rejects_port_without_slash() {
+        assert!(validated_port_or_service("22tcp", "port_or_service").is_err());
+    }
+
+    #[test]
+    fn port_or_service_rejects_empty() {
+        assert!(validated_port_or_service("", "port_or_service").is_err());
+    }
+
+    #[test]
+    fn port_or_service_rejects_too_long_app_name() {
+        let long = "A".repeat(UFW_APP_NAME_MAX + 1);
+        assert!(validated_port_or_service(&long, "port_or_service").is_err());
+    }
+
+    #[test]
+    fn port_or_service_rejects_shell_metachars() {
+        assert!(validated_port_or_service("; rm -rf /", "port_or_service").is_err());
+    }
+
+    #[test]
+    fn port_or_service_rejects_space_in_app_name() {
+        assert!(validated_port_or_service("hello world", "port_or_service").is_err());
+    }
+
+    #[test]
+    fn port_or_service_rejects_digit_leading_non_port() {
+        // "2hello" is not all-digits (not a bare port) and starts with a digit
+        // (not a valid app-name) — must be rejected.
+        assert!(validated_port_or_service("2hello", "port_or_service").is_err());
     }
 
     // ── error variant check ──────────────────────────────────────────────
