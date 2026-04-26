@@ -74,9 +74,12 @@ node sysknife/packages/setup/index.js
 ```
 
 > **npm publish pending**: `sysknife-setup` is not yet on the npm registry.
-> Use the local-clone path above. The wizard behaviour is identical.
-> Once `NPM_TOKEN` is configured in CI secrets, the publish step will land
-> and `npx sysknife-setup` will work without the clone.
+> The CI publish step exists and runs on every release tag, but the
+> automation token currently in use does not bypass 2FA on the publish
+> account, so npm rejects the upload (HTTP 403). Use the local-clone path
+> above for now. Once a granular access token with "Bypass 2FA" enabled
+> is in `NPM_TOKEN`, the next release tag will publish and `npx
+> sysknife-setup` will work without the clone.
 
 What this does:
 
