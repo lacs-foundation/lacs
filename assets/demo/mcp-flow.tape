@@ -17,10 +17,14 @@ Set Padding       20
 Set BorderRadius  10
 Set TypingSpeed   55ms
 
-# Drive the recording through the mock script.
-Sleep 400ms
+# Drive the recording through the mock script — invocation hidden so the
+# recording opens straight onto the Claude Code header bar (no shell prompt
+# leak).
+Hide
 Type "bash assets/demo/mcp-flow-mock.sh"
 Enter
+Sleep 400ms
+Show
 
 # Header bar + first user turn render (≈1.1s).
 Sleep 1200ms
