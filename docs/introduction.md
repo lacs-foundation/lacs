@@ -1,107 +1,122 @@
-# SysKnife — Linux Agent Control Standard
+<img src="images/sysknife.svg" alt="SysKnife" class="sysknife-logo"/>
 
-**Describe what you want in plain language. Review a typed plan with
-risk levels. Approve explicitly. Watch it execute.**
+<p class="sysknife-tagline">Your Linux sysadmin co-pilot. Plain language in. Typed plan out. You approve. Daemon executes.</p>
 
-SysKnife never runs a shell command. Every action is a typed operation
-with a formal risk level. The AI cannot touch your system directly.
+<div class="cta-row">
+  <a href="quickstart.html" class="cta-btn cta-btn-primary">Get started →</a>
+  <a href="mcp.html" class="cta-btn cta-btn-secondary">Use with Claude Code / Cursor</a>
+</div>
 
-SysKnife is the reference implementation of the
-[LACS (Linux Agent Control Standard)](https://github.com/lacs-foundation/specification)
-protocol — an open, CC0-licensed specification for AI agents that
-operate at the Linux system level. Any implementation that conforms to
-LACS provides the same safety guarantees: typed actions, formal risk
-enforcement, mandatory approval gates, immutable audit trail.
-
-```sh
-# Try it — no daemon, no execution, no risk.
-export ANTHROPIC_API_KEY=sk-ant-...
-sysknife --dry-run "show disk usage"
-```
+<img
+  src="https://raw.githubusercontent.com/lacs-foundation/sysknife/main/assets/demo/demo.gif"
+  alt="SysKnife demo — natural language to typed plan to live execution"
+  class="sysknife-demo"
+/>
 
 ---
 
-## The problem with every other tool
+## What SysKnife does
 
-Every AI agent that can touch your system has the same flaw: you find
-out what it did after. Open Interpreter runs arbitrary Python and shell.
-Goose by Block pops confirmation dialogs. Neither has a formal model of
-what "safe" means.
+You describe a task in plain language. SysKnife asks an LLM to turn it into a
+**typed plan** — a list of named actions with formal risk levels. You review the
+plan, approve it, and the daemon executes it step by step with live output and
+automatic rollback on failure.
 
-**SysKnife is different.**
+```sh
+$ sysknife "install neovim and make sure it starts on login"
 
-The AI proposes a **typed plan**. Every step is a named action — not a
-shell command — with a formal risk level:
+Plan  (2 steps)
+──────────────────────────────────────────────────────────
+ 1  AddLayeredPackage  neovim             risk: medium
+ 2  EnableService      neovim-server      risk: medium
+──────────────────────────────────────────────────────────
+Approve? [y/N]
+```
 
-- **Low** — read-only. Executes automatically.
-- **Medium** — reversible change. Requires your approval.
-- **High** — irreversible or access-control. Requires typed confirmation.
+The AI cannot run a shell command. It can only propose typed actions. The daemon
+is the only process that touches your system — and only after you say yes.
 
-You see the plan before anything happens. If you decline, nothing runs.
-The AI cannot override this.
+---
+
+## Why not just paste the shell command the AI gives you?
+
+Because you find out what it did after. There is no record, no rollback, and no
+way to verify the AI proposed the minimal change rather than a sledgehammer.
+
+SysKnife gives you:
+
+- **Typed actions** — not shell strings. `AddLayeredPackage neovim` not `rpm-ostree install neovim && ...`
+- **Risk levels** — Low (read-only), Medium (reversible), High (irreversible / access-control)
+- **Preview before execution** — see the exact commands before they run
+- **Automatic rollback** — if a high-risk action fails, the daemon reverses what it can
+- **Immutable audit trail** — every execution is HMAC-SHA256 hash-chained
 
 ---
 
 ## How it works
 
-```text
-sysknife-brain  →  sysknife-shell  →  sysknife-daemon
- (planner)      (approval)     (executor)
+```
+┌─────────────────┐   plan    ┌──────────────────┐  approve  ┌─────────────────┐
+│  sysknife-brain │ ────────► │  sysknife-shell  │ ────────► │ sysknife-daemon │
+│  (unprivileged) │           │  (approval gate) │           │  (root, locked) │
+└─────────────────┘           └──────────────────┘           └─────────────────┘
+   LLM + tools                   you review here               executes + audits
 ```
 
-1. You type a natural-language request
-2. The brain proposes a plan — typed actions with risk levels
-3. The shell renders the plan with previews
-4. You approve
-5. The daemon executes with live output and automatic rollback
-6. Every execution is logged to a local SQLite audit trail
+| Component | Privilege | Job |
+|---|---|---|
+| **brain** | none | Talks to the LLM, proposes a typed plan |
+| **shell** | user | Shows you the plan, collects your approval |
+| **daemon** | root | Executes approved actions, writes the audit log |
 
-The brain proposes but **cannot touch the system**. The daemon is the
-only privileged process.
+The brain proposes but **cannot touch the system**. The daemon executes but
+**cannot be reached without an approved plan**.
 
 ---
 
-## Recommended: use via Claude Code, Cursor, or Codex CLI (MCP)
+## Fastest path: use via your AI coding tool (MCP)
 
-The fastest way to use SysKnife is through the MCP server. Claude Code,
-Cursor, and Codex CLI all support it. You get the full
-plan/approve/execute loop inside your AI assistant — no separate
-terminal needed.
+Claude Code, Cursor, and Codex CLI all support the MCP integration. One command
+sets everything up:
 
 ```sh
-# 1. Run the setup wizard
 npx sysknife-setup
-
-# 2. Pick the integration you want
-#    or use one of: --claude, --cursor, --codex, --all
 ```
 
-See the [MCP Server guide](mcp.md) for the full setup, including SSH
-tunnel configuration and the required approval-gate hook.
+<img
+  src="https://raw.githubusercontent.com/lacs-foundation/sysknife/main/assets/demo/mcp-flow.gif"
+  alt="SysKnife MCP flow — plan and approve from inside Claude Code"
+  class="sysknife-demo"
+/>
+
+See the [MCP Server guide](mcp.md) for full setup and the approval-gate hook.
 
 ---
 
-## Use from the CLI
+## Or use the CLI directly
+
+> **ℹ️ Distro support**
+>
+> Fedora 41+ and Silverblue 41+ are fully supported.
+> Ubuntu action families are implemented and in E2E validation.
+> See [Distro Support](distro-support.md) for the full matrix.
 
 ```sh
 git clone https://github.com/lacs-foundation/sysknife
-cd sysknife
-make build
-sudo make install
+cd sysknife && make build && sudo make install
 sudo systemctl enable --now sysknife-daemon
 sysknife "show disk usage"
 ```
 
-See the [Quick Start](quickstart.md) and [CLI Reference](cli.md) for
-details.
+No API key needed if you have [Ollama](https://ollama.com) running locally —
+SysKnife auto-detects it. See [Quick Start](quickstart.md).
 
 ---
 
 ## Status
 
-230+ tests. 54 executable E2E user stories. Fedora Silverblue / Atomic
-Desktop fully supported.
+80+ typed actions · 1,026 tests · Fedora / Silverblue fully supported · AGPL-3.0
 
-Multi-distro (apt, dnf, pacman), Telegram approval interface, and
-`sysknife audit export` are on the
-[roadmap](https://github.com/lacs-foundation/sysknife/blob/main/ROADMAP.md).
+SysKnife is the reference implementation of the
+[LACS specification](https://github.com/lacs-foundation/specification) — a
+CC0 public-domain protocol for AI agents that operate at the Linux system level.
