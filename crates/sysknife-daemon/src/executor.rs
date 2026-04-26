@@ -1,7 +1,8 @@
 use crate::actions::{
     apparmor, apt, cloudinit, containers, deployment, distrobox, fail2ban, filesystem, flatpak,
-    grub, identity, layering, netplan, network, package_repos, ppa, processes, reboot, resolvectl,
-    services, snap, ssh, system_info, toolbox, ufw, users,
+    grub, identity, layering, livepatch, multipass, netplan, network, package_repos, ppa,
+    processes, reboot, release_upgrade, resolvectl, services, snap, ssh, system_info, toolbox,
+    ubuntu_pro, ufw, users,
     validate::{
         validated_group, validated_hostname, validated_locale, validated_ppa_name,
         validated_safe_arg, validated_timezone, validated_unit_name, validated_username,
@@ -626,6 +627,43 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
         // ── netplan ──────────────────────────────────────────────────────
         "NetplanGetConfig" => Ok(netplan::netplan_get_config()),
         "NetplanApply" => Ok(netplan::netplan_apply()),
+        "NetplanSet" => {
+            let key = validated_safe_arg(require_str(params, "key")?, "key")?;
+            let value = validated_safe_arg(require_str(params, "value")?, "value")?;
+            Ok(netplan::netplan_set(&key, &value))
+        }
+        "NetplanGenerate" => Ok(netplan::netplan_generate()),
+
+        // ── ufw Tier 3 ────────────────────────────────────────────────────
+        "UfwDeleteRule" => {
+            let rule_number = require_positive_u32(params, "rule_number")?;
+            ufw::ufw_delete_rule(rule_number)
+                .map_err(|_| ExecutorError::InvalidParam("rule_number"))
+        }
+        "UfwLimit" => {
+            let target = validated_safe_arg(require_str(params, "target")?, "target")?;
+            Ok(ufw::ufw_limit(&target))
+        }
+
+        // ── Ubuntu Pro ────────────────────────────────────────────────────
+        "ProStatus" => Ok(ubuntu_pro::pro_status()),
+        "ProAttach" => {
+            // token is a credential: read it from params but do NOT log it.
+            let token = require_str(params, "token")?;
+            // Minimal structural validation: non-empty, no shell metacharacters.
+            let token = validated_safe_arg(token, "token")?;
+            Ok(ubuntu_pro::pro_attach(&token))
+        }
+        "ProDetach" => Ok(ubuntu_pro::pro_detach()),
+
+        // ── Livepatch ─────────────────────────────────────────────────────
+        "LivepatchStatus" => Ok(livepatch::livepatch_status()),
+
+        // ── Multipass ─────────────────────────────────────────────────────
+        "MultipassList" => Ok(multipass::multipass_list()),
+
+        // ── Release upgrade ───────────────────────────────────────────────
+        "UbuntuReleaseUpgrade" => Ok(release_upgrade::ubuntu_release_upgrade()),
 
         // ── resolvectl (cross-distro / systemd-resolved) ──────────────────
         "ResolvectlStatus" => Ok(resolvectl::resolvectl_status()),
@@ -904,6 +942,17 @@ fn require_u32(params: &Value, key: &'static str) -> Result<u32, ExecutorError> 
             u32::try_from(n).map_err(|_| ExecutorError::InvalidParam(key))
         }
     }
+}
+
+/// Like [`require_u32`] but additionally rejects zero.
+///
+/// Used for rule numbers and similar 1-based indices where 0 is never valid.
+fn require_positive_u32(params: &Value, key: &'static str) -> Result<u32, ExecutorError> {
+    let n = require_u32(params, key)?;
+    if n == 0 {
+        return Err(ExecutorError::InvalidParam(key));
+    }
+    Ok(n)
 }
 
 /// Returns a vec of owned strings from a JSON array, or an empty vec if the

@@ -29,7 +29,12 @@ use sysknife_types::RiskLevel;
 
 /// Return one representative `ActionSpec` per netplan action name.
 pub fn specs() -> Vec<ActionSpec> {
-    vec![netplan_get_config(), netplan_apply()]
+    vec![
+        netplan_get_config(),
+        netplan_apply(),
+        netplan_set("ethernets.eth0.dhcp4", "true"),
+        netplan_generate(),
+    ]
 }
 
 // ---------------------------------------------------------------------------
@@ -51,6 +56,45 @@ pub fn netplan_get_config() -> ActionSpec {
             ],
         ),
         risk_level: RiskLevel::Low,
+        reboot_required: false,
+        rollback_available: false,
+    }
+}
+
+/// Set a single netplan key to a value (`sudo netplan set <key>=<value>`).
+///
+/// Risk: High / Admin. Modifies the active netplan configuration in-memory.
+/// Run `NetplanApply` afterward to apply the change to the live network stack.
+///
+/// `value` is quoted with shell single-quotes when it contains spaces to
+/// prevent word splitting by the shell.
+pub fn netplan_set(key: &str, value: &str) -> ActionSpec {
+    // Quote the value if it contains whitespace to avoid shell word-splitting.
+    let kv = if value.contains(' ') {
+        format!("{}='{}'", key, value)
+    } else {
+        format!("{}={}", key, value)
+    };
+    ActionSpec {
+        action_name: "NetplanSet",
+        mechanism: command_mechanism("sudo", ["netplan", "set", &kv]),
+        risk_level: RiskLevel::High,
+        reboot_required: false,
+        rollback_available: true,
+    }
+}
+
+/// Regenerate backend configuration from netplan YAML without applying it
+/// (`sudo netplan generate`).
+///
+/// Risk: Medium. Regenerates the systemd-networkd / NetworkManager config
+/// files from the current netplan YAML but does NOT reload interfaces.
+/// Safe to use as a dry-run check before `NetplanApply`.
+pub fn netplan_generate() -> ActionSpec {
+    ActionSpec {
+        action_name: "NetplanGenerate",
+        mechanism: command_mechanism("sudo", ["netplan", "generate"]),
+        risk_level: RiskLevel::Medium,
         reboot_required: false,
         rollback_available: false,
     }
@@ -151,11 +195,103 @@ mod tests {
         assert!(args.contains(&"apply"));
     }
 
+    // ── netplan_set ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn netplan_set_action_name() {
+        assert_eq!(
+            netplan_set("ethernets.eth0.dhcp4", "true").action_name,
+            "NetplanSet"
+        );
+    }
+
+    #[test]
+    fn netplan_set_risk_high() {
+        assert_eq!(
+            netplan_set("ethernets.eth0.dhcp4", "true").risk_level,
+            RiskLevel::High
+        );
+    }
+
+    #[test]
+    fn netplan_set_rollback_available() {
+        assert!(netplan_set("ethernets.eth0.dhcp4", "true").rollback_available);
+    }
+
+    #[test]
+    fn netplan_set_no_reboot() {
+        assert!(!netplan_set("ethernets.eth0.dhcp4", "true").reboot_required);
+    }
+
+    #[test]
+    fn netplan_set_argv_simple_value() {
+        let spec = netplan_set("ethernets.eth0.dhcp4", "true");
+        let (prog, args) = extract_cmd(&spec);
+        assert_eq!(prog, "sudo");
+        assert!(args.contains(&"netplan"));
+        assert!(args.contains(&"set"));
+        // key=value appears as a single argument
+        assert!(
+            args.contains(&"ethernets.eth0.dhcp4=true"),
+            "expected key=value arg, got: {:?}",
+            args
+        );
+    }
+
+    #[test]
+    fn netplan_set_argv_value_with_spaces_is_quoted() {
+        let spec = netplan_set("renderer", "NetworkManager with fallback");
+        let (_, args) = extract_cmd(&spec);
+        // value contains spaces — must be wrapped in single-quotes.
+        assert!(
+            args.iter()
+                .any(|a| a.contains("'NetworkManager with fallback'")),
+            "value with spaces must be single-quoted: {:?}",
+            args
+        );
+    }
+
+    // ── netplan_generate ─────────────────────────────────────────────────────
+
+    #[test]
+    fn netplan_generate_action_name() {
+        assert_eq!(netplan_generate().action_name, "NetplanGenerate");
+    }
+
+    #[test]
+    fn netplan_generate_risk_medium() {
+        assert_eq!(netplan_generate().risk_level, RiskLevel::Medium);
+    }
+
+    #[test]
+    fn netplan_generate_no_reboot() {
+        assert!(!netplan_generate().reboot_required);
+    }
+
+    #[test]
+    fn netplan_generate_no_rollback() {
+        assert!(!netplan_generate().rollback_available);
+    }
+
+    #[test]
+    fn netplan_generate_argv() {
+        let spec = netplan_generate();
+        let (prog, args) = extract_cmd(&spec);
+        assert_eq!(prog, "sudo");
+        assert!(args.contains(&"netplan"));
+        assert!(args.contains(&"generate"));
+    }
+
     // ── specs() completeness ─────────────────────────────────────────────────
 
     #[test]
     fn specs_covers_all_action_names() {
-        let expected = ["NetplanGetConfig", "NetplanApply"];
+        let expected = [
+            "NetplanGetConfig",
+            "NetplanApply",
+            "NetplanSet",
+            "NetplanGenerate",
+        ];
         let spec_names: Vec<&str> = specs().iter().map(|s| s.action_name).collect();
         for name in &expected {
             assert!(spec_names.contains(name), "specs() missing {name}");

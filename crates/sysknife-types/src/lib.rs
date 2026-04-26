@@ -183,6 +183,8 @@ pub const KNOWN_ACTION_NAMES: &[&str] = &[
     // Ubuntu / netplan
     "NetplanGetConfig",
     "NetplanApply",
+    "NetplanSet",
+    "NetplanGenerate",
     // Ubuntu / grub
     "GrubGetKargs",
     "GrubSetKargs",
@@ -206,6 +208,19 @@ pub const KNOWN_ACTION_NAMES: &[&str] = &[
     "Fail2banStatus",
     "Fail2banBanIp",
     "Fail2banUnbanIp",
+    // Ubuntu / release upgrade (Tier 3)
+    "UbuntuReleaseUpgrade",
+    // Ubuntu / Ubuntu Pro (Tier 3)
+    "ProStatus",
+    "ProAttach",
+    "ProDetach",
+    // Ubuntu / Livepatch (Tier 3)
+    "LivepatchStatus",
+    // Ubuntu / Multipass (Tier 3)
+    "MultipassList",
+    // Ubuntu / ufw Tier 3
+    "UfwDeleteRule",
+    "UfwLimit",
 ];
 
 /// A validated action name from the approved SysKnife catalogue.

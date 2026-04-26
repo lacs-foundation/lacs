@@ -314,6 +314,32 @@ pub const KNOWN_ACTIONS: &[(&str, &str)] = &[
      "ban an IP address in a fail2ban jail — params: jail* (string), ip* (IPv4 or IPv6); Ubuntu only; High risk"),
     ("Fail2banUnbanIp",
      "unban an IP address from a fail2ban jail — params: jail*, ip*; Ubuntu only; Medium risk"),
+    // ── Ubuntu / Tier 3 — netplan extensions ─────────────────────────────────
+    ("NetplanSet",
+     "set a single netplan key to a value — params: key* (e.g. 'ethernets.eth0.dhcp4'), value*; Ubuntu only; High risk; run NetplanApply to activate"),
+    ("NetplanGenerate",
+     "regenerate netplan backend config without applying — no params; Ubuntu only; Medium risk; dry-run before NetplanApply"),
+    // ── Ubuntu / Tier 3 — ufw extensions ─────────────────────────────────────
+    ("UfwDeleteRule",
+     "delete a ufw rule by number — param: rule_number* (positive integer from 'ufw status numbered'); Ubuntu only; High risk"),
+    ("UfwLimit",
+     "add rate-limiting rule on a port/service (>6 connections/30s blocked) — param: target* (e.g. '22' or 'ssh'); Ubuntu only; High risk; use for SSH brute-force mitigation"),
+    // ── Ubuntu / Tier 3 — release upgrade ────────────────────────────────────
+    ("UbuntuReleaseUpgrade",
+     "upgrade to the next Ubuntu release (do-release-upgrade) — no params; Ubuntu only; High risk; takes 20–45 min; requires reboot; only for explicit distribution upgrade requests"),
+    // ── Ubuntu / Tier 3 — Ubuntu Pro ─────────────────────────────────────────
+    ("ProStatus",
+     "show Ubuntu Pro subscription status — no params; Ubuntu only; read-only"),
+    ("ProAttach",
+     "attach machine to an Ubuntu Pro subscription — param: token* (credential, never log); Ubuntu only; High risk"),
+    ("ProDetach",
+     "detach from Ubuntu Pro subscription — no params; Ubuntu only; High risk"),
+    // ── Ubuntu / Tier 3 — Livepatch ──────────────────────────────────────────
+    ("LivepatchStatus",
+     "show Canonical Livepatch kernel-patch status — no params; Ubuntu only; read-only; requires canonical-livepatch installed and Ubuntu Pro"),
+    // ── Ubuntu / Tier 3 — Multipass ──────────────────────────────────────────
+    ("MultipassList",
+     "list Multipass VMs and their state — no params; Ubuntu only; read-only"),
 ];
 
 pub fn propose_plan_tool_def() -> ToolDefinition {

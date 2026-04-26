@@ -102,7 +102,11 @@ fn preview_profile(action_name: &str) -> PreviewProfile {
         // Ubuntu distrobox read-only
         | "DistroboxList"
         // Ubuntu netplan read-only
-        | "NetplanGetConfig" => PreviewProfile {
+        | "NetplanGetConfig"
+        // Ubuntu Pro / Livepatch / Multipass read-only (Tier 3)
+        | "ProStatus"
+        | "LivepatchStatus"
+        | "MultipassList" => PreviewProfile {
             risk_level: RiskLevel::Low,
             expected_side_effects: Vec::new(),
             reboot_required: false,
@@ -193,6 +197,79 @@ fn preview_profile(action_name: &str) -> PreviewProfile {
             rollback_available: false,
             warnings: vec![
                 "can disconnect the current SSH session if config is wrong".to_string(),
+                "exact approval required".to_string(),
+            ],
+        },
+
+        // ── Ubuntu netplan medium-risk (Tier 3) ───────────────────────────
+        "NetplanGenerate" => PreviewProfile {
+            risk_level: RiskLevel::Medium,
+            expected_side_effects: vec![
+                "backend network config files will be regenerated".to_string(),
+            ],
+            reboot_required: false,
+            rollback_available: false,
+            warnings: vec!["approval required".to_string()],
+        },
+
+        // ── Ubuntu netplan high-risk (Tier 3) ─────────────────────────────
+        "NetplanSet" => PreviewProfile {
+            risk_level: RiskLevel::High,
+            expected_side_effects: vec![
+                "netplan configuration will be modified".to_string(),
+                "network may be affected when NetplanApply is run".to_string(),
+            ],
+            reboot_required: false,
+            rollback_available: true,
+            warnings: vec![
+                "run NetplanApply to activate the change".to_string(),
+                "exact approval required".to_string(),
+            ],
+        },
+
+        // ── Ubuntu ufw Tier 3 high-risk ───────────────────────────────────
+        "UfwDeleteRule" | "UfwLimit" => PreviewProfile {
+            risk_level: RiskLevel::High,
+            expected_side_effects: vec![
+                "firewall rules will change".to_string(),
+                "network access may be immediately affected".to_string(),
+            ],
+            reboot_required: false,
+            rollback_available: false,
+            warnings: vec![
+                "misconfigured rules can lock out SSH access".to_string(),
+                "exact approval required".to_string(),
+            ],
+        },
+
+        // ── Ubuntu Pro Tier 3 high-risk ───────────────────────────────────
+        "ProAttach" | "ProDetach" => PreviewProfile {
+            risk_level: RiskLevel::High,
+            expected_side_effects: vec![
+                "Ubuntu Pro subscription state will change".to_string(),
+                "Pro services (ESM, Livepatch, FIPS) may be enabled or disabled".to_string(),
+            ],
+            reboot_required: false,
+            rollback_available: true,
+            warnings: vec![
+                "exact approval required".to_string(),
+                "token is treated as a credential and will not be logged".to_string(),
+            ],
+        },
+
+        // ── Ubuntu release upgrade Tier 3 ────────────────────────────────
+        "UbuntuReleaseUpgrade" => PreviewProfile {
+            risk_level: RiskLevel::High,
+            expected_side_effects: vec![
+                "entire OS will be upgraded to the next Ubuntu release".to_string(),
+                "takes 20–45 minutes; system will be rebooted to complete".to_string(),
+                "third-party PPAs may be disabled or break during upgrade".to_string(),
+            ],
+            reboot_required: true,
+            rollback_available: false,
+            warnings: vec![
+                "reboot required to complete the upgrade".to_string(),
+                "long-running operation — configure timeout >= 3600 seconds".to_string(),
                 "exact approval required".to_string(),
             ],
         },

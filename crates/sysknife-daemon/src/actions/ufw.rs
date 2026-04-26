@@ -35,6 +35,8 @@ pub fn specs() -> Vec<ActionSpec> {
         ufw_deny("23"),
         ufw_reset(),
         ufw_status(),
+        ufw_delete_rule(1).expect("1 is a valid rule number"),
+        ufw_limit("22"),
     ]
 }
 
@@ -123,6 +125,52 @@ pub fn ufw_status() -> ActionSpec {
         action_name: "UfwStatus",
         mechanism: command_mechanism("sudo", ["ufw", "status", "verbose"]),
         risk_level: RiskLevel::Low,
+        reboot_required: false,
+        rollback_available: false,
+    }
+}
+
+/// Delete a ufw rule by its rule number
+/// (`sudo ufw --force delete <rule_number>`).
+///
+/// `rule_number` is the 1-based integer shown by `ufw status numbered`.
+/// Returns an error if `rule_number` is zero or negative — ufw rule
+/// numbers are always positive integers.
+///
+/// Risk: High / Admin. Removes an existing firewall rule. A mistaken
+/// deletion can expose services or drop needed traffic.
+pub fn ufw_delete_rule(rule_number: u32) -> Result<ActionSpec, &'static str> {
+    // ufw rule numbers are 1-based; 0 is invalid.
+    if rule_number == 0 {
+        return Err("rule_number must be a positive integer (>= 1)");
+    }
+    Ok(ActionSpec {
+        action_name: "UfwDeleteRule",
+        mechanism: command_mechanism(
+            "sudo",
+            ["ufw", "--force", "delete", &rule_number.to_string()],
+        ),
+        risk_level: RiskLevel::High,
+        reboot_required: false,
+        rollback_available: false,
+    })
+}
+
+/// Rate-limit connections on a port or service (`sudo ufw limit <target>`).
+///
+/// Adds a rate-limiting rule that blocks IPs making more than 6 connections
+/// within 30 seconds — useful for brute-force mitigation on SSH (port 22).
+///
+/// `target` may be a port number (`"22"`), a protocol/port (`"22/tcp"`), or
+/// a ufw app profile name (`"ssh"`).
+///
+/// Risk: High / Admin. Mutates firewall rules; can inadvertently block
+/// legitimate traffic under high-connection workloads.
+pub fn ufw_limit(target: &str) -> ActionSpec {
+    ActionSpec {
+        action_name: "UfwLimit",
+        mechanism: command_mechanism("sudo", ["ufw", "limit", target]),
+        risk_level: RiskLevel::High,
         reboot_required: false,
         rollback_available: false,
     }
@@ -284,6 +332,77 @@ mod tests {
         assert_eq!(ufw_status().risk_level, RiskLevel::Low);
     }
 
+    // ── ufw_delete_rule ──────────────────────────────────────────────────────
+
+    #[test]
+    fn ufw_delete_rule_action_name() {
+        assert_eq!(ufw_delete_rule(3).unwrap().action_name, "UfwDeleteRule");
+    }
+
+    #[test]
+    fn ufw_delete_rule_risk_high() {
+        assert_eq!(ufw_delete_rule(1).unwrap().risk_level, RiskLevel::High);
+    }
+
+    #[test]
+    fn ufw_delete_rule_no_reboot() {
+        assert!(!ufw_delete_rule(1).unwrap().reboot_required);
+    }
+
+    #[test]
+    fn ufw_delete_rule_argv() {
+        let spec = ufw_delete_rule(5).unwrap();
+        let (prog, args) = extract_args(&spec);
+        assert_eq!(prog, "sudo");
+        assert!(args.contains(&"ufw"));
+        assert!(args.contains(&"delete"));
+        assert!(args.contains(&"--force"));
+        assert!(args.contains(&"5"));
+    }
+
+    #[test]
+    fn ufw_delete_rule_rejects_zero() {
+        assert!(
+            ufw_delete_rule(0).is_err(),
+            "rule_number=0 must be rejected"
+        );
+    }
+
+    #[test]
+    fn ufw_delete_rule_accepts_one() {
+        assert!(
+            ufw_delete_rule(1).is_ok(),
+            "rule_number=1 must be accepted (minimum valid value)"
+        );
+    }
+
+    // ── ufw_limit ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn ufw_limit_action_name() {
+        assert_eq!(ufw_limit("22").action_name, "UfwLimit");
+    }
+
+    #[test]
+    fn ufw_limit_risk_high() {
+        assert_eq!(ufw_limit("ssh").risk_level, RiskLevel::High);
+    }
+
+    #[test]
+    fn ufw_limit_no_reboot() {
+        assert!(!ufw_limit("22").reboot_required);
+    }
+
+    #[test]
+    fn ufw_limit_argv() {
+        let spec = ufw_limit("22/tcp");
+        let (prog, args) = extract_args(&spec);
+        assert_eq!(prog, "sudo");
+        assert!(args.contains(&"ufw"));
+        assert!(args.contains(&"limit"));
+        assert!(args.contains(&"22/tcp"));
+    }
+
     // ── specs() completeness ─────────────────────────────────────────────────
 
     #[test]
@@ -295,6 +414,8 @@ mod tests {
             "UfwDeny",
             "UfwReset",
             "UfwStatus",
+            "UfwDeleteRule",
+            "UfwLimit",
         ];
         let spec_names: Vec<&str> = specs().iter().map(|s| s.action_name).collect();
         for name in &expected {
