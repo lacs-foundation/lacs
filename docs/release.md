@@ -70,11 +70,64 @@ non-zero the publish is aborted.  You can run the same check locally:
 cd packages/setup && npm publish --dry-run
 ```
 
+## GitHub Packages Publishing
+
+The workflow also publishes `@lacs-foundation/sysknife-setup` to GitHub Packages
+on every tag.  No extra secret is required — the workflow's `GITHUB_TOKEN` provides
+`packages:write` permission automatically.
+
+After a tag is pushed, the package appears in the **Packages** sidebar of the
+GitHub repo at `https://github.com/orgs/lacs-foundation/packages`.
+
+Consumers install it with:
+
+```bash
+# Add to ~/.npmrc (or project .npmrc):
+@lacs-foundation:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=YOUR_GITHUB_PAT
+
+npm install @lacs-foundation/sysknife-setup
+```
+
+## crates.io Publishing
+
+The workflow publishes the workspace crates to crates.io on every tag, in
+dependency order.  This step is **gated on a secret** named
+`CARGO_REGISTRY_TOKEN`.  If the secret is absent the step is skipped with a
+workflow notice; the GitHub Release and npm steps still complete normally.
+
+### Enabling crates.io publish
+
+1. Go to <https://crates.io/me> and generate an API token with the
+   **Publish new crates** and **Publish updates** scopes.
+2. In the GitHub repo, go to **Settings → Secrets and variables → Actions →
+   New repository secret**.
+3. Name it `CARGO_REGISTRY_TOKEN` and paste the token value.
+4. Re-run the latest release workflow (Actions → release → Re-run all jobs) or
+   push a new tag.
+
+### Crate publish order
+
+Crates are published in dependency order so crates.io indexes each one before
+its dependents try to reference it:
+
+```
+sysknife-types
+sysknife-proto
+sysknife-core
+sysknife-brain
+sysknife-daemon
+sysknife-daemon-test
+sysknife-cli
+```
+
 ## Verification
 
 After the workflow completes:
 
 - GitHub Release assets are visible at
-  `https://github.com/lacs-foundation/lacs/releases/tag/vX.Y.Z`.
+  `https://github.com/lacs-foundation/sysknife/releases/tag/vX.Y.Z`.
 - npm package is visible at `https://www.npmjs.com/package/sysknife-setup`.
+- GitHub Packages entry is visible at
+  `https://github.com/orgs/lacs-foundation/packages`.
 - `npx sysknife-setup --help` should print the help text and exit 0.
