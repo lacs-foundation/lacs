@@ -237,7 +237,9 @@ install -Dm 440 packaging/sysknife-sudoers "${SUDOERS_DIR}/sysknife" \
 # ---------------------------------------------------------------------------
 
 step "Add $VM_USER to sysknife groups"
-# make install ran systemd-sysusers which created these groups.
+# The sysknife user/groups were created by the explicit `systemd-sysusers`
+# call in step 5 (this script does the install side-files inline rather
+# than calling `make install` — see the rationale in step 5's comment).
 usermod --append --groups sysknife,sysknife-dev,sysknife-admin "$VM_USER" \
     || fail "usermod sysknife groups"
 
@@ -254,14 +256,16 @@ usermod --add-subgids 100000-165535 "$VM_USER" 2>/dev/null \
 # ---------------------------------------------------------------------------
 
 step "Install and enable sysknife-daemon.service"
-# The unit file is in packaging/; make install should have placed it, but
-# also install explicitly to ensure it is in /etc/systemd/system/ so it
-# takes precedence and survives upgrades without mutation of /usr.
+# The unit file lives in `packaging/`; install it explicitly to
+# /etc/systemd/system/ so it takes precedence over /usr/lib/systemd/system/
+# and survives package upgrades without mutation of /usr.
 SYSTEMD_UNIT_SRC="${REPO_DIR}/packaging/sysknife-daemon.service"
 if [ -f "$SYSTEMD_UNIT_SRC" ]; then
     install -m 644 "$SYSTEMD_UNIT_SRC" /etc/systemd/system/sysknife-daemon.service
 else
-    # Fallback: write the unit inline (should not happen if make install ran).
+    # Fallback: write the unit inline (should not happen — the file is
+    # tracked in the repo and the rsync step copies the whole packaging/
+    # tree into the VM).
     cat > /etc/systemd/system/sysknife-daemon.service <<'UNIT'
 [Unit]
 Description=LACS privileged daemon

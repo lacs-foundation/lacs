@@ -8,10 +8,11 @@
 //!
 //! `firewalld` (the Fedora-default firewall) is installable on Ubuntu via
 //! `apt install firewalld` but is NOT the default. On Ubuntu the canonical
-//! choice is `ufw`. The executor routes `GetFirewallState`, `UfwEnable`,
-//! `UfwDisable`, `UfwAllow`, `UfwDeny`, `UfwReset`, and `UfwStatus` to this
-//! module on Ubuntu distros. `ConfigureFirewall` (firewalld zones) remains
-//! Fedora-only and returns an unsupported-on-distro error on Ubuntu.
+//! choice is `ufw`. The executor routes the ufw-named actions
+//! (`UfwEnable`, `UfwDisable`, `UfwAllow`, `UfwDeny`, `UfwReset`, `UfwStatus`,
+//! `UfwLimit`, `UfwDeleteRule`) to this module. `GetFirewallState` and
+//! `ConfigureFirewall` are firewalld-specific and always dispatch to the
+//! `network::*` module regardless of distro — they are not routed here.
 //!
 //! ## Risk classification
 //!

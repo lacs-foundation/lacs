@@ -242,18 +242,33 @@ fn preview_profile(action_name: &str) -> PreviewProfile {
             ],
         },
 
-        // ── Ubuntu Pro Tier 3 high-risk ───────────────────────────────────
-        "ProAttach" | "ProDetach" => PreviewProfile {
+        // ── Ubuntu Pro attach (Tier 3 high-risk; carries token) ──────────
+        "ProAttach" => PreviewProfile {
             risk_level: RiskLevel::High,
             expected_side_effects: vec![
-                "Ubuntu Pro subscription state will change".to_string(),
-                "Pro services (ESM, Livepatch, FIPS) may be enabled or disabled".to_string(),
+                "Ubuntu Pro subscription will be attached".to_string(),
+                "Pro services (ESM, Livepatch, FIPS) may be enabled".to_string(),
             ],
             reboot_required: false,
             rollback_available: true,
             warnings: vec![
                 "exact approval required".to_string(),
-                "token is treated as a credential and will not be logged".to_string(),
+                "token is redacted from the preview, audit log, and diagnostic output".to_string(),
+            ],
+        },
+
+        // ── Ubuntu Pro detach (Tier 3 high-risk; no credential param) ───
+        "ProDetach" => PreviewProfile {
+            risk_level: RiskLevel::High,
+            expected_side_effects: vec![
+                "Ubuntu Pro subscription will be released".to_string(),
+                "ESM, Livepatch, and FIPS services will be disabled".to_string(),
+            ],
+            reboot_required: false,
+            rollback_available: true,
+            warnings: vec![
+                "exact approval required".to_string(),
+                "after detach, this machine no longer receives Pro security patches".to_string(),
             ],
         },
 

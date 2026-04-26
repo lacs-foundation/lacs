@@ -8,12 +8,22 @@
 //! `ProAttach` requires an Ubuntu Pro token. Tokens are credentials and
 //! **MUST NOT** appear in audit logs, debug output, or tracing spans.
 //!
-//! The `pro_attach` constructor accepts the token as a `&str` and embeds it
-//! in the command arguments. The token value is intentionally **not** placed
-//! in the `ActionSpec` summary, action name, or any field that the audit
-//! chain records. The calling code in `executor::build_action_spec` reads the
-//! raw param value but MUST NOT log it — the param is marked as a credential
-//! reference in `DEBIAN_PARAMS` so the planner never echoes it back.
+//! Two layers of defense protect the token:
+//!
+//! 1. **Constructor `specs()` uses the literal sentinel `"<REDACTED>"`** so
+//!    `action_consistency` tests and any code that walks the spec catalogue
+//!    cannot accidentally surface a real-shaped token.
+//! 2. **The dispatcher redacts at the wire boundary**:
+//!    `dispatcher::redact_params` and `dispatcher::redact_argv` replace
+//!    every credential param value with `"<REDACTED>"` before the
+//!    `PreviewEnvelope.proposed_change` is persisted to the transactions
+//!    table or returned in `PreviewResponse`, and before the argv is
+//!    rendered into a `DescribeResponse.command` field. The credential
+//!    key list is in `dispatcher::credential_keys_for(action_name)`.
+//!
+//! The executor still passes the real token to `sudo pro attach <token>`
+//! at run time — that is the one place the value has to be in clear, and
+//! it never crosses the daemon's IPC boundary.
 //!
 //! ## Risk classification
 //!
@@ -58,9 +68,12 @@ pub fn pro_status() -> ActionSpec {
 ///
 /// **Credential handling:** `token` is an Ubuntu Pro subscription token and
 /// MUST be treated as a secret. It MUST NOT appear in audit log summaries,
-/// tracing output, or any diagnostic message. The executor reads the raw
-/// token value but never logs it; the param is marked as a credential
-/// reference in `DEBIAN_PARAMS`.
+/// tracing output, or any diagnostic message. The dispatcher redacts the
+/// `token` param value to `"<REDACTED>"` before the action's preview is
+/// persisted or sent over the wire (see `dispatcher::redact_params` and
+/// `dispatcher::redact_argv`). The executor passes the real token to
+/// `sudo pro attach <token>` at run time — that is the one place the value
+/// is in clear, and it never crosses the IPC boundary.
 pub fn pro_attach(token: &str) -> ActionSpec {
     ActionSpec {
         action_name: "ProAttach",
