@@ -193,14 +193,24 @@ Env vars always win over the config file. Full reference in
 ## MCP server
 
 SysKnife exposes an [MCP](https://modelcontextprotocol.io/) server so any
-MCP-capable agent (Claude Code, Cursor, etc.) can plan + approve + execute
-through SysKnife's risk-gated path. Set up with one command:
+MCP-capable agent (Claude Code, Cursor, Codex CLI, etc.) can plan + approve +
+execute through SysKnife's risk-gated path. Set up with one command:
 
 ```sh
 npx sysknife-setup
-# detects sysknife, asks for the daemon socket and LLM provider,
-# writes .mcp.json + the Claude Code approval hook.
+# interactive wizard — detects sysknife, asks for the daemon socket,
+# LLM provider, and which AI clients to configure (all three by default).
 ```
+
+The wizard writes per-client configs in the correct format:
+
+| Client        | File(s) written                                          |
+|---------------|----------------------------------------------------------|
+| **Claude Code** | `.mcp.json` + `.claude/hookify.*.local.md`             |
+| **Cursor**      | `.cursor/mcp.json` + `.cursor/rules/sysknife.mdc`      |
+| **Codex CLI**   | `~/.codex/config.toml` (appended) + `AGENTS.md`        |
+
+All config files that may contain API keys are created with `chmod 0600`.
 
 The MCP layer enforces the same approval contract as the CLI: agents must
 call `sysknife_plan` first, present the plan, wait for explicit human

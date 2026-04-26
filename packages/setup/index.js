@@ -4,19 +4,30 @@
 // ---------------------------------------------------------------------------
 // SysKnife setup — zero-dependency onboarding script
 //
-// Creates:
-//   .mcp.json                                                  MCP server config
-//   .claude/hookify.require-sysknife-approval.local.md         approval gate
-//   .claude/hookify.sysknife-schema-fetch.local.md             schema-fetch reminder
-//   .claude/hookify.sysknife-bash-guard.local.md               VM query guard
+// Creates (per selected clients):
 //
-// Single VM:   npx sysknife-setup
+//   Claude Code
+//     .mcp.json                                                  MCP server config
+//     .claude/hookify.require-sysknife-approval.local.md         approval gate
+//     .claude/hookify.sysknife-schema-fetch.local.md             schema-fetch reminder
+//     .claude/hookify.sysknife-bash-guard.local.md               VM query guard
+//
+//   Cursor
+//     .cursor/mcp.json                                           MCP server config
+//     .cursor/rules/sysknife.mdc                                 Cursor project rules
+//
+//   Codex CLI (openai/codex)
+//     ~/.codex/config.toml                                       appended MCP block
+//     AGENTS.md                                                  project instructions
+//
+// Single VM:    npx sysknife-setup
 // Multiple VMs: the wizard prompts "Add another VM?" and collects each target.
-//   Each target becomes a separate mcpServers entry so Claude Code sees
+//   Each target becomes a separate server entry so the AI client sees
 //   independent, named tool sets (sysknife-web, sysknife-db, …).
 // ---------------------------------------------------------------------------
 
 const fs   = require('fs');
+const os   = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const readline = require('readline');
@@ -54,12 +65,36 @@ function findBinary(name) {
   }
 }
 
-function ask(rl, question, defaultVal) {
+/**
+ * ask() works in two modes:
+ *
+ * TTY (interactive):  delegates to rl.question() which echoes and prompts.
+ * Non-TTY (piped):    rl.question() is broken for multiple calls in Node ≥18
+ *                     when terminal=false, so we drain a shared line queue
+ *                     instead.  The prompt is still printed to stdout so
+ *                     log output remains comprehensible.
+ */
+function ask(rl, lineQueue, question, defaultVal) {
   return new Promise((resolve) => {
     const suffix = defaultVal ? ` ${D}[${defaultVal}]${X}` : '';
-    rl.question(`  ${question}${suffix}: `, (answer) => {
-      resolve(answer.trim() || defaultVal || '');
-    });
+    const prompt  = `  ${question}${suffix}: `;
+
+    if (process.stdin.isTTY) {
+      rl.question(prompt, (answer) => {
+        resolve(answer.trim() || defaultVal || '');
+      });
+    } else {
+      process.stdout.write(prompt);
+      if (lineQueue.lines.length > 0) {
+        const answer = lineQueue.lines.shift();
+        process.stdout.write(answer + '\n');
+        resolve(answer.trim() || defaultVal || '');
+      } else {
+        lineQueue.waiters.push((answer) => {
+          resolve(answer.trim() || defaultVal || '');
+        });
+      }
+    }
   });
 }
 
@@ -71,6 +106,40 @@ function sanitizeName(s) {
 /** Generate a 32-byte hex token suitable for vsock auth. */
 function generateToken() {
   return crypto.randomBytes(32).toString('hex');
+}
+
+/** Escape a string for inclusion inside a TOML quoted string. */
+function tomlQuote(s) {
+  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+/**
+ * Write TOML for one mcpServer entry.
+ *
+ * Format (verified against codex-rs/config/src/mcp_types.rs):
+ *
+ *   [mcp_servers.<key>]
+ *   command = "/path/to/sysknife"
+ *   args = ["mcp-server"]
+ *   [mcp_servers.<key>.env]
+ *   SYSKNIFE_SOCKET = "..."
+ *   ...
+ */
+function serverToToml(key, server) {
+  const { command, args, env } = server;
+  const argsStr = args.map(a => `"${tomlQuote(a)}"`).join(', ');
+  const lines = [
+    `[mcp_servers.${key}]`,
+    `command = "${tomlQuote(command)}"`,
+    `args = [${argsStr}]`,
+  ];
+  if (env && Object.keys(env).length > 0) {
+    lines.push(`[mcp_servers.${key}.env]`);
+    for (const [k, v] of Object.entries(env)) {
+      lines.push(`${k} = "${tomlQuote(v)}"`);
+    }
+  }
+  return lines.join('\n');
 }
 
 // ---------------------------------------------------------------------------
@@ -94,7 +163,7 @@ const API_KEY_VARS = {
 };
 
 // ---------------------------------------------------------------------------
-// Hookify rule content
+// Hookify rule content (Claude Code only)
 // ---------------------------------------------------------------------------
 //
 // Always includes multi-VM fleet guidance even when a single target is
@@ -175,10 +244,71 @@ not VM data.
 `;
 
 // ---------------------------------------------------------------------------
+// Cursor project rules (.cursor/rules/sysknife.mdc)
+// ---------------------------------------------------------------------------
+
+const CURSOR_RULE = `---
+description: SysKnife MCP approval and safety rules
+alwaysApply: true
+---
+
+# SysKnife execution rules
+
+## Approval gate (single VM)
+
+When using the sysknife MCP tools, you MUST follow this order:
+
+1. Call \`sysknife_plan\` → present the plan to the user
+2. **WAIT** for the user to explicitly approve
+   (words like "yes", "do it", "execute", "go ahead", "approved")
+3. Only then call \`sysknife_execute\`
+
+**Never call \`sysknife_execute\` in the same turn as \`sysknife_plan\`.**
+
+## Approval gate (multiple VMs)
+
+When sysknife is configured with multiple targets (sysknife-web, sysknife-db, …):
+
+1. Call \`sysknife_plan\` for **all** affected VMs before executing any
+2. Present **all** plans together for review
+3. **WAIT** for the user to approve all plans
+4. Only then call \`sysknife_execute\` for each VM
+
+## VM system queries
+
+Prefer \`sysknife_plan\` + \`sysknife_execute\` over local terminal commands
+when the user is asking about their QEMU/KVM guest VM — local commands return
+host data, not VM data.
+`;
+
+// ---------------------------------------------------------------------------
+// Codex project instructions (AGENTS.md)
+// ---------------------------------------------------------------------------
+
+const AGENTS_MD_BLOCK = `
+## SysKnife MCP rules
+
+When using the sysknife MCP tools, follow this order:
+
+1. Call \`sysknife_plan\` → present the plan to the user
+2. **WAIT** for the user to explicitly approve before proceeding
+3. Only then call \`sysknife_execute\`
+
+**Never call \`sysknife_execute\` in the same turn as \`sysknife_plan\`.**
+
+For multi-VM configurations (sysknife-web, sysknife-db, …), plan all
+affected VMs first, present all plans together, wait for a single
+explicit approval, then execute each in turn.
+
+Prefer \`sysknife_plan\`/\`sysknife_execute\` over shell commands for
+guest VM queries — local shell returns host data, not VM data.
+`;
+
+// ---------------------------------------------------------------------------
 // Collect one VM target (socket + optional vsock token)
 // ---------------------------------------------------------------------------
 
-async function collectTarget(rl, idx) {
+async function collectTarget(rl, lineQueue, idx) {
   console.log();
   console.log(`  ${B}── VM Target ${idx} ${'─'.repeat(40 - String(idx).length)}${X}`);
   console.log(`  ${D}Socket examples:${X}`);
@@ -186,7 +316,7 @@ async function collectTarget(rl, idx) {
   console.log(`    ${D}/tmp/sysknife-vm.sock${X}        ${D}SSH tunnel to a VM${X}`);
   console.log(`    ${D}vsock://10:9734${X}              ${D}virtio-vsock (CID:port)${X}`);
 
-  const socket = await ask(rl, 'Daemon socket', '/run/sysknife/daemon.sock');
+  const socket = await ask(rl, lineQueue, 'Daemon socket', '/run/sysknife/daemon.sock');
 
   let token = '';
   if (socket.startsWith('vsock://')) {
@@ -194,7 +324,7 @@ async function collectTarget(rl, idx) {
     console.log(`  ${Y}vsock detected.${X} A pre-shared token is required.`);
     console.log(`  ${D}Leave blank to auto-generate one.${X}`);
     console.log(`  On the guest: ${D}echo "admin:<token>" | sudo tee /etc/sysknife/token${X}`);
-    token = await ask(rl, 'SYSKNIFE_TOKEN (hex)', '');
+    token = await ask(rl, lineQueue, 'SYSKNIFE_TOKEN (hex)', '');
     if (!token) {
       token = generateToken();
       ok(`Generated vsock auth token: ${token}`);
@@ -232,15 +362,32 @@ function targetNextStep(target) {
 async function main() {
   console.log();
   console.log(`${B}SysKnife Setup${X}`);
-  console.log(`  Configures .mcp.json and Claude Code hooks.`);
+  console.log(`  Configures MCP for Claude Code, Cursor, and Codex CLI.`);
   console.log(`  Supports single and multi-VM (fleet) configurations.`);
   console.log();
+
+  // lineQueue buffers stdin lines for non-TTY (piped) mode.
+  // readline.question() is broken for multiple calls when terminal=false
+  // in Node ≥18, so we drain a shared queue in that case.
+  const lineQueue = { lines: [], waiters: [] };
 
   const rl = readline.createInterface({
     input:    process.stdin,
     output:   process.stdout,
-    terminal: true,
+    terminal: process.stdin.isTTY,
   });
+
+  if (!process.stdin.isTTY) {
+    rl.on('line', (line) => {
+      if (lineQueue.waiters.length > 0) {
+        const waiter = lineQueue.waiters.shift();
+        process.stdout.write(line + '\n');
+        waiter(line);
+      } else {
+        lineQueue.lines.push(line);
+      }
+    });
+  }
 
   // ── 1. Binary location ──────────────────────────────────────────────────
 
@@ -253,12 +400,13 @@ async function main() {
 
   const binaryPath = await ask(
     rl,
+    lineQueue,
     'Path to sysknife binary',
     detected || '/usr/local/bin/sysknife'
   );
 
   if (!fs.existsSync(binaryPath)) {
-    warn(`${binaryPath} does not exist yet — update .mcp.json after installing`);
+    warn(`${binaryPath} does not exist yet — update config files after installing`);
   }
 
   // ── 2. LLM provider ─────────────────────────────────────────────────────
@@ -268,7 +416,7 @@ async function main() {
   console.log();
   const providerList = PROVIDERS.map((p, i) => (i === 0 ? `${B}${p}${X}` : p)).join(' / ');
   console.log(`  LLM providers: ${providerList}`);
-  let provider = await ask(rl, 'LLM provider', 'openai');
+  let provider = await ask(rl, lineQueue, 'LLM provider', 'openai');
   provider = provider.toLowerCase();
 
   if (!PROVIDERS.includes(provider)) {
@@ -285,35 +433,56 @@ async function main() {
   if (envVar) {
     const existing = process.env[envVar];
     if (existing) {
-      ok(`${envVar} already set in environment — will not embed in .mcp.json`);
+      ok(`${envVar} already set in environment — will not embed in config files`);
     } else {
       console.log();
-      console.log(`  ${Y}Note:${X} The key will be stored in .mcp.json in plain text.`);
+      console.log(`  ${Y}Note:${X} The key will be stored in plain text in the generated config files.`);
       console.log(`  Leave blank to set ${envVar} in your shell profile instead.`);
-      apiKey = await ask(rl, envVar, '');
+      apiKey = await ask(rl, lineQueue, envVar, '');
     }
   }
 
   // ── 4. Model ─────────────────────────────────────────────────────────────
 
   console.log();
-  const model = await ask(rl, 'Model name', MODEL_DEFAULTS[provider]);
+  const model = await ask(rl, lineQueue, 'Model name', MODEL_DEFAULTS[provider]);
 
-  // ── 5. VM targets (loop) ─────────────────────────────────────────────────
+  // ── 5. Client selection ───────────────────────────────────────────────────
+
+  console.log();
+  hr();
+  console.log(`  ${B}AI clients to configure${X}  ${D}(press Enter to accept defaults)${X}`);
+  console.log();
+  const wantClaude = await ask(rl, lineQueue, 'Configure Claude Code?', 'Y');
+  const wantCursor = await ask(rl, lineQueue, 'Configure Cursor?',      'Y');
+  const wantCodex  = await ask(rl, lineQueue, 'Configure Codex CLI?',   'Y');
+
+  const doClaude = !wantClaude.toLowerCase().startsWith('n');
+  const doCursor = !wantCursor.toLowerCase().startsWith('n');
+  const doCodex  = !wantCodex.toLowerCase().startsWith('n');
+
+  if (!doClaude && !doCursor && !doCodex) {
+    console.log();
+    warn('No clients selected — nothing to write. Exiting.');
+    rl.close();
+    return;
+  }
+
+  // ── 6. VM targets (loop) ─────────────────────────────────────────────────
 
   const targets = [];
   let addingMore = true;
 
   while (addingMore) {
-    const target = await collectTarget(rl, targets.length + 1);
+    const target = await collectTarget(rl, lineQueue, targets.length + 1);
     targets.push(target);
 
     console.log();
-    const answer = await ask(rl, 'Add another VM?', 'N');
+    const answer = await ask(rl, lineQueue, 'Add another VM?', 'N');
     addingMore = answer.toLowerCase().startsWith('y');
   }
 
-  // ── 6. Names for multi-VM (only when >1 target) ──────────────────────────
+  // ── 7. Names for multi-VM (only when >1 target) ──────────────────────────
   //
   // Single target: mcpServers key stays "sysknife" — fully backward-compatible.
   // Multiple targets: user picks a short label for each; keys become
@@ -325,12 +494,12 @@ async function main() {
     hr();
     console.log(`  ${B}Name your targets${X}`);
     console.log(`  ${D}Names become MCP server IDs: sysknife-<name>${X}`);
-    console.log(`  ${D}Claude will see sysknife-<name>__sysknife_plan, etc.${X}`);
+    console.log(`  ${D}Each client will see sysknife-<name>_sysknife_plan, etc.${X}`);
     console.log();
 
     for (let i = 0; i < targets.length; i++) {
       const defaultName = `vm${i + 1}`;
-      const raw = await ask(rl, `Name for ${targets[i].socket}`, defaultName);
+      const raw = await ask(rl, lineQueue, `Name for ${targets[i].socket}`, defaultName);
       targets[i].name = sanitizeName(raw);
     }
 
@@ -371,41 +540,129 @@ async function main() {
     }
   }
 
-  // ── Write .mcp.json ──────────────────────────────────────────────────────
-
-  console.log();
-
-  const mcpConfig = { mcpServers };
-  // .mcp.json may contain provider API keys in plain text. Restrict to owner
-  // read/write so a coworker on a shared workstation (or a stray `cat *` in a
-  // build script) cannot recover them. `chmodSync` is idempotent and also
-  // tightens permissions on a pre-existing file that was created with the
-  // process umask before this change.
-  fs.writeFileSync('.mcp.json', JSON.stringify(mcpConfig, null, 2) + '\n', { mode: 0o600 });
-  fs.chmodSync('.mcp.json', 0o600);
-
   const serverKeys = Object.keys(mcpServers);
   const targetSummary = targets.length === 1
     ? 'sysknife'
     : serverKeys.join(', ');
-  ok(`Created .mcp.json  (${targets.length} target${targets.length > 1 ? 's' : ''}: ${targetSummary})`);
 
-  // ── Write hookify rules ──────────────────────────────────────────────────
+  // ── Write files ──────────────────────────────────────────────────────────
 
-  if (!fs.existsSync('.claude')) {
-    fs.mkdirSync('.claude', { recursive: true });
+  console.log();
+
+  // ── Claude Code ──────────────────────────────────────────────────────────
+
+  if (doClaude) {
+    const mcpConfig = { mcpServers };
+    // .mcp.json may contain provider API keys in plain text. Restrict to owner
+    // read/write so a coworker on a shared workstation (or a stray `cat *` in a
+    // build script) cannot recover them. `chmodSync` is idempotent and also
+    // tightens permissions on a pre-existing file that was created with the
+    // process umask before this change.
+    fs.writeFileSync('.mcp.json', JSON.stringify(mcpConfig, null, 2) + '\n', { mode: 0o600 });
+    fs.chmodSync('.mcp.json', 0o600);
+    ok(`Created .mcp.json  (${targets.length} target${targets.length > 1 ? 's' : ''}: ${targetSummary})`);
+
+    if (!fs.existsSync('.claude')) {
+      fs.mkdirSync('.claude', { recursive: true });
+    }
+
+    const rules = [
+      { file: 'hookify.require-sysknife-approval.local.md', content: HOOK_APPROVAL },
+      { file: 'hookify.sysknife-schema-fetch.local.md',     content: HOOK_SCHEMA_FETCH },
+      { file: 'hookify.sysknife-bash-guard.local.md',       content: HOOK_BASH_GUARD },
+    ];
+
+    for (const { file, content } of rules) {
+      const hookPath = path.join('.claude', file);
+      fs.writeFileSync(hookPath, content);
+      ok(`Created ${hookPath}`);
+    }
   }
 
-  const rules = [
-    { file: 'hookify.require-sysknife-approval.local.md', content: HOOK_APPROVAL },
-    { file: 'hookify.sysknife-schema-fetch.local.md',     content: HOOK_SCHEMA_FETCH },
-    { file: 'hookify.sysknife-bash-guard.local.md',       content: HOOK_BASH_GUARD },
-  ];
+  // ── Cursor ───────────────────────────────────────────────────────────────
+  //
+  // Cursor reads .cursor/mcp.json in the project root for project-local MCP
+  // servers. The JSON shape is identical to Claude Code's .mcp.json.
+  // Reference: https://cursor.com/docs/context/mcp
 
-  for (const { file, content } of rules) {
-    const hookPath = path.join('.claude', file);
-    fs.writeFileSync(hookPath, content);
-    ok(`Created ${hookPath}`);
+  if (doCursor) {
+    if (!fs.existsSync('.cursor')) {
+      fs.mkdirSync('.cursor', { recursive: true });
+    }
+    const cursorMcp = { mcpServers };
+    fs.writeFileSync(
+      path.join('.cursor', 'mcp.json'),
+      JSON.stringify(cursorMcp, null, 2) + '\n',
+      { mode: 0o600 }
+    );
+    fs.chmodSync(path.join('.cursor', 'mcp.json'), 0o600);
+    ok(`Created .cursor/mcp.json  (${targets.length} target${targets.length > 1 ? 's' : ''}: ${targetSummary})`);
+
+    const rulesDir = path.join('.cursor', 'rules');
+    if (!fs.existsSync(rulesDir)) {
+      fs.mkdirSync(rulesDir, { recursive: true });
+    }
+    fs.writeFileSync(path.join(rulesDir, 'sysknife.mdc'), CURSOR_RULE);
+    ok('Created .cursor/rules/sysknife.mdc');
+  }
+
+  // ── Codex CLI ─────────────────────────────────────────────────────────────
+  //
+  // Codex CLI reads MCP servers from ~/.codex/config.toml (global).
+  // The TOML schema (verified from codex-rs/config/src/mcp_types.rs):
+  //
+  //   [mcp_servers.<key>]
+  //   command = "/path/to/bin"
+  //   args = ["mcp-server"]
+  //   [mcp_servers.<key>.env]
+  //   FOO = "bar"
+  //
+  // Project instructions live in AGENTS.md in the project root.
+  // Reference: https://github.com/openai/codex  docs/config.md
+
+  if (doCodex) {
+    const codexDir = path.join(os.homedir(), '.codex');
+    if (!fs.existsSync(codexDir)) {
+      fs.mkdirSync(codexDir, { recursive: true });
+    }
+    const codexConfigPath = path.join(codexDir, 'config.toml');
+
+    // Build the TOML block to append (or write fresh).
+    const tomlBlocks = Object.entries(mcpServers)
+      .map(([key, server]) => serverToToml(key, server))
+      .join('\n\n');
+    const tomlBlock = `\n# --- sysknife (added by sysknife-setup) ---\n${tomlBlocks}\n`;
+
+    if (fs.existsSync(codexConfigPath)) {
+      const existing = fs.readFileSync(codexConfigPath, 'utf8');
+      // If a sysknife block already exists, warn rather than duplicating.
+      if (existing.includes('[mcp_servers.sysknife')) {
+        warn('~/.codex/config.toml already contains a sysknife block — skipping (edit manually to update)');
+      } else {
+        fs.appendFileSync(codexConfigPath, tomlBlock);
+        fs.chmodSync(codexConfigPath, 0o600);
+        ok(`Appended sysknife block to ~/.codex/config.toml`);
+      }
+    } else {
+      fs.writeFileSync(codexConfigPath, tomlBlock.trimStart(), { mode: 0o600 });
+      fs.chmodSync(codexConfigPath, 0o600);
+      ok(`Created ~/.codex/config.toml`);
+    }
+
+    // Write / append AGENTS.md in the project root.
+    const agentsPath = 'AGENTS.md';
+    if (fs.existsSync(agentsPath)) {
+      const existing = fs.readFileSync(agentsPath, 'utf8');
+      if (existing.includes('SysKnife MCP rules')) {
+        warn('AGENTS.md already contains SysKnife rules — skipping (edit manually to update)');
+      } else {
+        fs.appendFileSync(agentsPath, AGENTS_MD_BLOCK);
+        ok('Appended SysKnife rules to AGENTS.md');
+      }
+    } else {
+      fs.writeFileSync(agentsPath, `# Project instructions${AGENTS_MD_BLOCK}`);
+      ok('Created AGENTS.md');
+    }
   }
 
   // ── Gitignore advice ─────────────────────────────────────────────────────
@@ -414,13 +671,16 @@ async function main() {
     ? fs.readFileSync('.gitignore', 'utf8')
     : '';
 
-  const noMcpEntry  = !gitignore.includes('.mcp.json');
-  const noHookEntry = !gitignore.includes('*.local.md');
-  if (noMcpEntry || noHookEntry) {
+  const noMcpEntry     = doClaude && !gitignore.includes('.mcp.json');
+  const noHookEntry    = doClaude && !gitignore.includes('*.local.md');
+  const noCursorEntry  = doCursor && !gitignore.includes('.cursor/mcp.json');
+
+  if (noMcpEntry || noHookEntry || noCursorEntry) {
     console.log();
     warn('Consider adding these to .gitignore to avoid committing secrets:');
-    if (noMcpEntry)  step('.mcp.json');
-    if (noHookEntry) step('.claude/*.local.md');
+    if (noMcpEntry)    step('.mcp.json');
+    if (noHookEntry)   step('.claude/*.local.md');
+    if (noCursorEntry) step('.cursor/mcp.json');
   }
 
   // ── Next steps ───────────────────────────────────────────────────────────
@@ -439,11 +699,13 @@ async function main() {
   }
 
   console.log();
-  step('Reload Claude Code:  type /reload-plugins in the Claude Code chat');
+  if (doClaude) step('Reload Claude Code:  type /reload-plugins in the Claude Code chat');
+  if (doCursor) step('Reload Cursor:       Cursor → Settings → MCP → Refresh');
+  if (doCodex)  step('Restart Codex CLI:   codex picks up ~/.codex/config.toml on next run');
 
   if (envVar && !apiKey && !process.env[envVar]) {
     console.log();
-    warn(`Set your API key before starting Claude Code:`);
+    warn(`Set your API key before starting your AI client:`);
     step(`export ${envVar}=your-key-here`);
   }
 
@@ -458,47 +720,57 @@ async function main() {
 
 if (process.argv.includes('--help') || process.argv.includes('-h')) {
   console.log(`
-${B}sysknife-setup${X}
+\x1b[1msysknife-setup\x1b[0m
 
-  Zero-friction setup for the SysKnife MCP server and Claude Code hooks.
+  Zero-friction setup for the SysKnife MCP server.
+  Supports Claude Code, Cursor, and Codex CLI.
 
-${B}USAGE${X}
+\x1b[1mUSAGE\x1b[0m
   npx sysknife-setup [OPTIONS]
 
-${B}OPTIONS${X}
+\x1b[1mOPTIONS\x1b[0m
   --help, -h    Show this help message and exit.
 
-${B}DESCRIPTION${X}
-  Interactive wizard that creates:
+\x1b[1mDESCRIPTION\x1b[0m
+  Interactive wizard that creates (per selected client):
 
+  Claude Code
     .mcp.json                                 MCP server config (chmod 0600)
     .claude/hookify.require-sysknife-approval.local.md
     .claude/hookify.sysknife-schema-fetch.local.md
     .claude/hookify.sysknife-bash-guard.local.md
 
+  Cursor
+    .cursor/mcp.json                          MCP server config (chmod 0600)
+    .cursor/rules/sysknife.mdc                Cursor project rules
+
+  Codex CLI
+    ~/.codex/config.toml                      MCP block appended (chmod 0600)
+    AGENTS.md                                 Project instructions appended
+
   Supports single-VM and multi-VM (fleet) configurations.
   Run from the root of your project directory.
 
-${B}ENVIRONMENT${X}
+\x1b[1mENVIRONMENT\x1b[0m
   OPENAI_API_KEY / ANTHROPIC_API_KEY / GEMINI_API_KEY
       If set in your shell environment the wizard detects them and avoids
-      writing them to .mcp.json in plain text.
+      writing them to config files in plain text.
 
-${B}EXAMPLES${X}
-  ${D}# Single VM — defaults to /run/sysknife/daemon.sock${X}
+\x1b[1mEXAMPLES\x1b[0m
+  \x1b[2m# Single VM — defaults to /run/sysknife/daemon.sock\x1b[0m
   npx sysknife-setup
 
-  ${D}# From an SSH-tunnelled socket${X}
-  ${D}# (answer socket prompt with the tunnel path)${X}
+  \x1b[2m# From an SSH-tunnelled socket\x1b[0m
+  \x1b[2m# (answer socket prompt with the tunnel path)\x1b[0m
   npx sysknife-setup
 
-${B}SEE ALSO${X}
+\x1b[1mSEE ALSO\x1b[0m
   https://github.com/lacs-foundation/lacs/blob/main/docs/release.md
 `);
   process.exit(0);
 }
 
 main().catch((e) => {
-  console.error(`\n  ${R}✗${X}  ${e.message}`);
+  console.error(`\n  \x1b[31m✗\x1b[0m  ${e.message}`);
   process.exit(1);
 });
