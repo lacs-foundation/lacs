@@ -31,8 +31,8 @@ These are where contributions move the needle the most. Each links to a
 
 | Area | Why it matters | Difficulty |
 |---|---|---|
-| **Ubuntu LTS support** ([#33](#)) | The next milestone. Action layer is being abstracted; help us land apt / snap / flatpak / ufw / netplan as first-class peers of rpm-ostree. | Medium |
-| **Distro detection coverage** ([#32](#)) | Robust `/etc/os-release` parsing for every LTS we claim to support. Pure-function tests, no integration mocks. | Easy |
+| **Ubuntu LTS support** ([tracker](https://github.com/lacs-foundation/sysknife/issues?q=is%3Aopen+label%3Aubuntu)) | The next milestone. Action layer is being abstracted; help us land apt / snap / flatpak / ufw / netplan as first-class peers of rpm-ostree. | Medium |
+| **Distro detection coverage** ([tracker](https://github.com/lacs-foundation/sysknife/issues?q=is%3Aopen+label%3Adistro-detection)) | Robust `/etc/os-release` parsing for every LTS we claim to support. Pure-function tests, no integration mocks. | Easy |
 | **Action catalogue gaps** | Add a typed action (e.g. `EnableFirewallZone`) — small, isolated, every PR includes the policy entry + risk level + tests. | Easy |
 | **E2E story coverage** | Real prompts, real LLM, real daemon. We have ~10 stories; we want 100+ across both distros. | Medium |
 | **GUI polish (Tauri shell)** | TypeScript + React. Real OSS UX, not a thin wrapper around the daemon. | Medium |
@@ -109,8 +109,11 @@ These are non-negotiable. A PR that breaks them is rejected on principle.
 3. **The daemon (`sysknife-daemon`) accepts only typed actions over IPC.**
    No shell strings, no eval, no JSON-RPC method that takes raw command
    bytes.
-4. **Every privileged action ships with a polkit rule, a risk level, and
-   a transaction-store row.** No exceptions.
+4. **Every privileged action ships with a risk level and a transaction-store
+   row.** Any new D-Bus interaction it requires must be added to the
+   central polkit allowlist (`packaging/50-sysknife.rules`) — the daemon
+   gates D-Bus actions through one allowlist file, not one polkit rule
+   per action.
 5. **`validated_safe_arg` is the boundary validator.** Any new action that
    interpolates a user-provided string into a command must validate at
    the boundary, not deep inside the executor.

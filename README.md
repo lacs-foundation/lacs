@@ -30,7 +30,7 @@
 <p align="center">
   <a href="#install">Install</a> ·
   <a href="#how-it-works">How it works</a> ·
-  <a href="#why-not-just">Why not <em>X</em>?</a> ·
+  <a href="#why-not-just-x">Why not <em>X</em>?</a> ·
   <a href="docs/distro-support.md">Distro matrix</a> ·
   <a href="ROADMAP.md">Roadmap</a> ·
   <a href="CONTRIBUTING.md">Contribute</a> ·
@@ -61,7 +61,7 @@ any MCP-capable client.
 
 ```sh
 # detects Fedora vs Ubuntu, asks for the LLM provider, sets everything up.
-npx @sysknife/setup
+npx sysknife-setup
 ```
 
 Manual install per distro:
@@ -129,7 +129,7 @@ The brain *proposes*; only the daemon is privileged. The daemon *enforces*
 policy, executes typed actions, writes the chain, and triggers rollback.
 The trust boundary is mechanical — no shell strings cross the wire.
 
-## Why not just …?
+## Why not just X?
 
 | Tool | The gap |
 |---|---|
@@ -197,7 +197,7 @@ MCP-capable agent (Claude Code, Cursor, etc.) can plan + approve + execute
 through SysKnife's risk-gated path. Set up with one command:
 
 ```sh
-npx @sysknife/setup
+npx sysknife-setup
 # detects sysknife, asks for the daemon socket and LLM provider,
 # writes .mcp.json + the Claude Code approval hook.
 ```
