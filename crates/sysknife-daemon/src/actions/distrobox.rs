@@ -47,14 +47,21 @@ pub fn distrobox_list() -> ActionSpec {
     }
 }
 
-/// Create a new distrobox container (`distrobox create --name <name> --image <image>`).
+/// Create a new distrobox container
+/// (`distrobox create --yes --name <name> --image <image>`).
 ///
 /// Risk: Medium / Dev. Downloads a container image and initialises the
-/// container. Requires Podman or Docker to be installed.
+/// container. Requires Podman or Docker to be installed. `--yes` is required
+/// because the daemon runs without a TTY — without it, distrobox prompts to
+/// confirm the image pull when the image is not already cached, and the
+/// command hangs indefinitely.
 pub fn distrobox_create(name: &str, image: &str) -> ActionSpec {
     ActionSpec {
         action_name: "DistroboxCreate",
-        mechanism: command_mechanism("distrobox", ["create", "--name", name, "--image", image]),
+        mechanism: command_mechanism(
+            "distrobox",
+            ["create", "--yes", "--name", name, "--image", image],
+        ),
         risk_level: RiskLevel::Medium,
         reboot_required: false,
         rollback_available: false,
@@ -139,6 +146,18 @@ mod tests {
         assert!(args.contains(&"mybox"));
         assert!(args.contains(&"--image"));
         assert!(args.contains(&"fedora:41"));
+    }
+
+    #[test]
+    fn distrobox_create_includes_yes_flag() {
+        // Without --yes, distrobox prompts for image-pull confirmation; in a
+        // daemon with no TTY this hangs indefinitely.
+        let spec = distrobox_create("mybox", "ubuntu:24.04");
+        let (_, args) = extract_args(&spec);
+        assert!(
+            args.contains(&"--yes"),
+            "DistroboxCreate must pass --yes so it never prompts on a TTY-less daemon"
+        );
     }
 
     #[test]
