@@ -65,21 +65,10 @@ SysKnife into your AI IDE — Claude Code, Cursor, or Codex CLI — so you can
 plan and execute from chat.
 
 ```sh
-# Once the npm package is published (see below):
 npx sysknife-setup
-
-# Until then — local clone path:
-git clone https://github.com/lacs-foundation/sysknife
-node sysknife/packages/setup/index.js
 ```
 
-> **npm publish pending**: `sysknife-setup` is not yet on the npm registry.
-> The CI publish step exists and runs on every release tag, but the
-> automation token currently in use does not bypass 2FA on the publish
-> account, so npm rejects the upload (HTTP 403). Use the local-clone path
-> above for now. Once a granular access token with "Bypass 2FA" enabled
-> is in `NPM_TOKEN`, the next release tag will publish and `npx
-> sysknife-setup` will work without the clone.
+[![npm version](https://img.shields.io/npm/v/sysknife-setup?style=flat-square&logo=npm)](https://www.npmjs.com/package/sysknife-setup)
 
 What this does:
 
