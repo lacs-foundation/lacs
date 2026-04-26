@@ -38,7 +38,12 @@
 </p>
 
 <p align="center">
-  <img src="assets/demo/demo.gif" alt="SysKnife demo" width="900"/>
+  <img src="assets/demo/mcp-flow.gif" alt="SysKnife in Claude Code via MCP" width="900"/>
+</p>
+
+<p align="center">
+  <em>SysKnife inside Claude Code — same flow works in Cursor and Codex CLI.</em><br/>
+  <em>Looking for the standalone CLI? See <a href="docs/cli.md">the CLI guide</a>.</em>
 </p>
 
 > **Describe what you want in plain language.** Review a typed plan with risk
@@ -55,36 +60,55 @@ fails.
 
 ## Install
 
-The fastest path is the npx-based setup wizard that detects your distro,
-provisions the daemon, and writes the MCP config for Claude Code / Cursor /
-any MCP-capable client.
+The fastest path is one command. The wizard installs the daemon and wires
+SysKnife into your AI IDE — Claude Code, Cursor, or Codex CLI — so you can
+plan and execute from chat.
 
 ```sh
-# detects Fedora vs Ubuntu, asks for the LLM provider, sets everything up.
 npx sysknife-setup
 ```
 
-Manual install per distro:
+What this does:
+
+1. Detects the sysknife binary (or tells you how to build it).
+2. Asks for your LLM provider + key (OpenAI / Anthropic / Gemini / Ollama).
+3. Asks which AI clients to wire up — all three checked by default.
+4. Writes the per-client MCP config so the next chat session sees
+   `sysknife_plan` and `sysknife_execute` as first-class tools.
+
+| Client          | Files written                                        |
+|-----------------|------------------------------------------------------|
+| **Claude Code** | `.mcp.json` + `.claude/hookify.*.local.md`           |
+| **Cursor**      | `.cursor/mcp.json` + `.cursor/rules/sysknife.mdc`    |
+| **Codex CLI**   | `~/.codex/config.toml` (appended) + `AGENTS.md`      |
+
+Then in your chat: ask for what you want, review the plan with risk pills,
+approve, watch it execute. The MCP layer enforces the same approval contract
+as the CLI — `sysknife_plan` always runs before `sysknife_execute`, never
+in the same turn.
+
+> **Prefer the standalone CLI?** Same engine, no IDE — see the
+> [CLI guide](docs/cli.md) for `sysknife "..."`, `--dry-run`, `--json`,
+> approval prompts, and audit-log inspection.
 
 <details>
-<summary><strong>Fedora 41+ / Silverblue 41+</strong></summary>
+<summary><strong>Manual install — Fedora 41+ / Silverblue 41+</strong></summary>
 
 ```sh
-# Install
+# Build + install the binary the wizard configures
 git clone https://github.com/lacs-foundation/sysknife
 cd sysknife
 make build
 sudo make install
 sudo systemctl enable --now sysknife-daemon
 
-# Run a dry plan
-export OPENAI_API_KEY=sk-...        # or ANTHROPIC_API_KEY / GEMINI_API_KEY
-sysknife --dry-run "show disk usage"
+# Then run the wizard
+npx sysknife-setup
 ```
 </details>
 
 <details>
-<summary><strong>Ubuntu 26.04 / 24.04 / 22.04</strong> (roadmap — Phase 2)</summary>
+<summary><strong>Manual install — Ubuntu 26.04 / 24.04 / 22.04</strong> (roadmap — Phase 2)</summary>
 
 Ubuntu support is the active milestone — see
 [`ROADMAP.md`](ROADMAP.md) and
@@ -95,7 +119,7 @@ plan correctly on Ubuntu — only the privileged action set is gated.
 </details>
 
 <details>
-<summary><strong>Without installing anything (cloud-only dry run)</strong></summary>
+<summary><strong>Cloud-only dry run (no install)</strong></summary>
 
 ```sh
 # Plans only. No daemon, no approval, no execution.
@@ -190,32 +214,18 @@ url     = "postgres://sysknife:${PG_PASSWORD}@db.example.com/audit?sslmode=verif
 Env vars always win over the config file. Full reference in
 [`docs/configuration.md`](docs/configuration.md).
 
-## MCP server
+## MCP protocol
 
-SysKnife exposes an [MCP](https://modelcontextprotocol.io/) server so any
-MCP-capable agent (Claude Code, Cursor, Codex CLI, etc.) can plan + approve +
-execute through SysKnife's risk-gated path. Set up with one command:
+SysKnife implements the [Model Context Protocol](https://modelcontextprotocol.io/)
+and exposes two tools — `sysknife_plan` and `sysknife_execute`. The MCP layer
+enforces the same approval contract as the CLI: agents must call
+`sysknife_plan` first, present the plan, wait for explicit human approval,
+then call `sysknife_execute`. High-risk actions are refused outright at the
+MCP boundary — they require the CLI/GUI confirmation flow.
 
-```sh
-npx sysknife-setup
-# interactive wizard — detects sysknife, asks for the daemon socket,
-# LLM provider, and which AI clients to configure (all three by default).
-```
-
-The wizard writes per-client configs in the correct format:
-
-| Client        | File(s) written                                          |
-|---------------|----------------------------------------------------------|
-| **Claude Code** | `.mcp.json` + `.claude/hookify.*.local.md`             |
-| **Cursor**      | `.cursor/mcp.json` + `.cursor/rules/sysknife.mdc`      |
-| **Codex CLI**   | `~/.codex/config.toml` (appended) + `AGENTS.md`        |
-
-All config files that may contain API keys are created with `chmod 0600`.
-
-The MCP layer enforces the same approval contract as the CLI: agents must
-call `sysknife_plan` first, present the plan, wait for explicit human
-approval, then call `sysknife_execute`. High-risk actions are refused
-outright at the MCP boundary — they require the CLI/GUI confirmation flow.
+Use `npx sysknife-setup` (above) to wire it into Claude Code, Cursor, or
+Codex CLI. All config files that may contain API keys are created with
+`chmod 0600`.
 
 ## Roadmap
 
