@@ -66,10 +66,11 @@ echo "Ubuntu codename: ${UBUNTU_CODENAME}"
 
 step "Smoke-check apt"
 apt-get --version || fail "apt-get --version"
-# apt list --upgradable may emit "WARNING: apt does not have a stable CLI
-# interface" on older releases — suppress stderr for the check, but propagate
-# failures.
-apt list --upgradable 2>/dev/null | head -5 || fail "apt list --upgradable"
+# Smoke-check apt itself. Previously piped to `head -5`, which always exits 0
+# (sucking SIGPIPE before pipefail can fire), so the `|| fail` branch never
+# ran even when apt was completely broken. Just exercise the command and
+# discard the (potentially noisy) output — exit status alone is the signal.
+apt list --upgradable >/dev/null 2>&1 || fail "apt list --upgradable"
 echo "apt smoke check passed."
 
 # ---------------------------------------------------------------------------
@@ -110,15 +111,29 @@ apt-get install -y \
     || fail "Install build tools"
 
 # Tools exercised by Ubuntu user stories.
-# Install each optional tool with a fallback warning so a missing package in a
-# new release does not abort the entire provision.  firewalld may be renamed or
-# moved across LTS generations; attempt install and warn on failure.
-apt-get install -y ufw || { echo "WARNING: ufw not available on ${UBUNTU_CODENAME}"; }
-apt-get install -y firewalld || { echo "WARNING: firewalld not available on ${UBUNTU_CODENAME}"; }
-apt-get install -y snapd || { echo "WARNING: snapd not available on ${UBUNTU_CODENAME}"; }
-apt-get install -y distrobox || { echo "WARNING: distrobox not available on ${UBUNTU_CODENAME}"; }
-apt-get install -y netplan.io || { echo "WARNING: netplan.io not available on ${UBUNTU_CODENAME}"; }
-echo "Story target tools installed (warnings above are non-fatal)."
+# Install each optional tool individually and aggregate failures into a single
+# end-of-step diagnostic block so they aren't buried in apt's verbose output.
+# Non-fatal — story-level prechecks gate per-tool functionality.
+declare -a _STORY_TOOL_FAILURES=()
+for _pkg in ufw firewalld snapd distrobox netplan.io; do
+    if ! apt-get install -y "$_pkg"; then
+        _STORY_TOOL_FAILURES+=("$_pkg")
+    fi
+done
+if [ ${#_STORY_TOOL_FAILURES[@]} -eq 0 ]; then
+    echo "Story target tools installed: ufw firewalld snapd distrobox netplan.io"
+else
+    echo ""
+    echo "================================================================"
+    echo "  WARNING: ${#_STORY_TOOL_FAILURES[@]} optional tool(s) failed to install on ${UBUNTU_CODENAME}:"
+    for _pkg in "${_STORY_TOOL_FAILURES[@]}"; do
+        echo "    - $_pkg"
+    done
+    echo "  Stories that exercise these tools will fail at run time;"
+    echo "  precheck them with 'command -v' before invocation."
+    echo "================================================================"
+    echo ""
+fi
 
 # ---------------------------------------------------------------------------
 # Step 2: Rust via rustup (as the VM user, not root)
@@ -131,8 +146,14 @@ if ! su - "$VM_USER" -c 'command -v cargo &>/dev/null'; then
         || fail "Install Rust"
 fi
 # Source cargo env for root too so we can run cargo in subsequent steps.
+# Assert the env file actually exists — a partial rustup install (e.g. mid-
+# download network failure) leaves the script otherwise reporting "Rust
+# verification" failures instead of the actionable "rustup did not produce
+# the env file" diagnostic.
+[ -f "/home/${VM_USER}/.cargo/env" ] \
+    || fail "rustup did not produce /home/${VM_USER}/.cargo/env (partial install?)"
 # shellcheck source=/dev/null
-source "/home/${VM_USER}/.cargo/env" 2>/dev/null || true
+source "/home/${VM_USER}/.cargo/env"
 export PATH="/home/${VM_USER}/.cargo/bin:$PATH"
 su - "$VM_USER" -c 'source ~/.cargo/env && cargo --version' || fail "Rust verification"
 
@@ -149,10 +170,14 @@ su - "$VM_USER" -c \
     || fail "cargo build"
 
 echo "Built binaries:"
+# Drop `2>/dev/null`: when one of the two binaries is missing, the ls stderr
+# diagnostic ("ls: cannot access '…/sysknife-daemon': No such file or
+# directory") is the *whole point* of this check — it tells the operator
+# which binary cargo failed to produce.
 ls -lh \
     "${REPO_DIR}/target/release/sysknife-daemon" \
     "${REPO_DIR}/target/release/sysknife" \
-    2>/dev/null || fail "Expected binaries not found after build"
+    || fail "Expected binaries not found after build"
 
 # ---------------------------------------------------------------------------
 # Step 4: Install binaries to /usr/local/bin
