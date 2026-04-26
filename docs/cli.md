@@ -8,9 +8,11 @@ If you want SysKnife inside Claude Code / Cursor / Codex CLI instead, see
 the [main README](../README.md) and run `npx sysknife-setup`. Both paths
 share the daemon, the audit chain, and the typed-action set.
 
-<p align="center">
-  <img src="../assets/demo/demo.gif" alt="sysknife CLI demo" width="900"/>
-</p>
+<img
+  src="https://raw.githubusercontent.com/lacs-foundation/sysknife/main/assets/demo/demo.gif"
+  alt="sysknife CLI demo"
+  class="sysknife-demo"
+/>
 
 ---
 

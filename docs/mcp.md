@@ -1,8 +1,20 @@
 # SysKnife MCP Server
 
 The `sysknife mcp-server` subcommand exposes two MCP tools that let any
-MCP-capable AI assistant (Claude Code, Cursor, …) plan and execute Linux
-system administration tasks on a remote SysKnife daemon.
+MCP-capable AI assistant (Claude Code, Cursor, Codex CLI, …) plan and execute
+Linux system administration tasks through SysKnife's approval-gated,
+audit-logged path.
+
+<img
+  src="https://raw.githubusercontent.com/lacs-foundation/sysknife/main/assets/demo/mcp-flow.gif"
+  alt="SysKnife MCP flow — Claude Code plans, user approves, daemon executes"
+  class="sysknife-demo"
+/>
+
+> **💡 One command to configure everything**
+>
+> Run `npx sysknife-setup` — it detects which AI clients you have installed and
+> writes the correct config files for each one automatically.
 
 ---
 
