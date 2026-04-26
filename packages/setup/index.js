@@ -26,6 +26,9 @@
 // Multiple VMs: the wizard prompts "Add another VM?" and collects each target.
 //   Each target becomes a separate server entry so the AI client sees
 //   independent, named tool sets (sysknife-web, sysknife-db, …).
+//
+// Binary install: the wizard auto-downloads prebuilt sysknife binaries
+//   verified against SHA256.  Pass --no-binary to skip and build from source.
 // ---------------------------------------------------------------------------
 
 const fs   = require('fs');
@@ -34,6 +37,9 @@ const path = require('path');
 const { execFileSync, spawnSync } = require('child_process');
 const readline = require('readline');
 const crypto   = require('crypto');
+
+const { installBinaryIfMissing } = require('./install-binary.js');
+const { installDaemonService }   = require('./install-daemon.js');
 
 // ---------------------------------------------------------------------------
 // Terminal helpers
@@ -220,10 +226,12 @@ const API_KEY_VARS = {
 };
 
 const ARG_SET = new Set(process.argv.slice(2));
-const WANT_CLAUDE = ARG_SET.has('--claude');
-const WANT_CURSOR = ARG_SET.has('--cursor');
-const WANT_CODEX = ARG_SET.has('--codex') || ARG_SET.has('--codex-only');
-const WANT_ALL = ARG_SET.has('--all');
+const WANT_CLAUDE     = ARG_SET.has('--claude');
+const WANT_CURSOR     = ARG_SET.has('--cursor');
+const WANT_CODEX      = ARG_SET.has('--codex') || ARG_SET.has('--codex-only');
+const WANT_ALL        = ARG_SET.has('--all');
+const NO_BINARY       = ARG_SET.has('--no-binary');
+const NO_PROMPTS      = ARG_SET.has('--no-prompts');
 const HAVE_EXPLICIT_INTEGRATION_FLAGS = WANT_CLAUDE || WANT_CURSOR || WANT_CODEX || WANT_ALL;
 
 // ---------------------------------------------------------------------------
@@ -472,21 +480,21 @@ async function main() {
     });
   }
 
-  // ── 1. Binary location ──────────────────────────────────────────────────
+  // ── 1. Binary install ────────────────────────────────────────────────────
+  //
+  // Auto-download prebuilt binaries from the latest GitHub release, verified
+  // against SHA256.  The user is asked once for an install location.
+  // Pass --no-binary to skip download (build from source).
 
-  const detected = findBinary('sysknife');
-  if (detected) {
-    ok(`Found sysknife at ${detected}`);
-  } else {
-    warn('sysknife not found in PATH — you can set the path manually below');
-  }
+  const askWrapper = (question, defaultVal) => ask(rl, lineQueue, question, defaultVal);
 
-  const binaryPath = await ask(
-    rl,
-    lineQueue,
-    'Path to sysknife binary',
-    detected || '/usr/local/bin/sysknife'
-  );
+  const { path: installedBinPath } = await installBinaryIfMissing({
+    ask: askWrapper,
+    noPrompts: NO_PROMPTS,
+    noBinary:  NO_BINARY,
+  });
+
+  const binaryPath = installedBinPath;
 
   if (!fs.existsSync(binaryPath)) {
     warn(`${binaryPath} does not exist yet — update config files after installing`);
@@ -781,16 +789,38 @@ async function main() {
     if (noCursorEntry) step('.cursor/mcp.json');
   }
 
+  // ── Daemon service install ────────────────────────────────────────────────
+  //
+  // Offer to install the systemd service now that the binary is in place.
+  // The user may skip; they can always run `systemctl --user enable sysknife-daemon` later.
+
+  const daemonBinPath = binaryPath.replace(/\/sysknife$/, '/sysknife-daemon');
+  await installDaemonService({
+    ask: askWrapper,
+    noPrompts: NO_PROMPTS,
+    daemonBinPath,
+  });
+
+  // ── Socket validation ─────────────────────────────────────────────────────
+  //
+  // After install, probe whether the daemon is reachable so the "Try it"
+  // section can give accurate next-step advice.
+
+  const firstLocalSocket = targets.find(t => !t.socket.startsWith('vsock://') && t.socket.startsWith('/'));
+  if (firstLocalSocket) {
+    const reachable = checkSocket(firstLocalSocket.socket);
+    if (reachable === true) {
+      ok(`Daemon socket reachable: ${firstLocalSocket.socket}`);
+    } else if (reachable === false) {
+      warn(`Daemon socket not yet reachable: ${firstLocalSocket.socket}`);
+    }
+  }
+
   // ── Next steps ───────────────────────────────────────────────────────────
 
   console.log();
   console.log(`${B}Next steps${X}`);
   console.log();
-
-  if (!fs.existsSync(binaryPath)) {
-    step('Build sysknife:  cargo build -p sysknife-cli --release');
-    console.log();
-  }
 
   for (const t of targets) {
     targetNextStep(t);
@@ -851,10 +881,16 @@ if (process.argv.includes('--help') || process.argv.includes('-h')) {
   --codex       Configure Codex CLI only.
   --codex-only  Alias for --codex.
   --all         Configure Claude Code, Cursor, and Codex CLI.
+  --no-binary   Skip prebuilt binary download (build from source instead).
+  --no-prompts  Accept all defaults non-interactively (useful for scripts/tests).
   --help, -h    Show this help message and exit.
 
 \x1b[1mDESCRIPTION\x1b[0m
-  Interactive wizard that creates (per selected client):
+  Interactive wizard that:
+  1. Auto-downloads prebuilt sysknife binaries verified against SHA256.
+     Use --no-binary to skip and build from source.
+  2. Optionally installs the systemd daemon service (user or system level).
+  3. Creates config files (per selected client):
 
   Claude Code
     .mcp.json                                 MCP server config (chmod 0600)

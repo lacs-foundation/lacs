@@ -2,6 +2,10 @@
 
 Zero-friction onboarding wizard for the SysKnife MCP server.
 
+## Install
+
+The wizard auto-downloads prebuilt binaries verified against SHA256.
+
 ## Usage
 
 > **npm publish pending**: `sysknife-setup` is not yet on the npm registry.
@@ -83,5 +87,7 @@ entry (`sysknife-web`, `sysknife-db`, …) across all written config files.
 --codex       Configure Codex CLI only
 --codex-only  Alias for --codex
 --all         Configure Claude Code, Cursor, and Codex CLI
+--no-binary   Skip prebuilt binary download (build from source instead)
+--no-prompts  Accept all defaults non-interactively (useful for scripts/tests)
 --help, -h    Show help and exit
 ```
