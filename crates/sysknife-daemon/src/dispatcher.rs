@@ -31,6 +31,79 @@ use uuid::Uuid;
 
 use sysknife_types::{CallerRole, JobState, PreviewEnvelope, RequestEnvelope};
 
+// ---------------------------------------------------------------------------
+// Credential redaction
+// ---------------------------------------------------------------------------
+//
+// Some actions take credential parameters (e.g. `ProAttach` takes a Pro token).
+// These values must NOT appear in:
+//   - the `command` field of a DescribeResponse (sent over the wire)
+//   - the `proposed_change` field of a PreviewEnvelope (persisted to the
+//     transactions table AND returned in PreviewResponse)
+//   - any tracing / debug output
+//
+// `credential_keys_for(action_name)` returns the per-action set of credential
+// param keys. `redact_params` replaces each credential value with the literal
+// string `<REDACTED>` while preserving structure. `redact_argv` walks the
+// rendered argv and replaces any element that matches a known credential value
+// (lookup by reading the params of the same action) with `<REDACTED>`.
+
+/// Per-action credential param keys. Add new actions here when they take secrets.
+fn credential_keys_for(action_name: &str) -> &'static [&'static str] {
+    match action_name {
+        "ProAttach" => &["token"],
+        _ => &[],
+    }
+}
+
+/// Return a copy of `params` with every credential value replaced by
+/// the literal string `"<REDACTED>"`. Other keys are preserved unchanged.
+fn redact_params(action_name: &str, params: &Value) -> Value {
+    let keys = credential_keys_for(action_name);
+    if keys.is_empty() {
+        return params.clone();
+    }
+    if let Value::Object(map) = params {
+        let mut out = serde_json::Map::with_capacity(map.len());
+        for (k, v) in map {
+            if keys.iter().any(|ck| *ck == k) {
+                out.insert(k.clone(), Value::String("<REDACTED>".to_string()));
+            } else {
+                out.insert(k.clone(), v.clone());
+            }
+        }
+        Value::Object(out)
+    } else {
+        params.clone()
+    }
+}
+
+/// Replace any argv element that holds a credential value with `<REDACTED>`.
+/// Looks up the credential values from the original `params` of the same
+/// action so we redact by VALUE-MATCH (no positional assumptions).
+fn redact_argv(action_name: &str, params: &Value, args: &[String]) -> Vec<String> {
+    let keys = credential_keys_for(action_name);
+    if keys.is_empty() {
+        return args.to_vec();
+    }
+    let secrets: Vec<&str> = keys
+        .iter()
+        .filter_map(|k| params.get(k).and_then(|v| v.as_str()))
+        .collect();
+    if secrets.is_empty() {
+        return args.to_vec();
+    }
+    args.iter()
+        .map(|a| {
+            if secrets.iter().any(|s| s == &a.as_str()) {
+                "<REDACTED>".to_string()
+            } else {
+                a.clone()
+            }
+        })
+        .collect()
+}
+
 use crate::{
     auth::highest_role_from_groups,
     executor::{
@@ -889,10 +962,14 @@ async fn handle_describe(
 
     let command = match &spec.mechanism {
         ActionMechanism::Command { program, args } => {
-            if args.is_empty() {
+            // Redact any argv element that matches a credential param value
+            // before rendering — `ProAttach` carries the token in argv and
+            // this is the place a describe response would otherwise leak it.
+            let display_args = redact_argv(action_name, params, args);
+            if display_args.is_empty() {
                 program.to_string()
             } else {
-                format!("{} {}", program, args.join(" "))
+                format!("{} {}", program, display_args.join(" "))
             }
         }
         ActionMechanism::FileScan { path } => format!("read {path}"),
@@ -975,7 +1052,14 @@ async fn handle_preview(
                 }
             },
         };
-    let proposed_change = json!({ "action": action_name, "params": params });
+    // Redact credentials before assembling the payload that gets persisted
+    // to the transactions table AND returned in PreviewResponse. The
+    // RequestEnvelope keeps the original params because the daemon needs the
+    // real values to actually run the action — the envelope never leaves
+    // this process. proposed_change DOES leave the process and must be
+    // scrubbed.
+    let redacted_params = redact_params(action_name, params);
+    let proposed_change = json!({ "action": action_name, "params": redacted_params });
 
     let envelope = RequestEnvelope {
         action_name: action_name.to_string(),
@@ -1576,6 +1660,59 @@ mod tests {
     };
     use std::io;
     use tempfile::tempdir;
+
+    // ------------------------------------------------------------------
+    // Credential redaction
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn redact_params_replaces_pro_attach_token() {
+        let params = json!({"token": "super-secret-test-only", "extra": "kept"});
+        let r = redact_params("ProAttach", &params);
+        // Token replaced with sentinel.
+        assert_eq!(r["token"].as_str(), Some("<REDACTED>"));
+        // Other keys preserved verbatim.
+        assert_eq!(r["extra"].as_str(), Some("kept"));
+        // Sanity: the literal token value is nowhere in the rendered JSON.
+        let s = serde_json::to_string(&r).unwrap();
+        assert!(
+            !s.contains("super-secret-test-only"),
+            "token leaked into proposed_change JSON: {s}"
+        );
+    }
+
+    #[test]
+    fn redact_params_passes_through_for_actions_with_no_credentials() {
+        let params = json!({"package": "vim"});
+        let r = redact_params("AptInstall", &params);
+        assert_eq!(r["package"].as_str(), Some("vim"));
+    }
+
+    #[test]
+    fn redact_argv_replaces_argv_element_matching_token_value() {
+        // ProAttach's argv is `pro attach <token>`. The redactor finds the
+        // element by value-match and replaces it without positional knowledge.
+        let params = json!({"token": "super-secret-test-only"});
+        let argv = vec![
+            "pro".to_string(),
+            "attach".to_string(),
+            "super-secret-test-only".to_string(),
+        ];
+        let r = redact_argv("ProAttach", &params, &argv);
+        assert_eq!(r, vec!["pro", "attach", "<REDACTED>"]);
+    }
+
+    #[test]
+    fn redact_argv_passes_through_when_no_credentials() {
+        let params = json!({"package": "vim"});
+        let argv = vec![
+            "apt-get".to_string(),
+            "install".to_string(),
+            "vim".to_string(),
+        ];
+        let r = redact_argv("AptInstall", &params, &argv);
+        assert_eq!(r, argv);
+    }
 
     // ------------------------------------------------------------------
     // Test helpers

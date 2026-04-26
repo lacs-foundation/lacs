@@ -4,6 +4,8 @@
 //! `systemd-resolved`, including Fedora Atomic and Ubuntu. Registration in
 //! `KNOWN_ACTION_NAMES` only (not `DEBIAN_ONLY_ACTION_NAMES`).
 
+use std::net::IpAddr;
+
 use super::{command_mechanism, ActionSpec};
 use sysknife_types::RiskLevel;
 
@@ -13,9 +15,16 @@ use sysknife_types::RiskLevel;
 
 /// Return one representative `ActionSpec` per action name.
 pub fn specs() -> Vec<ActionSpec> {
+    use std::str::FromStr;
     vec![
         resolvectl_status(),
-        resolvectl_set_dns("eth0", &["1.1.1.1", "8.8.8.8"]),
+        resolvectl_set_dns(
+            "eth0",
+            &[
+                IpAddr::from_str("1.1.1.1").unwrap(),
+                IpAddr::from_str("8.8.8.8").unwrap(),
+            ],
+        ),
     ]
 }
 
@@ -44,11 +53,13 @@ pub fn resolvectl_status() -> ActionSpec {
 /// Cross-distro: works on any systemd-resolved host.
 ///
 /// `interface` is the network interface name (e.g. `"eth0"`, `"wlp1s0"`).
-/// `servers` lists one or more DNS server addresses.
-pub fn resolvectl_set_dns(interface: &str, servers: &[&str]) -> ActionSpec {
+/// `servers` lists one or more parsed DNS server addresses. Accepting `IpAddr`
+/// instead of `&str` pushes validation to the call site so future callers
+/// cannot pass malformed or flag-like strings through to `resolvectl`.
+pub fn resolvectl_set_dns(interface: &str, servers: &[IpAddr]) -> ActionSpec {
     // argv: resolvectl dns <iface> <server1> [server2 …]
     let mut args = vec!["dns".to_string(), interface.to_string()];
-    args.extend(servers.iter().map(|s| s.to_string()));
+    args.extend(servers.iter().map(|ip| ip.to_string()));
     ActionSpec {
         action_name: "ResolvectlSetDns",
         mechanism: super::ActionMechanism::Command {
@@ -73,6 +84,7 @@ pub fn resolvectl_set_dns(interface: &str, servers: &[&str]) -> ActionSpec {
 mod tests {
     use super::*;
     use crate::actions::ActionMechanism;
+    use std::str::FromStr;
 
     fn extract_args(spec: &ActionSpec) -> (&'static str, Vec<String>) {
         match &spec.mechanism {
@@ -109,10 +121,14 @@ mod tests {
 
     // ── resolvectl_set_dns ───────────────────────────────────────────────────
 
+    fn ip(s: &str) -> IpAddr {
+        IpAddr::from_str(s).expect("test fixture must be a valid IP")
+    }
+
     #[test]
     fn resolvectl_set_dns_action_name() {
         assert_eq!(
-            resolvectl_set_dns("eth0", &["1.1.1.1"]).action_name,
+            resolvectl_set_dns("eth0", &[ip("1.1.1.1")]).action_name,
             "ResolvectlSetDns"
         );
     }
@@ -120,7 +136,7 @@ mod tests {
     #[test]
     fn resolvectl_set_dns_risk_is_medium() {
         assert_eq!(
-            resolvectl_set_dns("eth0", &["1.1.1.1"]).risk_level,
+            resolvectl_set_dns("eth0", &[ip("1.1.1.1")]).risk_level,
             RiskLevel::Medium
         );
     }
@@ -128,7 +144,7 @@ mod tests {
     #[test]
     fn resolvectl_set_dns_argv_ordering() {
         // argv must be: sudo resolvectl dns <iface> <server>…
-        let spec = resolvectl_set_dns("eth0", &["1.1.1.1", "8.8.8.8"]);
+        let spec = resolvectl_set_dns("eth0", &[ip("1.1.1.1"), ip("8.8.8.8")]);
         let (prog, args) = extract_args(&spec);
         assert_eq!(prog, "sudo");
         let a: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -141,11 +157,21 @@ mod tests {
 
     #[test]
     fn resolvectl_set_dns_single_server() {
-        let spec = resolvectl_set_dns("wlp1s0", &["9.9.9.9"]);
+        let spec = resolvectl_set_dns("wlp1s0", &[ip("9.9.9.9")]);
         let (_, args) = extract_args(&spec);
         let a: Vec<&str> = args.iter().map(String::as_str).collect();
         assert!(a.contains(&"wlp1s0"));
         assert!(a.contains(&"9.9.9.9"));
+    }
+
+    #[test]
+    fn resolvectl_set_dns_accepts_ipv6() {
+        // Coverage for the IpAddr type guarantee — IPv6 server is rendered
+        // verbatim by IpAddr::to_string, no URL-style brackets.
+        let spec = resolvectl_set_dns("eth0", &[ip("2606:4700:4700::1111")]);
+        let (_, args) = extract_args(&spec);
+        let a: Vec<&str> = args.iter().map(String::as_str).collect();
+        assert!(a.contains(&"2606:4700:4700::1111"));
     }
 
     // ── specs() completeness ─────────────────────────────────────────────────
