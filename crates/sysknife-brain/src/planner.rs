@@ -31,6 +31,7 @@ use crate::sanitize::sanitize_tool_output;
 use crate::state_client::StateClient;
 use rig::client::CompletionClient;
 use serde::Serialize;
+use sysknife_types::DistroHint;
 use thiserror::Error;
 
 // ---------------------------------------------------------------------------
@@ -398,7 +399,8 @@ impl From<PlanValidationError> for PlanningError {
 ///
 /// Tool definitions are built once at construction time and reused across all
 /// planning calls. The system prompt is rebuilt per `plan_intent()` call to
-/// include current user preferences.
+/// include current user preferences and, when set, a distro-specific action
+/// family hint.
 pub struct LlmPlanner {
     provider: Box<dyn LlmProvider>,
     state_client: Box<dyn StateClient>,
@@ -408,6 +410,7 @@ pub struct LlmPlanner {
     prefs_path: Option<std::path::PathBuf>,
     progress_tx: Option<tokio::sync::mpsc::UnboundedSender<PlanEvent>>,
     rate_limiter: Option<std::sync::Arc<crate::rate_limit::RateLimiter>>,
+    distro_hint: Option<DistroHint>,
 }
 
 impl LlmPlanner {
@@ -437,6 +440,7 @@ impl LlmPlanner {
             prefs_path: None,
             progress_tx: None,
             rate_limiter: None,
+            distro_hint: None,
         }
     }
 
@@ -482,6 +486,22 @@ impl LlmPlanner {
     /// [`RateLimiter`]: crate::rate_limit::RateLimiter
     pub fn with_rate_limiter(mut self, rl: crate::rate_limit::RateLimiter) -> Self {
         self.rate_limiter = Some(std::sync::Arc::new(rl));
+        self
+    }
+
+    /// Attach a [`DistroHint`] to guide action-family selection in the prompt.
+    ///
+    /// When set, the system prompt gains a **Detected distro** section that
+    /// names which action families are available on the running distro and
+    /// which are not.  This tells the model to choose `AptInstall` on Ubuntu
+    /// and `AddLayeredPackage` on Fedora without requiring a planning-time
+    /// query tool call.
+    ///
+    /// When `None` (the default), the prompt falls back to the existing
+    /// distro-agnostic text so all existing tests and no-distro deployments
+    /// continue to work unchanged.
+    pub fn with_distro(mut self, distro: DistroHint) -> Self {
+        self.distro_hint = Some(distro);
         self
     }
 
@@ -701,8 +721,9 @@ impl LlmPlanner {
 
         let mut messages: Vec<Message> = vec![Message::user_text(intent)];
 
-        // Rebuild the system prompt with current preferences on each call
-        // so that preferences saved during a prior `plan_intent` are visible.
+        // Rebuild the system prompt with current preferences and distro hint
+        // on each call so that preferences saved during a prior `plan_intent`
+        // are visible, and the distro routing section reflects the hint.
         let effective_prompt = {
             let prefs_content = match self.prefs_path.clone() {
                 Some(p) => match crate::prefs::read_prefs_async(p.clone()).await {
@@ -717,7 +738,7 @@ impl LlmPlanner {
                 },
                 None => None,
             };
-            build_system_prompt(prefs_content.as_deref())
+            build_system_prompt(prefs_content.as_deref(), self.distro_hint.as_ref())
         };
 
         for turn in 0..self.max_turns {

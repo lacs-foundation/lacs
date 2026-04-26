@@ -1359,3 +1359,383 @@ fn rate_limiter_file_is_compacted_after_calls() {
         "file should have 3 timestamp lines, got {line_count}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// DistroHint — prompt injection tests
+// ---------------------------------------------------------------------------
+//
+// These tests verify that `LlmPlanner::with_distro` causes the system prompt
+// to contain the correct distro-specific action family section and excludes the
+// wrong one.  They do NOT call an LLM — they exercise `build_system_prompt`
+// via a `MockProvider` that captures the `system` argument on the first call.
+
+use std::sync::Mutex as StdMutex;
+use sysknife_types::{DistroHint, DISTRO_FAMILY_DEBIAN, DISTRO_FAMILY_FEDORA};
+
+/// A provider that captures the `system` string passed to its first `complete`
+/// call so tests can inspect what the planner injected into the prompt.
+struct CapturingProvider {
+    captured_system: Arc<StdMutex<Option<String>>>,
+    inner: MockProvider,
+}
+
+impl CapturingProvider {
+    fn new(inner: MockProvider) -> (Self, Arc<StdMutex<Option<String>>>) {
+        let captured = Arc::new(StdMutex::new(None));
+        let provider = Self {
+            captured_system: Arc::clone(&captured),
+            inner,
+        };
+        (provider, captured)
+    }
+}
+
+#[async_trait]
+impl LlmProvider for CapturingProvider {
+    async fn complete(
+        &self,
+        system: &str,
+        messages: &[Message],
+        tools: &[ToolDefinition],
+        max_tokens: u32,
+    ) -> Result<Completion, ProviderError> {
+        // Drop the lock guard before the await to keep the future Send.
+        {
+            let mut guard = self.captured_system.lock().unwrap();
+            if guard.is_none() {
+                *guard = Some(system.to_string());
+            }
+        }
+        self.inner
+            .complete(system, messages, tools, max_tokens)
+            .await
+    }
+}
+
+// Helper: build a planner that uses a CapturingProvider and returns the
+// captured system string after plan_intent completes.
+async fn run_and_capture_system(
+    hint: Option<DistroHint>,
+    provider_turns: impl IntoIterator<Item = Result<Completion, ProviderError>>,
+) -> String {
+    let mock = MockProvider::new(provider_turns);
+    let (capturing, captured) = CapturingProvider::new(mock);
+    let mut planner = LlmPlanner::new(Box::new(capturing), Box::new(MockStateClient::default()), 5);
+    if let Some(h) = hint {
+        planner = planner.with_distro(h);
+    }
+    let _ = planner
+        .plan_intent("show disk usage")
+        .await
+        .expect("plan must succeed");
+    let result = captured.lock().unwrap().clone().unwrap_or_default();
+    result
+}
+
+// ---------------------------------------------------------------------------
+// Test: prompt with Fedora hint contains Fedora actions and excludes apt
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn prompt_with_fedora_hint_contains_fedora_actions_and_excludes_apt() {
+    let hint = DistroHint {
+        family: DISTRO_FAMILY_FEDORA,
+        version: Some("Fedora 41".to_string()),
+    };
+    let system = run_and_capture_system(
+        Some(hint),
+        [propose_plan(
+            "disk check",
+            &[("GetDiskUsage", "Check disk", "low")],
+        )],
+    )
+    .await;
+
+    // Must contain the Fedora action family names.
+    assert!(
+        system.contains("AddLayeredPackage"),
+        "Fedora prompt must mention AddLayeredPackage; got prompt length={}",
+        system.len()
+    );
+    assert!(
+        system.contains("RemoveLayeredPackage"),
+        "Fedora prompt must mention RemoveLayeredPackage"
+    );
+
+    // Must mention the detected distro.
+    assert!(
+        system.contains("Fedora 41"),
+        "Fedora prompt must mention the version string"
+    );
+
+    // Must explicitly exclude apt on Fedora.
+    assert!(
+        system.contains("AptInstall") && system.contains("NOT available"),
+        "Fedora prompt must call out AptInstall as NOT available"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test: prompt with Ubuntu hint contains apt and excludes rpm-ostree names
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn prompt_with_ubuntu_hint_contains_apt_and_excludes_rpm_ostree() {
+    let hint = DistroHint {
+        family: DISTRO_FAMILY_DEBIAN,
+        version: Some("Ubuntu 24.04".to_string()),
+    };
+    let system = run_and_capture_system(
+        Some(hint),
+        [propose_plan(
+            "disk check",
+            &[("GetDiskUsage", "Check disk", "low")],
+        )],
+    )
+    .await;
+
+    // Must contain the Debian/Ubuntu action family names.
+    assert!(
+        system.contains("AptInstall"),
+        "Ubuntu prompt must mention AptInstall"
+    );
+    assert!(
+        system.contains("AptRemove"),
+        "Ubuntu prompt must mention AptRemove"
+    );
+
+    // Must mention the detected distro.
+    assert!(
+        system.contains("Ubuntu 24.04"),
+        "Ubuntu prompt must mention the version string"
+    );
+
+    // Must explicitly exclude rpm-ostree actions on Ubuntu.
+    assert!(
+        system.contains("AddLayeredPackage") && system.contains("NOT available"),
+        "Ubuntu prompt must call out AddLayeredPackage as NOT available"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test: prompt with no distro hint is unchanged from baseline
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn prompt_with_no_distro_hint_is_unchanged_from_baseline() {
+    use sysknife_brain::prompt::build_system_prompt;
+
+    let system = run_and_capture_system(
+        None,
+        [propose_plan(
+            "disk check",
+            &[("GetDiskUsage", "Check disk", "low")],
+        )],
+    )
+    .await;
+
+    let baseline = build_system_prompt(None, None);
+    assert_eq!(
+        system, baseline,
+        "prompt without a distro hint must equal the no-hint baseline"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Story-coverage tests: same intent → different action family per distro
+// ---------------------------------------------------------------------------
+//
+// These tests verify that the distro hint causes the *prompt* to instruct the
+// model to use the correct action family.  Because tests use MockProvider, we
+// cannot verify the LLM's choice — we verify that the prompt contains the
+// right routing instruction.  The distro_routing.rs tests verify the
+// post-plan execution guard separately.
+
+/// For each (intent_keyword, fedora_action, ubuntu_action) triple, assert:
+/// - the Fedora prompt contains `fedora_action` as available and
+///   marks `ubuntu_action` as NOT available;
+/// - the Ubuntu prompt contains `ubuntu_action` as available and
+///   marks `fedora_action` as NOT available.
+struct StoryCoverage {
+    description: &'static str,
+    fedora_action: &'static str,
+    ubuntu_action: &'static str,
+}
+
+fn story_coverage_cases() -> &'static [StoryCoverage] {
+    &[
+        StoryCoverage {
+            description: "system-package install",
+            fedora_action: "AddLayeredPackage",
+            ubuntu_action: "AptInstall",
+        },
+        StoryCoverage {
+            description: "system-package remove",
+            fedora_action: "RemoveLayeredPackage",
+            ubuntu_action: "AptRemove",
+        },
+        StoryCoverage {
+            description: "firewall management",
+            fedora_action: "ConfigureFirewall",
+            ubuntu_action: "UfwAllow",
+        },
+    ]
+}
+
+#[tokio::test]
+async fn story_coverage_fedora_prompt_contains_fedora_actions_and_excludes_ubuntu() {
+    let fedora_hint = DistroHint {
+        family: DISTRO_FAMILY_FEDORA,
+        version: Some("Fedora 41".to_string()),
+    };
+    let system = run_and_capture_system(
+        Some(fedora_hint),
+        [propose_plan("action", &[("GetDiskUsage", "check", "low")])],
+    )
+    .await;
+
+    for case in story_coverage_cases() {
+        assert!(
+            system.contains(case.fedora_action),
+            "[{}] Fedora prompt must contain {}",
+            case.description,
+            case.fedora_action
+        );
+    }
+    // AptInstall and AptRemove must be called out as NOT available on Fedora.
+    assert!(
+        system.contains("AptInstall") && system.contains("NOT available"),
+        "Fedora prompt must mark AptInstall as NOT available"
+    );
+}
+
+#[tokio::test]
+async fn story_coverage_ubuntu_prompt_contains_ubuntu_actions_and_excludes_fedora() {
+    let ubuntu_hint = DistroHint {
+        family: DISTRO_FAMILY_DEBIAN,
+        version: Some("Ubuntu 24.04".to_string()),
+    };
+    let system = run_and_capture_system(
+        Some(ubuntu_hint),
+        [propose_plan("action", &[("GetDiskUsage", "check", "low")])],
+    )
+    .await;
+
+    for case in story_coverage_cases() {
+        assert!(
+            system.contains(case.ubuntu_action),
+            "[{}] Ubuntu prompt must contain {}",
+            case.description,
+            case.ubuntu_action
+        );
+    }
+    // AddLayeredPackage must be called out as NOT available on Ubuntu.
+    assert!(
+        system.contains("AddLayeredPackage") && system.contains("NOT available"),
+        "Ubuntu prompt must mark AddLayeredPackage as NOT available"
+    );
+}
+
+#[tokio::test]
+async fn story_coverage_second_fedora_case_install_packages() {
+    // "install a system package" — Fedora uses AddLayeredPackage / InstallPackages, not AptInstall
+    let fedora_hint = DistroHint {
+        family: DISTRO_FAMILY_FEDORA,
+        version: Some("FedoraSilverblue 41".to_string()),
+    };
+    let system = run_and_capture_system(
+        Some(fedora_hint),
+        [propose_plan(
+            "install",
+            &[("AddLayeredPackage", "layer vim", "high")],
+        )],
+    )
+    .await;
+
+    assert!(
+        system.contains("AddLayeredPackage"),
+        "prompt must list AddLayeredPackage"
+    );
+    assert!(
+        system.contains("NOT available") && system.contains("AptInstall"),
+        "prompt must note AptInstall not available on Fedora"
+    );
+}
+
+#[tokio::test]
+async fn story_coverage_third_fedora_case_rollback() {
+    // "rollback system" — Fedora uses RollbackDeployment, not an apt command
+    let fedora_hint = DistroHint {
+        family: DISTRO_FAMILY_FEDORA,
+        version: Some("Fedora 42".to_string()),
+    };
+    let system = run_and_capture_system(
+        Some(fedora_hint),
+        [propose_plan(
+            "rollback",
+            &[("RollbackDeployment", "rollback", "high")],
+        )],
+    )
+    .await;
+
+    assert!(
+        system.contains("RollbackDeployment"),
+        "Fedora prompt must include RollbackDeployment"
+    );
+    assert!(
+        system.contains("NOT available") && system.contains("AptInstall"),
+        "Fedora prompt must exclude apt actions"
+    );
+}
+
+#[tokio::test]
+async fn story_coverage_second_ubuntu_case_snap_install() {
+    // "install via snap" — Ubuntu uses SnapInstall, not AddLayeredPackage
+    let ubuntu_hint = DistroHint {
+        family: DISTRO_FAMILY_DEBIAN,
+        version: Some("Ubuntu 22.04".to_string()),
+    };
+    let system = run_and_capture_system(
+        Some(ubuntu_hint),
+        [propose_plan(
+            "snap",
+            &[("SnapInstall", "install snap", "medium")],
+        )],
+    )
+    .await;
+
+    assert!(
+        system.contains("SnapInstall"),
+        "Ubuntu prompt must include SnapInstall"
+    );
+    assert!(
+        system.contains("NOT available") && system.contains("AddLayeredPackage"),
+        "Ubuntu prompt must exclude rpm-ostree actions"
+    );
+}
+
+#[tokio::test]
+async fn story_coverage_third_ubuntu_case_apt_search() {
+    // "search for a package" — Ubuntu uses AptSearch, not SearchFlatpakApps alone
+    let ubuntu_hint = DistroHint {
+        family: DISTRO_FAMILY_DEBIAN,
+        version: Some("Ubuntu 26.04".to_string()),
+    };
+    let system = run_and_capture_system(
+        Some(ubuntu_hint),
+        [propose_plan(
+            "search",
+            &[("AptSearch", "search apt", "low")],
+        )],
+    )
+    .await;
+
+    assert!(
+        system.contains("AptSearch"),
+        "Ubuntu prompt must include AptSearch"
+    );
+    assert!(
+        system.contains("NOT available") && system.contains("AddLayeredPackage"),
+        "Ubuntu prompt must exclude rpm-ostree actions"
+    );
+}

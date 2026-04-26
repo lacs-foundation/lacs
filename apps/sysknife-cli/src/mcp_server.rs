@@ -374,8 +374,15 @@ async fn plan_intent_inner(intent: &str) -> Result<serde_json::Value, String> {
 
     let state_client = DaemonClient::new(resolve_socket_target());
 
-    let planner = LlmPlanner::from_config(config, Box::new(state_client))
+    // Detect the running distro and pass a hint to the planner so it picks
+    // the right action family up front.  Failure is non-fatal.
+    let distro = sysknife_core::distro::detect().ok();
+
+    let mut planner = LlmPlanner::from_config(config, Box::new(state_client))
         .map_err(|e| format!("planner init error: {e}"))?;
+    if let Some(ref d) = distro {
+        planner = planner.with_distro(crate::runner::distro_id_to_hint(d));
+    }
 
     // `plan_intent` may call `StateClient::curated_state()` (a blocking sync
     // Unix socket call) on the current async thread.  This is tolerable on

@@ -24,6 +24,7 @@ use serde_json::{json, Value};
 use sysknife_brain::config::BrainConfig;
 use sysknife_brain::planner::{LlmPlanner, PlanRiskLevel};
 use sysknife_brain::PlanEvent;
+use sysknife_types::{DistroHint, DISTRO_FAMILY_DEBIAN, DISTRO_FAMILY_FEDORA, DISTRO_FAMILY_OTHER};
 
 use sysknife_brain::state_client::StateClient as _;
 
@@ -31,6 +32,28 @@ use crate::approval::{ApprovalDecision, ApprovalPolicy, MaxRisk};
 use crate::cli::{AuditVerifyArgs, Cli, HistoryArgs};
 use crate::client::{DaemonClient, SocketTarget};
 use crate::error::CliError;
+
+// ---------------------------------------------------------------------------
+// distro_id_to_hint — DistroId → DistroHint conversion
+// ---------------------------------------------------------------------------
+
+/// Convert a `sysknife_core::distro::DistroId` to a `DistroHint` for the planner.
+///
+/// This is the single place where the CLI bridges the detection layer
+/// (`sysknife-core`) and the planning layer (`sysknife-brain`), keeping each
+/// side independent of the other.
+pub fn distro_id_to_hint(distro: &sysknife_core::distro::DistroId) -> DistroHint {
+    use sysknife_core::distro::DistroFamily;
+    let family = match distro.family() {
+        DistroFamily::Fedora => DISTRO_FAMILY_FEDORA,
+        DistroFamily::Debian => DISTRO_FAMILY_DEBIAN,
+        DistroFamily::Other => DISTRO_FAMILY_OTHER,
+    };
+    DistroHint {
+        family,
+        version: Some(distro.to_string()),
+    }
+}
 
 // ---------------------------------------------------------------------------
 // resolve_socket / resolve_socket_target
@@ -644,10 +667,13 @@ pub async fn run_intent(intent: String, opts: &RunOpts, log: &Logger) -> Result<
     // the CLI subscribes and updates the spinner message in real time.
     let (progress_tx, mut progress_rx) = tokio::sync::mpsc::unbounded_channel::<PlanEvent>();
 
-    let planner = LlmPlanner::from_config(config, Box::new(plan_client))
+    let mut planner = LlmPlanner::from_config(config, Box::new(plan_client))
         .map_err(CliError::ConfigOrDaemon)?
         .with_prefs_path(sysknife_core::config::prefs_path())
         .with_progress(progress_tx);
+    if let Some(ref d) = distro {
+        planner = planner.with_distro(distro_id_to_hint(d));
+    }
 
     // Layer 1: spinner — auto-hidden by indicatif when stderr is not a TTY.
     let spinner = if !opts.json {
