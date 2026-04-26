@@ -57,6 +57,8 @@ pub fn specs() -> Vec<ActionSpec> {
         apt_search("curl"),
         apt_list_installed(),
         apt_show("curl"),
+        apt_list_upgradable(),
+        apt_history_list(),
     ]
 }
 
@@ -270,6 +272,44 @@ pub fn apt_show(package: &str) -> ActionSpec {
     ActionSpec {
         action_name: "AptShow",
         mechanism: command_mechanism("apt-cache", ["show", package]),
+        risk_level: RiskLevel::Low,
+        reboot_required: false,
+        rollback_available: false,
+    }
+}
+
+/// List packages that have upgrades available (`apt list --upgradable`).
+///
+/// Risk: Low. Read-only query; no packages are installed or changed.
+/// Stderr suppressed via `2>/dev/null` to hide the "WARNING: apt does not
+/// have a stable CLI interface" notice that apt emits on non-interactive
+/// invocations. The script is tee'd through `bash -c` because `apt list`
+/// writes its "Listing..." header to stderr.
+pub fn apt_list_upgradable() -> ActionSpec {
+    ActionSpec {
+        action_name: "AptListUpgradable",
+        mechanism: command_mechanism("bash", ["-c", "apt list --upgradable 2>/dev/null"]),
+        risk_level: RiskLevel::Low,
+        reboot_required: false,
+        rollback_available: false,
+    }
+}
+
+/// Show recent apt transaction history from `/var/log/apt/history.log`.
+///
+/// Risk: Low. Read-only file inspection; no packages are changed.
+/// Retrieves the 80 most recent log lines covering the last few Start-Date
+/// entries so the user can audit what was installed, removed, or upgraded.
+pub fn apt_history_list() -> ActionSpec {
+    ActionSpec {
+        action_name: "AptHistoryList",
+        mechanism: command_mechanism(
+            "bash",
+            [
+                "-c",
+                "grep -A 4 '^Start-Date' /var/log/apt/history.log | tail -n 80",
+            ],
+        ),
         risk_level: RiskLevel::Low,
         reboot_required: false,
         rollback_available: false,
@@ -553,6 +593,59 @@ mod tests {
         assert_eq!(apt_show("openssh-server").risk_level, RiskLevel::Low);
     }
 
+    // ── apt_list_upgradable ──────────────────────────────────────────────────
+
+    #[test]
+    fn apt_list_upgradable_action_name() {
+        assert_eq!(apt_list_upgradable().action_name, "AptListUpgradable");
+    }
+
+    #[test]
+    fn apt_list_upgradable_uses_bash_and_apt_list() {
+        let spec = apt_list_upgradable();
+        match &spec.mechanism {
+            ActionMechanism::Command { program, args } => {
+                assert_eq!(*program, "bash");
+                let joined = args.join(" ");
+                assert!(joined.contains("apt list --upgradable"), "argv: {joined}");
+            }
+            _ => panic!("expected Command mechanism"),
+        }
+    }
+
+    #[test]
+    fn apt_list_upgradable_risk_is_low() {
+        assert_eq!(apt_list_upgradable().risk_level, RiskLevel::Low);
+    }
+
+    // ── apt_history_list ─────────────────────────────────────────────────────
+
+    #[test]
+    fn apt_history_list_action_name() {
+        assert_eq!(apt_history_list().action_name, "AptHistoryList");
+    }
+
+    #[test]
+    fn apt_history_list_uses_bash_and_grep() {
+        let spec = apt_history_list();
+        match &spec.mechanism {
+            ActionMechanism::Command { program, args } => {
+                assert_eq!(*program, "bash");
+                let joined = args.join(" ");
+                assert!(
+                    joined.contains("/var/log/apt/history.log"),
+                    "argv: {joined}"
+                );
+            }
+            _ => panic!("expected Command mechanism"),
+        }
+    }
+
+    #[test]
+    fn apt_history_list_risk_is_low() {
+        assert_eq!(apt_history_list().risk_level, RiskLevel::Low);
+    }
+
     // ── specs() completeness ─────────────────────────────────────────────────
 
     #[test]
@@ -569,6 +662,8 @@ mod tests {
             "AptSearch",
             "AptListInstalled",
             "AptShow",
+            "AptListUpgradable",
+            "AptHistoryList",
         ];
         let spec_names: Vec<&str> = specs().iter().map(|s| s.action_name).collect();
         for name in &expected_names {

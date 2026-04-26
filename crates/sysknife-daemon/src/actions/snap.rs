@@ -31,6 +31,8 @@ pub fn specs() -> Vec<ActionSpec> {
         snap_unhold("firefox"),
         snap_list(),
         snap_info("firefox"),
+        snap_revert("firefox"),
+        snap_classic_install("code"),
     ]
 }
 
@@ -167,6 +169,34 @@ pub fn snap_info(name: &str) -> ActionSpec {
         action_name: "SnapInfo",
         mechanism: command_mechanism("snap", ["info", name]),
         risk_level: RiskLevel::Low,
+        reboot_required: false,
+        rollback_available: false,
+    }
+}
+
+/// Revert a snap to the previously active revision (`snap revert <name>`).
+///
+/// Risk: Medium. Rolls the snap back one revision; the current revision is
+/// preserved and the revert itself can be undone by refreshing again.
+pub fn snap_revert(name: &str) -> ActionSpec {
+    ActionSpec {
+        action_name: "SnapRevert",
+        mechanism: command_mechanism("sudo", ["snap", "revert", name]),
+        risk_level: RiskLevel::Medium,
+        reboot_required: false,
+        rollback_available: false,
+    }
+}
+
+/// Install a snap that requires classic confinement (`snap install --classic <name>`).
+///
+/// Risk: Medium. Classic-confined snaps have full system access (no sandbox);
+/// this carries more risk than sandboxed snap installs.
+pub fn snap_classic_install(name: &str) -> ActionSpec {
+    ActionSpec {
+        action_name: "SnapClassicInstall",
+        mechanism: command_mechanism("sudo", ["snap", "install", "--classic", name]),
+        risk_level: RiskLevel::Medium,
         reboot_required: false,
         rollback_available: false,
     }
@@ -369,6 +399,56 @@ mod tests {
         assert!(a.contains(&"code"));
     }
 
+    // ── snap_revert ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn snap_revert_action_name() {
+        assert_eq!(snap_revert("firefox").action_name, "SnapRevert");
+    }
+
+    #[test]
+    fn snap_revert_argv_correct() {
+        let spec = snap_revert("firefox");
+        let (prog, args) = extract_args(&spec);
+        assert_eq!(prog, "sudo");
+        let a: Vec<&str> = args.iter().map(String::as_str).collect();
+        assert!(a.contains(&"snap"));
+        assert!(a.contains(&"revert"));
+        assert!(a.contains(&"firefox"));
+    }
+
+    #[test]
+    fn snap_revert_risk_medium() {
+        assert_eq!(snap_revert("firefox").risk_level, RiskLevel::Medium);
+    }
+
+    // ── snap_classic_install ─────────────────────────────────────────────────
+
+    #[test]
+    fn snap_classic_install_action_name() {
+        assert_eq!(
+            snap_classic_install("code").action_name,
+            "SnapClassicInstall"
+        );
+    }
+
+    #[test]
+    fn snap_classic_install_argv_contains_classic_flag() {
+        let spec = snap_classic_install("code");
+        let (prog, args) = extract_args(&spec);
+        assert_eq!(prog, "sudo");
+        let a: Vec<&str> = args.iter().map(String::as_str).collect();
+        assert!(a.contains(&"snap"));
+        assert!(a.contains(&"install"));
+        assert!(a.contains(&"--classic"));
+        assert!(a.contains(&"code"));
+    }
+
+    #[test]
+    fn snap_classic_install_risk_medium() {
+        assert_eq!(snap_classic_install("code").risk_level, RiskLevel::Medium);
+    }
+
     // ── specs() completeness ─────────────────────────────────────────────────
 
     #[test]
@@ -381,6 +461,8 @@ mod tests {
             "SnapUnhold",
             "SnapList",
             "SnapInfo",
+            "SnapRevert",
+            "SnapClassicInstall",
         ];
         let spec_names: Vec<&str> = specs().iter().map(|s| s.action_name).collect();
         for name in &expected {

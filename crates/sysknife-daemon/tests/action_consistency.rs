@@ -12,8 +12,9 @@ use std::collections::BTreeSet;
 use serde_json::json;
 use sysknife_brain::planning_tools::propose_plan::KNOWN_ACTIONS;
 use sysknife_daemon::actions::{
-    apt, containers, deployment, distrobox, filesystem, flatpak, identity, layering, netplan,
-    network, package_repos, processes, services, snap, ssh, system_info, toolbox, ufw, users,
+    apt, containers, deployment, distrobox, filesystem, flatpak, grub, identity, layering, netplan,
+    network, package_repos, ppa, processes, reboot, services, snap, ssh, system_info, toolbox, ufw,
+    users,
 };
 use sysknife_daemon::executor::build_action_spec;
 use sysknife_daemon::policy::min_role_for_action;
@@ -75,6 +76,9 @@ fn all_spec_action_names() -> BTreeSet<&'static str> {
     for spec in apt::specs() {
         names.insert(spec.action_name);
     }
+    for spec in ppa::specs() {
+        names.insert(spec.action_name);
+    }
     for spec in snap::specs() {
         names.insert(spec.action_name);
     }
@@ -85,6 +89,12 @@ fn all_spec_action_names() -> BTreeSet<&'static str> {
         names.insert(spec.action_name);
     }
     for spec in netplan::specs() {
+        names.insert(spec.action_name);
+    }
+    for spec in grub::specs() {
+        names.insert(spec.action_name);
+    }
+    for spec in reboot::specs() {
         names.insert(spec.action_name);
     }
     names

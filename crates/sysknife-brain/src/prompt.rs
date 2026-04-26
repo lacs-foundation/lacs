@@ -704,19 +704,25 @@ const DEBIAN_RISK_TABLES: &str = r#"
 ### Low risk (Debian-specific)
 
 AptUpdate, AptSearch, AptListInstalled, AptShow, AptAutoremove,
+AptListUpgradable, AptHistoryList,
+CheckPendingReboot,
 SnapList, SnapInfo,
 UfwStatus, NetplanGetConfig,
+GrubGetKargs,
 DistroboxList
 
 ### Medium risk (Debian-specific)
 
 AptInstall, AptRemove, AptPurge, AptHold, AptUnhold,
 SnapInstall, SnapRemove, SnapRefresh, SnapHold, SnapUnhold,
+SnapRevert, SnapClassicInstall,
+AddPpa, RemovePpa,
 DistroboxCreate, DistroboxRemove
 
 ### High risk (Debian-specific)
 
 AptUpgrade,
+GrubSetKargs,
 UfwEnable, UfwDisable, UfwAllow, UfwDeny, UfwReset,
 NetplanApply
 "#;
@@ -728,6 +734,14 @@ const DEBIAN_SELECTION_RULES: &str = r#"
 - `AptUpdate` refreshes the apt cache only, no packages changed — LOW.
 - `AptUpgrade` upgrades every installed package — HIGH (large blast radius).
 - `AptAutoremove` removes orphaned dependency packages only — LOW.
+- `AptListUpgradable` lists packages with available upgrades — LOW, read-only. Use for "what updates are pending?" or "are there pending updates?" on Ubuntu/Debian. (Fedora equivalent: `GetPendingUpdates`.)
+- `AptHistoryList` reads the apt transaction log — LOW, read-only. Use for "what was recently installed/removed?", "show apt history".
+- `CheckPendingReboot` checks `/var/run/reboot-required` — LOW, read-only. Use for "do I need to reboot?", "is a reboot pending?". Ubuntu/Debian only; on Fedora use `GetPendingUpdates`.
+- `AddPpa` / `RemovePpa` add or remove a Launchpad PPA — MEDIUM. Param: `name` in `<user>/<ppa>` format (e.g. `"deadsnakes/ppa"`). Requires `software-properties-common` at runtime.
+- `GrubGetKargs` reads the current GRUB kernel command line — LOW, read-only.
+- `GrubSetKargs` edits `GRUB_CMDLINE_LINUX_DEFAULT` and runs `update-grub` — HIGH. Requires reboot. Use params `append` (list of args to add) and/or `delete` (list of args to remove).
+- `SnapRevert` rolls a snap back to its previous revision — MEDIUM.
+- `SnapClassicInstall` installs a snap with classic confinement (full system access) — MEDIUM.
 - `UfwAllow` and `UfwDeny` mutate firewall rules — HIGH (lock-out risk on remote sessions).
 - `UfwEnable` and `UfwDisable` toggle the firewall on/off — HIGH.
 - `NetplanApply` applies pending network configuration — HIGH (can disconnect the active interface).
@@ -741,6 +755,14 @@ const DEBIAN_COUNTERINTUITIVE: &str = r#"
 - `AptInstall` is MEDIUM, not HIGH — single named package, reversible with `AptRemove`.
 - `AptAutoremove` is LOW, not HIGH — only removes orphaned packages that nothing depends on.
 - `AptUpdate` is LOW — only refreshes the local package cache; no packages are installed or changed.
+- `AptListUpgradable` is LOW — read-only query that lists available upgrades without applying them.
+- `AptHistoryList` is LOW — read-only audit of the apt transaction log.
+- `CheckPendingReboot` is LOW — reads a sentinel file, no system mutation.
+- `GrubGetKargs` is LOW — read-only file inspection, no changes.
+- `GrubSetKargs` is HIGH — modifies the GRUB kernel command line; incorrect args can prevent boot.
+- `AddPpa` / `RemovePpa` are MEDIUM — third-party apt source changes; reversible but a supply-chain vector.
+- `SnapRevert` is MEDIUM — rolls back a snap revision; reversible with a refresh.
+- `SnapClassicInstall` is MEDIUM — installs a snap with classic confinement (full system access).
 - `UfwAllow` / `UfwDeny` are HIGH — every firewall mutation can lock out active remote sessions.
 - `UfwEnable` / `UfwDisable` are HIGH — toggling the firewall can immediately sever remote connections.
 - `NetplanApply` is HIGH — can disconnect the network interface that your session runs over.
@@ -752,6 +774,8 @@ const DEBIAN_PARAMS: &str = r#"
 ## Debian-specific action parameters
 
 **No params** — use `{}`: AptUpdate, AptAutoremove, AptListInstalled,
+AptListUpgradable, AptHistoryList, CheckPendingReboot,
+GrubGetKargs,
 UfwStatus, UfwEnable, UfwDisable, UfwReset, DistroboxList, NetplanGetConfig.
 
 **Apt**:
@@ -760,11 +784,19 @@ UfwStatus, UfwEnable, UfwDisable, UfwReset, DistroboxList, NetplanGetConfig.
 - `AptHold` / `AptUnhold`: `{"package":"vim"}`
 - `AptSearch` / `AptShow`: `{"package":"vim"}`
 
+**PPA**:
+- `AddPpa` / `RemovePpa`: `{"name":"deadsnakes/ppa"}` — the `name` field is `<user>/<ppa>` without the `ppa:` prefix
+
 **Snap**:
-- `SnapInstall` / `SnapRemove` / `SnapRefresh`: `{"package":"vlc"}`
-- `SnapHold` / `SnapUnhold`: `{"package":"vlc"}`
+- `SnapInstall` / `SnapRemove` / `SnapRefresh`: `{"name":"vlc"}`
+- `SnapHold` / `SnapUnhold`: `{"name":"vlc"}`
+- `SnapRevert` / `SnapClassicInstall`: `{"name":"vlc"}`
 - `SnapList`: `{}`
-- `SnapInfo`: `{"package":"vlc"}`
+- `SnapInfo`: `{"name":"vlc"}`
+
+**GRUB**:
+- `GrubGetKargs`: `{}`
+- `GrubSetKargs`: `{"append":["quiet","nomodeset"],"delete":["splash"]}` — either list may be `[]` but at least one must be non-empty
 
 **UFW**:
 - `UfwAllow` / `UfwDeny`: `{"rule":"22/tcp"}` or `{"rule":"ssh"}`
@@ -946,6 +978,10 @@ pub const DEBIAN_ONLY_ACTION_NAMES: &[&str] = &[
     "AptSearch",
     "AptListInstalled",
     "AptShow",
+    "AptListUpgradable",
+    "AptHistoryList",
+    "AddPpa",
+    "RemovePpa",
     "SnapInstall",
     "SnapRemove",
     "SnapRefresh",
@@ -953,6 +989,8 @@ pub const DEBIAN_ONLY_ACTION_NAMES: &[&str] = &[
     "SnapUnhold",
     "SnapList",
     "SnapInfo",
+    "SnapRevert",
+    "SnapClassicInstall",
     "UfwEnable",
     "UfwDisable",
     "UfwAllow",
@@ -964,6 +1002,9 @@ pub const DEBIAN_ONLY_ACTION_NAMES: &[&str] = &[
     "DistroboxRemove",
     "NetplanGetConfig",
     "NetplanApply",
+    "GrubGetKargs",
+    "GrubSetKargs",
+    "CheckPendingReboot",
 ];
 
 #[cfg(test)]
@@ -996,11 +1037,20 @@ mod tests {
         for forbidden in &[
             "AptInstall",
             "AptUpdate",
+            "AptListUpgradable",
+            "AptHistoryList",
+            "AddPpa",
+            "RemovePpa",
             "SnapInstall",
+            "SnapRevert",
+            "SnapClassicInstall",
             "UfwAllow",
             "UfwStatus",
             "NetplanApply",
             "DistroboxCreate",
+            "GrubGetKargs",
+            "GrubSetKargs",
+            "CheckPendingReboot",
         ] {
             assert!(
                 !p.contains(forbidden),
