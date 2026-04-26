@@ -222,6 +222,15 @@ pub const KNOWN_ACTIONS: &[(&str, &str)] = &[
      "list all installed packages (dpkg -l) — no params; Ubuntu only; read-only"),
     ("AptShow",
      "show package details (version, deps, description) — param: package*; Ubuntu only; read-only"),
+    ("AptListUpgradable",
+     "list packages with available upgrades — no params; Ubuntu only; read-only. Use for 'are there pending updates?' or 'what updates are available?'"),
+    ("AptHistoryList",
+     "show recent apt transaction history — no params; Ubuntu only; read-only"),
+    // ── Ubuntu / ppa — Launchpad PPAs ─────────────────────────────────────────
+    ("AddPpa",
+     "add a Launchpad PPA — param: name* in <user>/<ppa> format (e.g. 'deadsnakes/ppa'); Ubuntu only; requires software-properties-common"),
+    ("RemovePpa",
+     "remove a Launchpad PPA — param: name* in <user>/<ppa> format; Ubuntu only"),
     // ── Ubuntu / snap ─────────────────────────────────────────────────────────
     ("SnapInstall",
      "install a snap (auto-holds to prevent auto-refresh) — params: name*; optional: channel (default stable), auto_update (bool, default false); Ubuntu only"),
@@ -237,6 +246,10 @@ pub const KNOWN_ACTIONS: &[(&str, &str)] = &[
      "list installed snaps — no params; Ubuntu only; read-only"),
     ("SnapInfo",
      "show snap details (version, channel, description) — param: name*; Ubuntu only; read-only"),
+    ("SnapRevert",
+     "revert a snap to its previous revision — param: name*; Ubuntu only"),
+    ("SnapClassicInstall",
+     "install a snap with classic confinement (full system access) — param: name*; Ubuntu only"),
     // ── Ubuntu / ufw — firewall ───────────────────────────────────────────────
     ("UfwEnable",
      "enable the ufw firewall — no params; Ubuntu only; High risk"),
@@ -262,6 +275,14 @@ pub const KNOWN_ACTIONS: &[(&str, &str)] = &[
      "read current netplan YAML config from /etc/netplan/ — no params; Ubuntu only; read-only"),
     ("NetplanApply",
      "apply netplan network configuration immediately — no params; Ubuntu only; High risk; can disconnect SSH"),
+    // ── Ubuntu / grub — kernel arguments ─────────────────────────────────────
+    ("GrubGetKargs",
+     "read current GRUB_CMDLINE_LINUX from /etc/default/grub — no params; Ubuntu only; read-only"),
+    ("GrubSetKargs",
+     "modify GRUB kernel arguments and run update-grub — params: append (list), delete (list); Ubuntu only; High risk; requires reboot"),
+    // ── Ubuntu / reboot ───────────────────────────────────────────────────────
+    ("CheckPendingReboot",
+     "check whether a reboot is pending (/var/run/reboot-required) — no params; Ubuntu/Debian only; read-only"),
 ];
 
 pub fn propose_plan_tool_def() -> ToolDefinition {

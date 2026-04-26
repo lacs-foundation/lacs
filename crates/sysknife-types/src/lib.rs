@@ -154,6 +154,11 @@ pub const KNOWN_ACTION_NAMES: &[&str] = &[
     "AptSearch",
     "AptListInstalled",
     "AptShow",
+    "AptListUpgradable",
+    "AptHistoryList",
+    // Ubuntu / ppa
+    "AddPpa",
+    "RemovePpa",
     // Ubuntu / snap
     "SnapInstall",
     "SnapRemove",
@@ -162,6 +167,8 @@ pub const KNOWN_ACTION_NAMES: &[&str] = &[
     "SnapUnhold",
     "SnapList",
     "SnapInfo",
+    "SnapRevert",
+    "SnapClassicInstall",
     // Ubuntu / ufw
     "UfwEnable",
     "UfwDisable",
@@ -176,6 +183,11 @@ pub const KNOWN_ACTION_NAMES: &[&str] = &[
     // Ubuntu / netplan
     "NetplanGetConfig",
     "NetplanApply",
+    // Ubuntu / grub
+    "GrubGetKargs",
+    "GrubSetKargs",
+    // Ubuntu / reboot
+    "CheckPendingReboot",
 ];
 
 /// A validated action name from the approved SysKnife catalogue.

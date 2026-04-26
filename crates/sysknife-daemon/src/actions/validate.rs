@@ -87,6 +87,36 @@ pub fn validated_locale(s: &str, param: &'static str) -> Result<String, Executor
     Ok(s.to_string())
 }
 
+/// Validate a PPA name in `<user>/<ppa>` format.
+///
+/// Both components must consist of `[a-zA-Z0-9._-]`, be non-empty, and be
+/// separated by exactly one `/`.  The combined length must not exceed
+/// [`SAFE_ARG_MAX_BYTES`] (checked after the format split to avoid
+/// double-counting).
+///
+/// The validator runs before `ppa:<name>` is interpolated into the
+/// `add-apt-repository` command string — any shell-special character in either
+/// component would allow command injection.
+pub fn validated_ppa_name(s: &str, param: &'static str) -> Result<String, ExecutorError> {
+    // Must contain exactly one slash.
+    let parts: Vec<&str> = s.splitn(3, '/').collect();
+    if parts.len() != 2 {
+        return Err(ExecutorError::InvalidParam(param));
+    }
+    let (user, ppa) = (parts[0], parts[1]);
+    if user.is_empty() || ppa.is_empty() {
+        return Err(ExecutorError::InvalidParam(param));
+    }
+    let is_valid_component = |c: char| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-');
+    if !user.chars().all(is_valid_component) || !ppa.chars().all(is_valid_component) {
+        return Err(ExecutorError::InvalidParam(param));
+    }
+    if s.len() > SAFE_ARG_MAX_BYTES {
+        return Err(ExecutorError::InvalidParam(param));
+    }
+    Ok(s.to_string())
+}
+
 /// Maximum byte length for any string passed through [`validated_safe_arg`].
 ///
 /// 254 bytes is one byte under the Linux per-argument limit imposed by the
@@ -425,6 +455,41 @@ mod tests {
         assert!(validated_safe_arg(&over, "name").is_err());
         let max = "a".repeat(SAFE_ARG_MAX_BYTES);
         assert!(validated_safe_arg(&max, "name").is_ok());
+    }
+
+    // ── validated_ppa_name ───────────────────────────────────────────────
+
+    #[test]
+    fn ppa_name_accepts_valid() {
+        assert!(validated_ppa_name("deadsnakes/ppa", "name").is_ok());
+        assert!(validated_ppa_name("user123/my-ppa", "name").is_ok());
+        assert!(validated_ppa_name("team.name/repo_name", "name").is_ok());
+    }
+
+    #[test]
+    fn ppa_name_rejects_no_slash() {
+        assert!(validated_ppa_name("nodeownerppa", "name").is_err());
+    }
+
+    #[test]
+    fn ppa_name_rejects_empty_user() {
+        assert!(validated_ppa_name("/ppa", "name").is_err());
+    }
+
+    #[test]
+    fn ppa_name_rejects_empty_ppa() {
+        assert!(validated_ppa_name("user/", "name").is_err());
+    }
+
+    #[test]
+    fn ppa_name_rejects_multiple_slashes() {
+        assert!(validated_ppa_name("a/b/c", "name").is_err());
+    }
+
+    #[test]
+    fn ppa_name_rejects_shell_metacharacters() {
+        assert!(validated_ppa_name("user/ppa;evil", "name").is_err());
+        assert!(validated_ppa_name("user$(cmd)/ppa", "name").is_err());
     }
 
     // ── error variant check ──────────────────────────────────────────────

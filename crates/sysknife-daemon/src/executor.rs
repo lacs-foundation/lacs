@@ -1,9 +1,10 @@
 use crate::actions::{
-    apt, containers, deployment, distrobox, filesystem, flatpak, identity, layering, netplan,
-    network, package_repos, processes, services, snap, ssh, system_info, toolbox, ufw, users,
+    apt, containers, deployment, distrobox, filesystem, flatpak, grub, identity, layering, netplan,
+    network, package_repos, ppa, processes, reboot, services, snap, ssh, system_info, toolbox, ufw,
+    users,
     validate::{
-        validated_group, validated_hostname, validated_locale, validated_safe_arg,
-        validated_timezone, validated_unit_name, validated_username,
+        validated_group, validated_hostname, validated_locale, validated_ppa_name,
+        validated_safe_arg, validated_timezone, validated_unit_name, validated_username,
     },
     ActionMechanism, ActionSpec,
 };
@@ -490,6 +491,18 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
             let package = validated_safe_arg(require_str(params, "package")?, "package")?;
             Ok(apt::apt_show(&package))
         }
+        "AptListUpgradable" => Ok(apt::apt_list_upgradable()),
+        "AptHistoryList" => Ok(apt::apt_history_list()),
+
+        // ── ppa ──────────────────────────────────────────────────────────
+        "AddPpa" => {
+            let name = validated_ppa_name(require_str(params, "name")?, "name")?;
+            Ok(ppa::add_ppa(&name))
+        }
+        "RemovePpa" => {
+            let name = validated_ppa_name(require_str(params, "name")?, "name")?;
+            Ok(ppa::remove_ppa(&name))
+        }
 
         // ── snap ─────────────────────────────────────────────────────────
         "SnapInstall" => {
@@ -532,6 +545,55 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
             let name = validated_safe_arg(require_str(params, "name")?, "name")?;
             Ok(snap::snap_info(&name))
         }
+        "SnapRevert" => {
+            let name = validated_safe_arg(require_str(params, "name")?, "name")?;
+            Ok(snap::snap_revert(&name))
+        }
+        "SnapClassicInstall" => {
+            let name = validated_safe_arg(require_str(params, "name")?, "name")?;
+            Ok(snap::snap_classic_install(&name))
+        }
+
+        // ── grub ─────────────────────────────────────────────────────────
+        "GrubGetKargs" => Ok(grub::grub_get_kargs()),
+        "GrubSetKargs" => {
+            let append: Vec<String> = params
+                .get("append")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str())
+                        .map(String::from)
+                        .collect()
+                })
+                .unwrap_or_default();
+            let delete: Vec<String> = params
+                .get("delete")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str())
+                        .map(String::from)
+                        .collect()
+                })
+                .unwrap_or_default();
+            // Validate each arg in both lists.
+            for a in &append {
+                validated_safe_arg(a, "append")?;
+            }
+            for d in &delete {
+                validated_safe_arg(d, "delete")?;
+            }
+            if append.is_empty() && delete.is_empty() {
+                return Err(ExecutorError::MissingParam("append or delete"));
+            }
+            let append_refs: Vec<&str> = append.iter().map(String::as_str).collect();
+            let delete_refs: Vec<&str> = delete.iter().map(String::as_str).collect();
+            Ok(grub::grub_set_kargs(&append_refs, &delete_refs))
+        }
+
+        // ── reboot ────────────────────────────────────────────────────────
+        "CheckPendingReboot" => Ok(reboot::check_pending_reboot()),
 
         // ── ufw ──────────────────────────────────────────────────────────
         "UfwEnable" => Ok(ufw::ufw_enable()),

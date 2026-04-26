@@ -66,6 +66,8 @@ pub fn min_role_for_action(action_name: &str) -> Option<CallerRole> {
         | "AptSearch"
         | "AptListInstalled"
         | "AptShow"
+        | "AptListUpgradable"
+        | "AptHistoryList"
         // ── Ubuntu / snap read-only ───────────────────────────────────────
         | "SnapList"
         | "SnapInfo"
@@ -74,7 +76,13 @@ pub fn min_role_for_action(action_name: &str) -> Option<CallerRole> {
         // ── Ubuntu / distrobox read-only ──────────────────────────────────
         | "DistroboxList"
         // ── Ubuntu / netplan read-only ────────────────────────────────────
-        | "NetplanGetConfig" => CallerRole::Observer,
+        | "NetplanGetConfig"
+        // ── Ubuntu / grub read-only ───────────────────────────────────────
+        | "GrubGetKargs"
+        // ── Ubuntu / reboot status ────────────────────────────────────────
+        //
+        // CheckPendingReboot reads /var/run/reboot-required — no mutation.
+        | "CheckPendingReboot" => CallerRole::Observer,
 
         // ── Medium-risk mutations (Dev) ──────────────────────────────────
         //
@@ -123,9 +131,17 @@ pub fn min_role_for_action(action_name: &str) -> Option<CallerRole> {
         | "SnapRefresh"
         | "SnapHold"
         | "SnapUnhold"
+        | "SnapRevert"
+        | "SnapClassicInstall"
         // ── Ubuntu / distrobox medium-risk ────────────────────────────────
         | "DistroboxCreate"
-        | "DistroboxRemove" => CallerRole::Dev,
+        | "DistroboxRemove"
+        // ── Ubuntu / ppa medium-risk ──────────────────────────────────────
+        //
+        // PPA operations add or remove third-party apt sources; they mutate
+        // package provenance (supply-chain vector) but are reversible.
+        | "AddPpa"
+        | "RemovePpa" => CallerRole::Dev,
 
         // ── High-risk system mutations (Admin) ───────────────────────────
         //
@@ -181,7 +197,13 @@ pub fn min_role_for_action(action_name: &str) -> Option<CallerRole> {
         //
         // NetplanApply reconfigures network interfaces immediately and can
         // disconnect SSH sessions (NIST SC-7; operational continuity risk).
-        | "NetplanApply" => CallerRole::Admin,
+        | "NetplanApply"
+        // ── Ubuntu / grub high-risk ───────────────────────────────────────
+        //
+        // GrubSetKargs modifies the kernel command line and regenerates GRUB
+        // config. Incorrect arguments can prevent the system from booting.
+        // Requires reboot to take effect.
+        | "GrubSetKargs" => CallerRole::Admin,
 
         _ => return None,
     };
