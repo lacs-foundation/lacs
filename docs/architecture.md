@@ -28,6 +28,29 @@ produced. Provides:
 - Safety fence: validates every action name and risk level before a plan
   leaves the brain
 
+#### Prompt construction — per-distro dispatch
+
+`build_system_prompt` in `crates/sysknife-brain/src/prompt.rs` dispatches to one
+of three pure render functions based on `distro_hint.family`:
+
+| Distro family | Render function | Actions included |
+|---|---|---|
+| Fedora (`fedora`) | `render_fedora_prompt` | rpm-ostree, flatpak, toolbox, firewalld, … |
+| Debian (`debian`) | `render_debian_prompt` | apt, snap, distrobox, ufw, netplan, … |
+| Unknown | `render_generic_prompt` | Cross-distro actions only |
+
+Each render function concatenates shared `const` blocks (role, rule, examples)
+with per-distro `const` blocks (action catalogue, worked examples, parameter
+reference). Fedora prompts never contain Debian action names and vice versa —
+the isolation is structural. This prevents the model from proposing
+`AptInstall` on Fedora or `AddLayeredPackage` on Ubuntu regardless of what the
+user types.
+
+The prompt is rebuilt on every `plan_intent()` call so that injected user
+preferences (`~/.config/sysknife/prefs.md`) are always current.
+
+See [ADR 0004](adr/0004-per-distro-prompt-dispatch.md) for the full rationale.
+
 ### sysknife-types
 
 Shared domain types used by every crate. Contains:

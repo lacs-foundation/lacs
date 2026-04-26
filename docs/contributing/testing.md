@@ -14,6 +14,7 @@ validation before a release.
 | **Dev stories (local, no VM)** | LLM plan structure for read-only stories; runs on any Linux host | 1-3 min | After brain/prompt changes |
 | CI smoke (container) | Daemon + Ollama + read-only stories in a Linux runner | 5-10 min | Opt-in (PR label `e2e` or manual trigger) |
 | E2E Atomic VM | **Real Silverblue** in QEMU/KVM, full stack, all 54 stories | 15-30 min first boot; 2-3 min subsequent | Local / pre-release |
+| **E2E Ubuntu VM** | **Ubuntu 24.04** cloud image, full story suite, 65/65 stories | ~15 min first boot; ~2 min subsequent | After Ubuntu action changes |
 | Manual QA | Real Silverblue/Kinoite hardware, destructive actions, GUI | 30-60 min | Before releases + demo video |
 
 No single layer is enough on its own. Use the ones that match your change.
@@ -303,6 +304,35 @@ manual ISO install:
 
 The `atomic-vm.sh` helper does not automate VirtualBox — that's a
 follow-up if Windows contributor interest warrants it.
+
+## Running the Ubuntu 24.04 E2E suite
+
+Ubuntu 24.04 support is validated (65/65 stories pass on a live VM with
+gpt-4.1). The `ubuntu-vm.sh` script mirrors the `atomic-vm.sh` workflow but
+uses a Ubuntu 24.04 cloud image instead of a Fedora Atomic ISO.
+
+See [docs/contributing/ubuntu-vm-testing.md](ubuntu-vm-testing.md) for the
+full setup and daily-use instructions. Quick reference:
+
+```sh
+# One-time setup
+./tests/e2e/ubuntu-vm.sh download
+./tests/e2e/ubuntu-vm.sh install
+
+# Daily use
+./tests/e2e/ubuntu-vm.sh start
+./tests/e2e/ubuntu-vm.sh provision
+./tests/e2e/ubuntu-vm.sh run
+
+# Snapshot / restore for fast subsequent runs
+./tests/e2e/ubuntu-vm.sh stop
+./tests/e2e/ubuntu-vm.sh snapshot baseline
+./tests/e2e/ubuntu-vm.sh start
+```
+
+**When to use this tier:** after any change to Ubuntu-specific actions
+(`AptInstall`, `AptRemove`, `UfwAllow`, …), the `render_debian_prompt`
+function, or the Ubuntu story scripts.
 
 ## Running individual stories
 

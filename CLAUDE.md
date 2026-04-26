@@ -83,20 +83,47 @@ not skip or ignore the test.
 The system prompt in `crates/sysknife-brain/src/prompt.rs` is load-bearing.
 Changes to it must be validated against the full E2E story suite before merging.
 
-### The three worked examples are not optional
+### Per-distro dispatch (PR #203)
 
-`prompt.rs` contains Examples A, B, and C. **Do not remove them.**
-(The original Example A — "check disk usage" — was removed; it was a strict
-subset of the prose rule and the current Example A. It added no measurable
-coverage. The remaining examples were renumbered B→A, C→B. Example C for
-transaction history was added later — see the section below.)
+`build_system_prompt` dispatches to one of three pure render functions based on
+`distro_hint.family`:
 
-Empirical result (GPT-4o, 7 read-only stories, 2026-04-14):
+- `render_fedora_prompt` — Fedora-family (Silverblue, Kinoite, Fedora Workstation, …)
+- `render_debian_prompt` — Debian-family (Ubuntu, Debian)
+- `render_generic_prompt` — fallback when no distro hint is available
+
+Each render function concatenates shared `const` blocks with per-distro `const`
+blocks. **Fedora prompts never contain Debian action names; Debian prompts never
+contain Fedora action names.** This is structural isolation — the model cannot
+propose `AptInstall` on a Fedora host or `AddLayeredPackage` on Ubuntu, even if
+it hallucinates.
+
+When adding or renaming an action, update the `FEDORA_ONLY_ACTIONS` and
+`DEBIAN_ONLY_ACTIONS` string-slice constants that back the safety-fence unit tests.
+
+### The six worked examples are not optional
+
+`prompt.rs` contains Examples A through F. **Do not remove any of them.**
+
+The original Example A — "check disk usage" — was removed; it was a strict
+subset of the prose rule and added no measurable coverage. The current examples
+are:
+
+- **A** — direct and compound read-only requests
+- **B** — installing a package that might already be present (Fedora-path)
+- **C** — checking past SysKnife activity (uses `query_job_history`)
+- **D** — complaint/diagnostic framing with explicit read-only actions
+- **E** — specific-item status and system overview queries
+- **F** — date, time, timezone, and NTP queries
+
+Empirical result (GPT-4o, 7 read-only stories, with A+B only, 2026-04-14):
 
 | Condition           | Read-only stories passing |
 |---------------------|--------------------------|
 | With examples (A+B) | 7 / 7                    |
 | Without examples    | 3 / 7                    |
+
+Examples C–F were added after this measurement. All six are required.
 
 Stories 8–10 require a live daemon (rpm-ostree, toolbox, SSH key writes) and are
 skipped in the no-daemon CI run. True pass rate is 7/7 read-only + 0/3 destructive
@@ -125,8 +152,9 @@ just because the intent mentions two things.
 
 Use `query_*` tools ONLY when the intent is genuinely ambiguous and you need
 information to DECIDE between two or more possible plans (e.g. "install vim"
-→ query layered packages to check if it is already there before proposing
-`AddLayeredPackage`).
+on a Fedora host → query layered packages to check if it is already there
+before proposing `AddLayeredPackage`; on Ubuntu → check `dpkg` status before
+proposing `AptInstall`).
 
 ### Never weaken story assertions to hide model misbehavior
 
@@ -145,13 +173,6 @@ query tool error, that is a model bug. Fix `prompt.rs`, not the story.
 
 Run the E2E harness against a live VM (or at minimum against the no-daemon
 test CLI path) before and after. A story that passed before must not regress.
-
-### Example C — transaction history
-
-Example C ("did SysKnife successfully update recently?") teaches the model to use
-`query_job_history` for questions about past SysKnife actions. Without it, the model
-defaults to `query_deployments` or `get_system_state`, which show current system
-state — not SysKnife's own transaction log.
 
 ## User Preferences — `prefs.md`
 

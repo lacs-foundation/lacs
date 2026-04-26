@@ -23,7 +23,7 @@
   <img src="https://img.shields.io/badge/Fedora%2041%2B-✓-294172?style=flat-square&logo=fedora&logoColor=white" alt="Fedora 41+">
   <img src="https://img.shields.io/badge/Silverblue%2041%2B-✓-294172?style=flat-square&logo=fedora&logoColor=white" alt="Silverblue 41+">
   <img src="https://img.shields.io/badge/Ubuntu%2026.04-roadmap-E95420?style=flat-square&logo=ubuntu&logoColor=white" alt="Ubuntu 26.04 roadmap">
-  <img src="https://img.shields.io/badge/Ubuntu%2024.04-roadmap-E95420?style=flat-square&logo=ubuntu&logoColor=white" alt="Ubuntu 24.04 roadmap">
+  <img src="https://img.shields.io/badge/Ubuntu%2024.04-✓-E95420?style=flat-square&logo=ubuntu&logoColor=white" alt="Ubuntu 24.04">
   <img src="https://img.shields.io/badge/Ubuntu%2022.04-roadmap-E95420?style=flat-square&logo=ubuntu&logoColor=white" alt="Ubuntu 22.04 roadmap">
 </p>
 
@@ -60,13 +60,23 @@ fails.
 
 ## Install
 
-The fastest path is one command. The wizard installs the daemon and wires
+The fastest path is the setup wizard. It installs the daemon and wires
 SysKnife into your AI IDE — Claude Code, Cursor, or Codex CLI — so you can
 plan and execute from chat.
 
 ```sh
+# Once the npm package is published (see below):
 npx sysknife-setup
+
+# Until then — local clone path:
+git clone https://github.com/lacs-foundation/sysknife
+node sysknife/packages/setup/index.js
 ```
+
+> **npm publish pending**: `sysknife-setup` is not yet on the npm registry.
+> Use the local-clone path above. The wizard behaviour is identical.
+> Once `NPM_TOKEN` is configured in CI secrets, the publish step will land
+> and `npx sysknife-setup` will work without the clone.
 
 What this does:
 
@@ -103,20 +113,28 @@ make build
 sudo make install
 sudo systemctl enable --now sysknife-daemon
 
-# Then run the wizard
-npx sysknife-setup
+# Then run the wizard (local-clone path until npm publish lands)
+node packages/setup/index.js
 ```
 </details>
 
 <details>
-<summary><strong>Manual install — Ubuntu 26.04 / 24.04 / 22.04</strong> (roadmap — Phase 2)</summary>
+<summary><strong>Manual install — Ubuntu 24.04</strong></summary>
 
-Ubuntu support is the active milestone — see
-[`ROADMAP.md`](ROADMAP.md) and
-[`docs/distro-support.md`](docs/distro-support.md). The action layer is being
-abstracted so apt, snap, flatpak, ufw, and netplan are first-class peers
-of rpm-ostree on Silverblue. The CLI / shell / MCP server already build and
-plan correctly on Ubuntu — only the privileged action set is gated.
+```sh
+git clone https://github.com/lacs-foundation/sysknife
+cd sysknife
+make build
+sudo make install
+sudo systemctl enable --now sysknife-daemon
+
+# Then run the wizard (local-clone path until npm publish lands)
+node packages/setup/index.js
+```
+
+The Ubuntu 24.04 action set is validated (65/65 stories pass on a live VM with
+gpt-4.1). See [`docs/distro-support.md`](docs/distro-support.md) for the full
+matrix. Ubuntu 22.04 and 26.04 remain on the roadmap.
 </details>
 
 <details>
@@ -184,7 +202,8 @@ milestone.
 | Tamper-evident HMAC-SHA256 audit chain | ✅ |
 | RFC 5424 syslog forwarding (Splunk / Sentinel / QRadar) | ✅ |
 | Postgres backend (RDS / Cloud SQL / Neon / Supabase) | ✅ |
-| **Ubuntu LTS support (22.04 / 24.04 / 26.04)** | 🛠 active |
+| **Ubuntu 24.04 support** — 65/65 stories pass on a live VM with gpt-4.1 | ✅ |
+| **Ubuntu 22.04 / 26.04 support** | 🛠 active |
 | Telegram approval interface | 📋 roadmap |
 
 **860+ tests** pass across Rust and TypeScript on every commit.
@@ -224,15 +243,15 @@ enforces the same approval contract as the CLI: agents must call
 then call `sysknife_execute`. High-risk actions are refused outright at the
 MCP boundary — they require the CLI/GUI confirmation flow.
 
-Use `npx sysknife-setup` (above) to wire it into Claude Code, Cursor, or
-Codex CLI. All config files that may contain API keys are created with
-`chmod 0600`.
+Use the setup wizard (above) to wire it into Claude Code, Cursor, or Codex CLI.
+All config files that may contain API keys are created with `chmod 0600`.
 
 ## Roadmap
 
 See [ROADMAP.md](ROADMAP.md) for the full milestone breakdown.
 
-- 🛠 **Phase 2 — Ubuntu LTS support (22.04 / 24.04 / 26.04)** [active]
+- ✅ **Ubuntu 24.04** — 65/65 stories validated on a live VM (gpt-4.1)
+- 🛠 **Ubuntu 22.04 / 26.04** [active]
 - 📋 Telegram inline-button approvals
 - 📋 `sysknife audit export` (CEF / NDJSON for SIEM ingest)
 - 📋 Fleet plan/execute (one plan, N targets, parallel approval)
