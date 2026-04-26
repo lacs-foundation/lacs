@@ -18,6 +18,25 @@ pub struct NewTransaction {
     pub action_name: String,
     pub risk_level: RiskLevel,
     pub approval_id: Option<String>,
+    /// Human-readable description of the planned action.
+    ///
+    /// **Chain-hashed at INSERT; intentionally not in the mutable field set.**
+    ///
+    /// `summary` is captured in [`crate::audit_chain::ChainContent`] and
+    /// baked into `chain_hash = HMAC-SHA256(canonical(fields) || prev_hash, key)`
+    /// at the moment the row is written. After that point the stored hash is a
+    /// one-time commitment.
+    ///
+    /// **Do not add an `update_summary` API** (or any equivalent that modifies
+    /// this field in an existing row). Any such change will cause
+    /// `sysknife audit verify` to report `VerifyOutcome::Broken` for the
+    /// modified row, because the recomputed HMAC will no longer match the
+    /// stored `chain_hash`.
+    ///
+    /// If a correction is genuinely needed, use one of the two safe strategies
+    /// documented on [`crate::audit_chain::ChainContent`]:
+    /// 1. Insert a corrective row that references the original `transaction_id`.
+    /// 2. Extend the chain protocol with a dedicated amendment record type.
     pub summary: String,
     pub warnings: Vec<String>,
 }

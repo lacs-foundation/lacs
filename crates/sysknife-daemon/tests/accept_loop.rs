@@ -11,7 +11,7 @@ use std::io;
 use std::sync::Arc;
 
 use serde_json::{json, Value};
-use sysknife_daemon::dispatcher::{connection_handler, resolve_caller_role};
+use sysknife_daemon::dispatcher::{resolve_caller_role, unix_connection_handler};
 use sysknife_daemon::state::{DaemonConfig, DaemonState};
 use sysknife_daemon::state_collector::CommandRunner;
 use sysknife_daemon::transport::{framing::FramedStream, listen::ListenTarget};
@@ -60,7 +60,7 @@ async fn start_daemon(dir: &tempfile::TempDir) -> std::path::PathBuf {
             let state = state.clone();
             let runner = Arc::clone(&runner);
             tokio::spawn(async move {
-                connection_handler(stream, state, runner, role).await;
+                unix_connection_handler(stream, state, runner, role).await;
             });
         }
     });
