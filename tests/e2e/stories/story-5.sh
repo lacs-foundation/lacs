@@ -23,9 +23,9 @@ if [[ "$STEP_COUNT" != "1" ]]; then
 fi
 
 ACTION=$(echo "$PLAN" | jq -r '.plan.steps[0].action')
-if [[ "$ACTION" != "GetLayeredPackages" ]]; then
-  echo "FAIL: expected GetLayeredPackages, got $ACTION"
+if [[ "$ACTION" != "GetLayeredPackages" && "$ACTION" != "AptListInstalled" ]]; then
+  echo "FAIL: expected GetLayeredPackages or AptListInstalled, got $ACTION"
   exit 1
 fi
 
-echo "PASS: Story 5 — plan has 1 GetLayeredPackages step"
+echo "PASS: Story 5 — plan has 1 ${ACTION} step"

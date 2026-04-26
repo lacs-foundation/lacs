@@ -18,6 +18,15 @@
 # must still be present).
 set -euo pipefail
 
+DISTRO_FAMILY="${SYSKNIFE_DISTRO_FAMILY:-$(. /etc/os-release && echo "${ID_LIKE:-$ID}" | tr ' ' '\n' | head -1)}"
+case "$DISTRO_FAMILY" in
+  fedora|rhel|centos) ;;
+  *)
+    echo "SKIP: $0 requires a Fedora-family host (got: $DISTRO_FAMILY)"
+    exit 0
+    ;;
+esac
+
 if [[ "${SYSKNIFE_ALLOW_DESTRUCTIVE:-0}" != "1" ]]; then
   echo "SKIPPED (set SYSKNIFE_ALLOW_DESTRUCTIVE=1 to run)"
   exit 0

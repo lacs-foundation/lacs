@@ -22,10 +22,10 @@ echo "$PLAN" | jq .
 
 # --- Assertions ---
 
-TOOLBOX_STEP=$(echo "$PLAN" | jq '.plan.steps[] | select(.action == "CreateToolbox")')
+TOOLBOX_STEP=$(echo "$PLAN" | jq '.plan.steps[] | select(.action == "CreateToolbox" or .action == "DistroboxCreate")')
 
 if [[ -z "$TOOLBOX_STEP" || "$TOOLBOX_STEP" == "null" ]]; then
-  echo "FAIL: no CreateToolbox step found"
+  echo "FAIL: no CreateToolbox or DistroboxCreate step found"
   echo "Actions: $(echo "$PLAN" | jq -r '.plan.steps[].action')"
   exit 1
 fi
@@ -45,4 +45,4 @@ if [[ "$NAME" != "dev-test" ]]; then
   exit 1
 fi
 
-echo "PASS: Story 9 — plan has CreateToolbox for dev-test with medium risk"
+echo "PASS: Story 9 — plan has CreateToolbox or DistroboxCreate for dev-test with medium risk"
