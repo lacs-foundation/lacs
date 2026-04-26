@@ -1,8 +1,16 @@
 # `sysknife` CLI Reference
 
-`sysknife` is the command-line interface to the SysKnife daemon.  It turns a
+`sysknife` is the command-line interface to the SysKnife daemon. It turns a
 natural-language intent into a risk-labelled plan, asks for approval where
 needed, and streams execution output in real time.
+
+If you want SysKnife inside Claude Code / Cursor / Codex CLI instead, see
+the [main README](../README.md) and run `npx sysknife-setup`. Both paths
+share the daemon, the audit chain, and the typed-action set.
+
+<p align="center">
+  <img src="../assets/demo/demo.gif" alt="sysknife CLI demo" width="900"/>
+</p>
 
 ---
 
