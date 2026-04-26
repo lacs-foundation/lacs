@@ -281,9 +281,6 @@ network service must be published under the same license.
 proprietary products on SysKnife or offer it as a service without AGPL
 obligations. Contact [vladimir@entropia.ai](mailto:vladimir@entropia.ai).
 
-Contributors must sign the [Contributor License Agreement](.github/CONTRIBUTOR_LICENSE_AGREEMENT.md)
-before their first pull request is merged.
-
 ---
 
 <p align="center">
