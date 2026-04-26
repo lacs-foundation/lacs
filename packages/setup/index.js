@@ -31,7 +31,7 @@
 const fs   = require('fs');
 const os   = require('os');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 const readline = require('readline');
 const crypto   = require('crypto');
 
@@ -138,6 +138,31 @@ function sanitizeName(s) {
 /** Generate a 32-byte hex token suitable for vsock auth. */
 function generateToken() {
   return crypto.randomBytes(32).toString('hex');
+}
+
+/**
+ * Read /etc/os-release and return the PRETTY_NAME value, or null if unavailable.
+ * Used to reassure the user the wizard knows what distro they are on.
+ */
+function detectDistro() {
+  try {
+    const raw = fs.readFileSync('/etc/os-release', 'utf8');
+    const m = raw.match(/^PRETTY_NAME="?([^"\n]+)"?/m);
+    return m ? m[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Check whether a Unix-domain socket is reachable by attempting a zero-byte
+ * connection with `nc -U`. Returns true if the daemon answers, false otherwise.
+ * Skips the check silently for vsock:// and non-local paths.
+ */
+function checkSocket(socket) {
+  if (socket.startsWith('vsock://') || !socket.startsWith('/')) return null;
+  const result = spawnSync('nc', ['-zU', socket], { timeout: 2000 });
+  return result.status === 0;
 }
 
 /** Escape a string for inclusion inside a TOML quoted string. */
@@ -357,6 +382,19 @@ async function collectTarget(rl, lineQueue, idx) {
 
   const socket = await ask(rl, lineQueue, 'Daemon socket', '/run/sysknife/daemon.sock');
 
+  // Optionally probe the socket so the user knows immediately if the daemon
+  // is not running, rather than discovering it after all config is written.
+  if (!socket.startsWith('vsock://') && socket.startsWith('/')) {
+    const reachable = checkSocket(socket);
+    if (reachable === true) {
+      ok(`Daemon socket reachable: ${socket}`);
+    } else if (reachable === false) {
+      warn(`Daemon socket not reachable: ${socket}`);
+      step(`Start the daemon:  sudo systemctl start sysknife-daemon`);
+      step(`       or build:   cargo run -p sysknife-daemon`);
+    }
+  }
+
   let token = '';
   if (socket.startsWith('vsock://')) {
     console.log();
@@ -403,6 +441,12 @@ async function main() {
   console.log(`${B}SysKnife Setup${X}`);
   console.log(`  Configures MCP for the selected integration.`);
   console.log(`  Supports single and multi-VM (fleet) configurations.`);
+
+  const distro = detectDistro();
+  if (distro) {
+    ok(`Detected distro: ${distro}`);
+  }
+
   console.log();
 
   // lineQueue buffers stdin lines for non-TTY (piped) mode.
@@ -551,6 +595,18 @@ async function main() {
     }
   }
 
+  // ── 7.5. Pre-flight: ask about existing .mcp.json before closing rl ────────
+
+  let skipMcpJson = false;
+  if (doClaude && fs.existsSync('.mcp.json')) {
+    warn('.mcp.json already exists.');
+    const overwriteAnswer = await ask(rl, lineQueue, 'Overwrite?', 'Y');
+    skipMcpJson = !overwriteAnswer.toLowerCase().startsWith('y');
+    if (skipMcpJson) {
+      warn('Skipping .mcp.json — edit it manually to update.');
+    }
+  }
+
   rl.close();
 
   // ── Build mcpServers entries ─────────────────────────────────────────────
@@ -592,14 +648,17 @@ async function main() {
 
   if (doClaude) {
     const mcpConfig = { mcpServers };
-    // .mcp.json may contain provider API keys in plain text. Restrict to owner
-    // read/write so a coworker on a shared workstation (or a stray `cat *` in a
-    // build script) cannot recover them. `chmodSync` is idempotent and also
-    // tightens permissions on a pre-existing file that was created with the
-    // process umask before this change.
-    fs.writeFileSync('.mcp.json', JSON.stringify(mcpConfig, null, 2) + '\n', { mode: 0o600 });
-    fs.chmodSync('.mcp.json', 0o600);
-    ok(`Created .mcp.json  (${targets.length} target${targets.length > 1 ? 's' : ''}: ${targetSummary})`);
+
+    if (!skipMcpJson) {
+      // .mcp.json may contain provider API keys in plain text. Restrict to owner
+      // read/write so a coworker on a shared workstation (or a stray `cat *` in a
+      // build script) cannot recover them. `chmodSync` is idempotent and also
+      // tightens permissions on a pre-existing file that was created with the
+      // process umask before this change.
+      fs.writeFileSync('.mcp.json', JSON.stringify(mcpConfig, null, 2) + '\n', { mode: 0o600 });
+      fs.chmodSync('.mcp.json', 0o600);
+      ok(`Created .mcp.json  (${targets.length} target${targets.length > 1 ? 's' : ''}: ${targetSummary})`);
+    }
 
     if (!fs.existsSync('.claude')) {
       fs.mkdirSync('.claude', { recursive: true });
@@ -748,6 +807,24 @@ async function main() {
     step(`export ${envVar}=your-key-here`);
   }
 
+  // ── Per-client "what to try first" hint ──────────────────────────────────
+
+  console.log();
+  console.log(`${B}Try it${X}`);
+  console.log();
+  if (doClaude) {
+    step('Claude Code: type /reload-plugins → then ask:  show me disk usage');
+    step('             or ask:  list services that are failing');
+  }
+  if (doCursor) {
+    step('Cursor: open a chat → ask:  show me disk usage');
+    step('        Cursor will call sysknife_plan, you approve, then sysknife_execute runs.');
+  }
+  if (doCodex) {
+    step('Codex CLI: run:  codex "show me disk usage"');
+    step('           Codex will call sysknife_plan → wait for your approval → sysknife_execute.');
+  }
+
   console.log();
   ok('Setup complete');
   console.log();
@@ -765,7 +842,8 @@ if (process.argv.includes('--help') || process.argv.includes('-h')) {
   Supports Claude Code, Cursor, and Codex CLI.
 
 \x1b[1mUSAGE\x1b[0m
-  npx sysknife-setup [OPTIONS]
+  npx sysknife-setup [OPTIONS]          (once published to npm)
+  node packages/setup/index.js [OPTIONS] (local clone — works today)
 
 \x1b[1mOPTIONS\x1b[0m
   --claude      Configure Claude Code only.
@@ -815,7 +893,7 @@ if (process.argv.includes('--help') || process.argv.includes('-h')) {
   npx sysknife-setup
 
 \x1b[1mSEE ALSO\x1b[0m
-  https://github.com/lacs-foundation/lacs/blob/main/docs/release.md
+  https://github.com/lacs-foundation/sysknife/blob/main/docs/release.md
 `);
   process.exit(0);
 }

@@ -4,7 +4,15 @@ Zero-friction onboarding wizard for the SysKnife MCP server.
 
 ## Usage
 
+> **npm publish pending**: `sysknife-setup` is not yet on the npm registry.
+> Use the local-clone path until `NPM_TOKEN` is configured in CI.
+
 ```sh
+# Local-clone path (works today):
+git clone https://github.com/lacs-foundation/sysknife
+node sysknife/packages/setup/index.js
+
+# Once published to npm:
 npx sysknife-setup
 ```
 
@@ -14,9 +22,9 @@ via stdin redirection.
 Choose one integration interactively, or pass a flag to go straight to it:
 
 ```sh
-npx sysknife-setup --claude
-npx sysknife-setup --cursor
-npx sysknife-setup --codex
+node packages/setup/index.js --claude
+node packages/setup/index.js --cursor
+node packages/setup/index.js --codex
 ```
 
 ## What gets written

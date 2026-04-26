@@ -108,10 +108,15 @@ Tracked in the v0.3.0 milestone. All items complete.
 
 Tracked in the v0.4.0 milestone.
 
-- apt action family (Debian/Ubuntu/Mint)
-- dnf action family (Fedora Workstation)
+- ~~apt action family (Debian/Ubuntu 24.04)~~ — done; 65/65 stories pass on a
+  live Ubuntu 24.04 VM with gpt-4.1
+- ~~runtime distro detection~~ — done; `detect_distro()` reads `/etc/os-release`
+- ~~per-distro prompt dispatch~~ — done; `render_fedora_prompt` /
+  `render_debian_prompt` / `render_generic_prompt` (PR #203)
+- Ubuntu 22.04 action parity
+- Ubuntu 26.04 action parity
+- dnf action family (Fedora Workstation non-atomic)
 - pacman action family (Arch/Manjaro)
-- runtime distro detection
 
 ## Phase 9: Launch
 

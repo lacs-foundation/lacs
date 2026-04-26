@@ -25,3 +25,4 @@
 - [ADR 0001: System Boundaries](adr/0001-system-boundaries.md)
 - [ADR 0002: Brain Provider Layer](adr/0002-brain-provider-layer.md)
 - [ADR 0003: IPC Wire Protocol](adr/0003-ipc-wire-protocol.md)
+- [ADR 0004: Per-distro Prompt Dispatch](adr/0004-per-distro-prompt-dispatch.md)
