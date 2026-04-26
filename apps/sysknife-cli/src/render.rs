@@ -210,7 +210,14 @@ pub fn print_success(elapsed_secs: f32, log: &Logger) {
 // ---------------------------------------------------------------------------
 
 /// Print a successful `sysknife doctor` report via `log`.
-pub fn print_doctor_ok(socket: &str, host: &str, provider: &str, model: &str, log: &Logger) {
+pub fn print_doctor_ok(
+    socket: &str,
+    host: &str,
+    provider: &str,
+    model: &str,
+    distro: &str,
+    log: &Logger,
+) {
     log.println(&format!(
         "{}  daemon ok",
         "✓".if_supports_color(Stream::Stdout, |t| t.green())
@@ -219,6 +226,7 @@ pub fn print_doctor_ok(socket: &str, host: &str, provider: &str, model: &str, lo
     log.println(&format!("  host      {host}"));
     log.println(&format!("  provider  {provider}"));
     log.println(&format!("  model     {model}"));
+    log.println(&format!("  distro    {distro}"));
 }
 
 /// Print a `sysknife doctor` failure to stderr.

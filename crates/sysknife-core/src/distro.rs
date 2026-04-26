@@ -141,6 +141,27 @@ pub enum DistroFamily {
     Other,
 }
 
+impl std::fmt::Display for DistroId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Fedora { version } => write!(f, "Fedora {version}"),
+            Self::FedoraSilverblue { version } => write!(f, "FedoraSilverblue {version}"),
+            Self::Ubuntu { major, minor } => write!(f, "Ubuntu {major}.{minor:02}"),
+            Self::UbuntuCore { major, minor } => write!(f, "UbuntuCore {major}.{minor:02}"),
+            Self::Debian { version: Some(v) } => write!(f, "Debian {v}"),
+            Self::Debian { version: None } => write!(f, "Debian (unknown version)"),
+            Self::Other {
+                id,
+                version_id: Some(v),
+            } => write!(f, "{id} {v}"),
+            Self::Other {
+                id,
+                version_id: None,
+            } => write!(f, "{id}"),
+        }
+    }
+}
+
 impl DistroId {
     /// Returns the broad family this distro belongs to.
     pub fn family(&self) -> DistroFamily {
