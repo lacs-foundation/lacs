@@ -8,8 +8,10 @@
 # Only the exact commands listed here are allowed — no shell or wildcard.
 #
 # IMPORTANT: test with `visudo -cf /etc/sudoers.d/sysknife` before deploying.
-
-Defaults:sysknife !requiretty
+#
+# Note: `Defaults:sysknife !requiretty` was removed. The requiretty token was
+# dropped from sudo in 1.9.13 (Ubuntu 26.04 ships 1.9.15+). The sysknife daemon
+# runs as a non-interactive service so no tty is involved anyway.
 
 # User management — create and delete system/human accounts.
 # useradd: called by CreateUser  (sudo useradd --create-home ...)

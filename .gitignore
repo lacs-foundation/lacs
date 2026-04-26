@@ -13,6 +13,12 @@ tests/e2e/vm/
 /*.iso
 /*.qcow2
 
+# Ubuntu LTS VM runtime artifacts (per-release subdirectories)
+# overlay.qcow2, seed.iso, vm.pid, cloud-init/ are generated at runtime.
+tests/e2e/ubuntu-vm/jammy/
+tests/e2e/ubuntu-vm/noble/
+tests/e2e/ubuntu-vm/resolute/
+
 # E2E test logs (generated at runtime)
 tests/e2e/logs/*.log
 tests/e2e/exec/logs/*.log

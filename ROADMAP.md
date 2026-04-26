@@ -113,8 +113,10 @@ Tracked in the v0.4.0 milestone.
 - ~~runtime distro detection~~ — done; `detect_distro()` reads `/etc/os-release`
 - ~~per-distro prompt dispatch~~ — done; `render_fedora_prompt` /
   `render_debian_prompt` / `render_generic_prompt` (PR #203)
-- Ubuntu 22.04 action parity
-- Ubuntu 26.04 action parity
+- ~~Ubuntu 22.04 (jammy) VM tooling~~ — done; multi-LTS ubuntu-vm.sh, smoke tests pass
+- ~~Ubuntu 26.04 (resolute) VM tooling~~ — done; multi-LTS ubuntu-vm.sh, smoke tests pass
+- Ubuntu 22.04 full action parity (65/65 stories)
+- Ubuntu 26.04 full action parity (65/65 stories)
 - dnf action family (Fedora Workstation non-atomic)
 - pacman action family (Arch/Manjaro)
 
