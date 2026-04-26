@@ -374,21 +374,27 @@ fn canonical_json(v: &Value) -> String {
 /// Handle a single Unix-socket (or test duplex) connection until the peer
 /// closes it.
 ///
-/// **Do not call directly for vsock streams.** Vsock connections MUST enter
-/// the daemon through [`vsock_connection_handler`], which reads and validates
-/// the auth token from the first frame before dispatching here. Calling this
-/// function with a raw vsock stream skips token authentication entirely —
-/// the function trusts whatever `caller_role` it is handed and does not
-/// re-validate the peer.
+/// # Security — Unix/test streams only
 ///
-/// Permitted stream types:
-/// - Unix sockets — `caller_role` is resolved from `SO_PEERCRED` in the
-///   accept loop, so no in-band auth is needed.
-/// - In-process duplex streams used by integration tests, with the test
-///   passing the role explicitly.
+/// **Do not call with a vsock stream.** The name `unix_connection_handler`
+/// is the type-system gate: this function is explicitly for Unix-domain
+/// sockets (where `caller_role` is resolved from `SO_PEERCRED` out-of-band)
+/// and for in-process duplex streams used by integration tests (where the
+/// test supplies the role directly).
+///
+/// Vsock connections carry an untrusted remote peer. Calling this function
+/// with a vsock stream would hand the peer whatever `caller_role` was passed
+/// in — bypassing token authentication entirely. Vsock connections MUST go
+/// through [`vsock_connection_handler`], which validates the auth token in
+/// the first frame before dispatching to the inner handler.
+///
+/// **Threat model note:** lying about the stream type here (e.g. passing a
+/// vsock stream while pretending it is a Unix stream) constitutes a
+/// privilege escalation: the caller receives the role passed in without any
+/// cryptographic proof.
 ///
 /// `caller_role` MUST be resolved before this function is called.
-pub async fn connection_handler<S>(
+pub async fn unix_connection_handler<S>(
     stream: S,
     state: DaemonState,
     runner: Arc<dyn CommandRunner + Send + Sync>,
@@ -442,7 +448,7 @@ pub async fn vsock_connection_handler_with_executor<S>(
 
 /// Inner handler that accepts an explicit [`ActionExecutor`].
 ///
-/// Production code enters via [`connection_handler`] or
+/// Production code enters via [`unix_connection_handler`] or
 /// [`vsock_connection_handler`]; tests call this directly with a mock executor.
 pub async fn connection_handler_with_executor<S>(
     stream: S,
@@ -1606,7 +1612,7 @@ mod tests {
     ) -> Vec<Value> {
         let (client, server) = tokio::net::UnixStream::pair().unwrap();
         tokio::spawn(async move {
-            connection_handler(server, state, runner(), role).await;
+            unix_connection_handler(server, state, runner(), role).await;
         });
 
         let mut framed = FramedStream::new(client);
@@ -1847,7 +1853,7 @@ mod tests {
         let (client, server) = tokio::net::UnixStream::pair().unwrap();
 
         tokio::spawn(async move {
-            connection_handler(server, state, runner(), CallerRole::Observer).await;
+            unix_connection_handler(server, state, runner(), CallerRole::Observer).await;
         });
 
         let mut framed = FramedStream::new(client);
@@ -2028,7 +2034,7 @@ mod tests {
 
         let (client, server) = tokio::net::UnixStream::pair().unwrap();
         tokio::spawn(async move {
-            connection_handler(server, state, runner(), CallerRole::Observer).await;
+            unix_connection_handler(server, state, runner(), CallerRole::Observer).await;
         });
         let mut framed = FramedStream::new(client);
 
@@ -2094,7 +2100,7 @@ mod tests {
     // The transactions store guarantees that `claim_for_execution`'s
     // conditional UPDATE only flips a row from Queued to Running once;
     // the second caller observes status != Queued and bails.  Drive
-    // that contract through TWO concurrent connection_handler instances
+    // that contract through TWO concurrent unix_connection_handler instances
     // sharing one DaemonState: one preview produces a Queued row, then
     // two executes race for it.  Exactly one must reach job_started;
     // the other must surface `stale_approval`.
@@ -2114,7 +2120,7 @@ mod tests {
         {
             let state = state.clone();
             tokio::spawn(async move {
-                connection_handler(ps, state, runner(), CallerRole::Observer).await;
+                unix_connection_handler(ps, state, runner(), CallerRole::Observer).await;
             });
         }
         let mut framed_p = FramedStream::new(pc);
@@ -2145,7 +2151,7 @@ mod tests {
         ) -> Vec<Value> {
             let (c, s) = tokio::net::UnixStream::pair().unwrap();
             tokio::spawn(async move {
-                connection_handler(s, state, runner(), CallerRole::Observer).await;
+                unix_connection_handler(s, state, runner(), CallerRole::Observer).await;
             });
             let mut f = FramedStream::new(c);
             f.send(
@@ -2239,7 +2245,7 @@ mod tests {
         let (client, server) = tokio::net::UnixStream::pair().unwrap();
 
         tokio::spawn(async move {
-            connection_handler(server, state, runner(), CallerRole::Observer).await;
+            unix_connection_handler(server, state, runner(), CallerRole::Observer).await;
         });
 
         let mut framed = FramedStream::new(client);
@@ -2593,7 +2599,7 @@ mod tests {
         let (client, server) = tokio::io::duplex(4 * 1024 * 1024);
         let dir = tempdir().unwrap();
         let state = test_state(&dir);
-        tokio::spawn(connection_handler(
+        tokio::spawn(unix_connection_handler(
             server,
             state,
             runner(),

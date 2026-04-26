@@ -252,6 +252,28 @@ fn fill_random(buf: &mut [u8]) -> std::io::Result<()> {
 /// Immutable fields hashed into the chain. Status is intentionally absent —
 /// see module docs.
 ///
+/// # Security contract — chain-content immutability
+///
+/// Every field in this struct is captured **once** at INSERT time and baked
+/// into `chain_hash = HMAC-SHA256(canonical(self) || prev_chain_hash, key)`.
+/// After the row is written the hash is a one-time commitment: **no field
+/// in this struct may ever be mutated in place**.
+///
+/// `summary` is the field most likely to attract a future "let me just fix
+/// that typo" API. **Do not add an `update_summary` (or similar) function.**
+/// If a correction is genuinely needed, choose one of the two safe options:
+///
+/// 1. **Insert a corrective row** — a new transaction row that references the
+///    original `transaction_id` in its own `summary`, leaving the original
+///    row and its chain hash untouched.
+/// 2. **Extend the chain protocol** — introduce a dedicated amendment record
+///    type with its own chain link, so that both the original commitment and
+///    the correction are auditable.
+///
+/// Any other approach silently breaks chain integrity: `verify_chain` will
+/// flag the modified row as `Broken` because the recomputed HMAC no longer
+/// matches the stored `chain_hash`.
+///
 /// The canonical serialisation is stable across SQLite/Postgres backends.
 /// Each field is emitted as
 ///
@@ -282,6 +304,14 @@ pub struct ChainContent<'a> {
     pub request_hash: &'a str,
     pub action_name: &'a str,
     pub risk_level: RiskLevel,
+    /// Human-readable description of the planned action.
+    ///
+    /// **Immutable after insert.** This field is included in the chain hash
+    /// (see [`ChainContent`] struct-level doc). It MUST NOT be updated after
+    /// the row is written — doing so silently invalidates `chain_hash` and
+    /// will be detected as `VerifyOutcome::Broken` by `sysknife audit verify`.
+    /// See the struct-level security contract for the only safe correction
+    /// strategies.
     pub summary: &'a str,
     /// `None` for un-approved (preview-only) records; serialised as empty.
     pub approval_id: Option<&'a str>,
