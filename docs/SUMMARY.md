@@ -10,6 +10,7 @@
 - [MCP Server](mcp.md)
 - [VM + Daemon Setup](vm-daemon-setup.md)
 - [CLI Reference](cli.md)
+- [Ubuntu Action Reference](ubuntu-action-reference.md)
 
 # Architecture
 
@@ -17,6 +18,7 @@
 - [Developer Guide](developer-guide.md)
 - [Testing Guide](contributing/testing.md)
 - [Contributing](contributing/CONTRIBUTING.md)
+- [Ubuntu Story Audit](contributing/ubuntu-story-audit.md)
 
 # Design Records
 
