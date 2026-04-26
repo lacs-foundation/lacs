@@ -283,6 +283,37 @@ pub const KNOWN_ACTIONS: &[(&str, &str)] = &[
     // ── Ubuntu / reboot ───────────────────────────────────────────────────────
     ("CheckPendingReboot",
      "check whether a reboot is pending (/var/run/reboot-required) — no params; Ubuntu/Debian only; read-only"),
+    // ── Cross-distro / resolvectl (systemd-resolved) ──────────────────────────
+    ("ResolvectlStatus",
+     "show DNS resolution status for all network interfaces (resolvectl status) — no params; cross-distro (any systemd-resolved host); read-only"),
+    ("ResolvectlSetDns",
+     "set DNS servers for a network interface — params: interface* (e.g. eth0), servers* (string[]); cross-distro; Medium risk"),
+    // ── Ubuntu / AppArmor ─────────────────────────────────────────────────────
+    ("AppArmorStatus",
+     "show status of all loaded AppArmor profiles (aa-status) — no params; Ubuntu only; read-only"),
+    ("AppArmorEnforce",
+     "put an AppArmor profile into enforce mode (aa-enforce) — param: profile_path* (e.g. /etc/apparmor.d/usr.bin.firefox); Ubuntu only; High risk"),
+    ("AppArmorComplain",
+     "put an AppArmor profile into complain/learning mode (aa-complain) — param: profile_path*; Ubuntu only; Medium risk"),
+    // ── Ubuntu / cloud-init ───────────────────────────────────────────────────
+    ("CloudInitStatus",
+     "show cloud-init provisioning status (cloud-init status --long) — no params; Ubuntu only; read-only"),
+    // ── Ubuntu / Flatpak (Ubuntu-specific routing) ────────────────────────────
+    ("UbuntuInstallFlatpak",
+     "install a Flatpak app on Ubuntu — params: username*, app_id*, remote* (e.g. flathub); Ubuntu only; Medium risk"),
+    ("UbuntuRemoveFlatpak",
+     "remove a Flatpak app on Ubuntu — params: username*, app_id*; Ubuntu only; Medium risk"),
+    ("UbuntuUpdateFlatpak",
+     "update Flatpak app(s) on Ubuntu — param: username*; optional: app_id (omit for all); Ubuntu only; Medium risk"),
+    ("UbuntuListFlatpaks",
+     "list installed Flatpak apps on Ubuntu — param: username*; Ubuntu only; read-only"),
+    // ── Ubuntu / fail2ban ─────────────────────────────────────────────────────
+    ("Fail2banStatus",
+     "show fail2ban jail status — optional param: jail (omit for all jails); Ubuntu only; read-only"),
+    ("Fail2banBanIp",
+     "ban an IP address in a fail2ban jail — params: jail* (string), ip* (IPv4 or IPv6); Ubuntu only; High risk"),
+    ("Fail2banUnbanIp",
+     "unban an IP address from a fail2ban jail — params: jail*, ip*; Ubuntu only; Medium risk"),
 ];
 
 pub fn propose_plan_tool_def() -> ToolDefinition {

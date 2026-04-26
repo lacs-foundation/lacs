@@ -12,9 +12,9 @@ use std::collections::BTreeSet;
 use serde_json::json;
 use sysknife_brain::planning_tools::propose_plan::KNOWN_ACTIONS;
 use sysknife_daemon::actions::{
-    apt, containers, deployment, distrobox, filesystem, flatpak, grub, identity, layering, netplan,
-    network, package_repos, ppa, processes, reboot, services, snap, ssh, system_info, toolbox, ufw,
-    users,
+    apparmor, apt, cloudinit, containers, deployment, distrobox, fail2ban, filesystem, flatpak,
+    grub, identity, layering, netplan, network, package_repos, ppa, processes, reboot, resolvectl,
+    services, snap, ssh, system_info, toolbox, ufw, users,
 };
 use sysknife_daemon::executor::build_action_spec;
 use sysknife_daemon::policy::min_role_for_action;
@@ -95,6 +95,19 @@ fn all_spec_action_names() -> BTreeSet<&'static str> {
         names.insert(spec.action_name);
     }
     for spec in reboot::specs() {
+        names.insert(spec.action_name);
+    }
+    // Tier 2 — cross-distro and Ubuntu-specific
+    for spec in resolvectl::specs() {
+        names.insert(spec.action_name);
+    }
+    for spec in apparmor::specs() {
+        names.insert(spec.action_name);
+    }
+    for spec in cloudinit::specs() {
+        names.insert(spec.action_name);
+    }
+    for spec in fail2ban::specs() {
         names.insert(spec.action_name);
     }
     names

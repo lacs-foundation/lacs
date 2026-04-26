@@ -1,9 +1,12 @@
 use sysknife_types::RiskLevel;
 
+pub mod apparmor;
 pub mod apt;
+pub mod cloudinit;
 pub mod containers;
 pub mod deployment;
 pub mod distrobox;
+pub mod fail2ban;
 pub mod filesystem;
 pub mod flatpak;
 pub mod grub;
@@ -16,6 +19,7 @@ pub mod package_repos;
 pub mod ppa;
 pub mod processes;
 pub mod reboot;
+pub mod resolvectl;
 pub mod services;
 pub mod snap;
 pub mod ssh;

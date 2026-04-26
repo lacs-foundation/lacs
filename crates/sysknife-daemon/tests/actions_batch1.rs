@@ -70,6 +70,11 @@ fn flatpak_family_covers_install_remove_and_query_actions() {
             "RemoveFlatpakRemote",
             "GetFlatpakAppInfo",
             "UpdateFlatpak",
+            // Ubuntu-specific routing (same argv, distinct action names)
+            "UbuntuInstallFlatpak",
+            "UbuntuRemoveFlatpak",
+            "UbuntuUpdateFlatpak",
+            "UbuntuListFlatpaks",
         ]
     );
 }

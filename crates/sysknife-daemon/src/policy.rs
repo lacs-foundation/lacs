@@ -82,7 +82,17 @@ pub fn min_role_for_action(action_name: &str) -> Option<CallerRole> {
         // ── Ubuntu / reboot status ────────────────────────────────────────
         //
         // CheckPendingReboot reads /var/run/reboot-required — no mutation.
-        | "CheckPendingReboot" => CallerRole::Observer,
+        | "CheckPendingReboot"
+        // ── Cross-distro / resolvectl read-only ───────────────────────────
+        | "ResolvectlStatus"
+        // ── Ubuntu / AppArmor read-only ───────────────────────────────────
+        | "AppArmorStatus"
+        // ── Ubuntu / cloud-init read-only ─────────────────────────────────
+        | "CloudInitStatus"
+        // ── Ubuntu / Flatpak read-only ────────────────────────────────────
+        | "UbuntuListFlatpaks"
+        // ── Ubuntu / fail2ban read-only ───────────────────────────────────
+        | "Fail2banStatus" => CallerRole::Observer,
 
         // ── Medium-risk mutations (Dev) ──────────────────────────────────
         //
@@ -141,7 +151,26 @@ pub fn min_role_for_action(action_name: &str) -> Option<CallerRole> {
         // PPA operations add or remove third-party apt sources; they mutate
         // package provenance (supply-chain vector) but are reversible.
         | "AddPpa"
-        | "RemovePpa" => CallerRole::Dev,
+        | "RemovePpa"
+        // ── Cross-distro / resolvectl medium-risk ──────────────────────────
+        //
+        // ResolvectlSetDns changes DNS resolution for a named interface.
+        // Risk mirrors SetDnsServers (DNS hijacking / MitM vector — NIST SC-7)
+        // but is scoped to one interface, so Dev (not Admin) is appropriate.
+        | "ResolvectlSetDns"
+        // ── Ubuntu / AppArmor medium-risk ──────────────────────────────────
+        //
+        // AppArmorComplain puts a profile in learning mode. Violations are
+        // logged but not blocked; reversible by re-enforcing.
+        | "AppArmorComplain"
+        // ── Ubuntu / Flatpak medium-risk ───────────────────────────────────
+        | "UbuntuInstallFlatpak"
+        | "UbuntuRemoveFlatpak"
+        | "UbuntuUpdateFlatpak"
+        // ── Ubuntu / fail2ban medium-risk ──────────────────────────────────
+        //
+        // UnbanIp removes a ban; the address can be re-banned if needed.
+        | "Fail2banUnbanIp" => CallerRole::Dev,
 
         // ── High-risk system mutations (Admin) ───────────────────────────
         //
@@ -203,7 +232,19 @@ pub fn min_role_for_action(action_name: &str) -> Option<CallerRole> {
         // GrubSetKargs modifies the kernel command line and regenerates GRUB
         // config. Incorrect arguments can prevent the system from booting.
         // Requires reboot to take effect.
-        | "GrubSetKargs" => CallerRole::Admin,
+        | "GrubSetKargs"
+        // ── Ubuntu / AppArmor high-risk ───────────────────────────────────
+        //
+        // AppArmorEnforce activates enforcement. Blocking violations that the
+        // application relies on can immediately cause it to fail or lose data.
+        // (T1562.001 Impair Defenses — if misapplied to security tools.)
+        | "AppArmorEnforce"
+        // ── Ubuntu / fail2ban high-risk ───────────────────────────────────
+        //
+        // Fail2banBanIp immediately blocks an IP for all traffic passing
+        // through the named jail. Banning the admin's own IP on sshd severs
+        // remote access. (T1562.004 Defense Evasion; NIST SC-7.)
+        | "Fail2banBanIp" => CallerRole::Admin,
 
         _ => return None,
     };

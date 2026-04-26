@@ -419,7 +419,12 @@ GetSystemState, CollectDiagnostics,
 ListServices, GetServiceLogs, GetServiceStatus, ListTimers,
 GetNetworkStatus, GetDiskUsage, GetDateTime, ListProcesses, GetMemoryInfo,
 GetAuthorizedKeys, ListPackageRepositories, ListContainers, GetContainerInfo,
-ListUsers, ListGroups, ListJobHistory
+ListUsers, ListGroups, ListJobHistory,
+ResolvectlStatus
+
+### Medium risk — cross-distro (approval required before execution)
+
+ResolvectlSetDns
 "#;
 
 const CROSS_DISTRO_RISK_RULES: &str = r#"
@@ -537,6 +542,10 @@ Use `"username"` as the key — NOT `"user"`.
 
 **Job history**:
 - `ListJobHistory`: `{}` or any subset of `{"limit":20,"status_filter":"succeeded","action_filter":"RestartService","since_hours":24}`
+
+**DNS (systemd-resolved — cross-distro)**:
+- `ResolvectlStatus`: `{}` (no params — shows all interfaces)
+- `ResolvectlSetDns`: `{"interface":"eth0","servers":["1.1.1.1","8.8.8.8"]}` — `interface` is required; `servers` is a non-empty list of DNS server addresses
 "#;
 
 const CONSTRAINTS: &str = r#"
@@ -709,7 +718,10 @@ CheckPendingReboot,
 SnapList, SnapInfo,
 UfwStatus, NetplanGetConfig,
 GrubGetKargs,
-DistroboxList
+DistroboxList,
+AppArmorStatus, CloudInitStatus,
+UbuntuListFlatpaks,
+Fail2banStatus
 
 ### Medium risk (Debian-specific)
 
@@ -717,14 +729,19 @@ AptInstall, AptRemove, AptPurge, AptHold, AptUnhold,
 SnapInstall, SnapRemove, SnapRefresh, SnapHold, SnapUnhold,
 SnapRevert, SnapClassicInstall,
 AddPpa, RemovePpa,
-DistroboxCreate, DistroboxRemove
+DistroboxCreate, DistroboxRemove,
+AppArmorComplain,
+UbuntuInstallFlatpak, UbuntuRemoveFlatpak, UbuntuUpdateFlatpak,
+Fail2banUnbanIp
 
 ### High risk (Debian-specific)
 
 AptUpgrade,
 GrubSetKargs,
 UfwEnable, UfwDisable, UfwAllow, UfwDeny, UfwReset,
-NetplanApply
+NetplanApply,
+AppArmorEnforce,
+Fail2banBanIp
 "#;
 
 const DEBIAN_SELECTION_RULES: &str = r#"
@@ -747,6 +764,10 @@ const DEBIAN_SELECTION_RULES: &str = r#"
 - `NetplanApply` applies pending network configuration — HIGH (can disconnect the active interface).
 - `DistroboxCreate` creates an isolated container that can be cleanly removed — MEDIUM.
 - For system package installation, use `AptInstall`. Never propose rpm-ostree actions on this distro.
+- `AppArmorStatus` shows all loaded profiles — LOW, read-only. `AppArmorComplain` puts a profile into learning mode (logs violations but does not block) — MEDIUM. `AppArmorEnforce` activates enforcement (violations are blocked) — HIGH. Always prefer `AppArmorComplain` first to audit a profile before enforcing it.
+- `CloudInitStatus` shows the cloud-init provisioning result — LOW, read-only. Use for "did cloud-init run correctly?" or "were there provisioning errors?". Ubuntu/Debian only — Fedora Atomic uses Ignition instead.
+- `UbuntuListFlatpaks` lists installed Flatpak apps — LOW, read-only. `UbuntuInstallFlatpak`, `UbuntuRemoveFlatpak`, `UbuntuUpdateFlatpak` manage Flatpak apps on Ubuntu — MEDIUM.
+- `Fail2banStatus` shows jail status — LOW, read-only. `Fail2banUnbanIp` removes a ban — MEDIUM. `Fail2banBanIp` immediately bans an IP address — HIGH (banning the admin's own IP will lock out SSH access).
 "#;
 
 const DEBIAN_COUNTERINTUITIVE: &str = r#"
@@ -768,6 +789,15 @@ const DEBIAN_COUNTERINTUITIVE: &str = r#"
 - `NetplanApply` is HIGH — can disconnect the network interface that your session runs over.
 - `AptUpgrade` is HIGH — upgrades every installed package on the system (large blast radius).
 - `DistroboxCreate` is MEDIUM — the container is isolated and can be cleanly removed with `DistroboxRemove`.
+- `AppArmorEnforce` is HIGH — activating enforcement can immediately block operations the application relies on.
+- `AppArmorComplain` is MEDIUM — learning mode; violations are logged but not blocked.
+- `AppArmorStatus` is LOW — read-only query.
+- `CloudInitStatus` is LOW — read-only; inspects provisioning status only.
+- `Fail2banBanIp` is HIGH — immediately blocks an IP; banning the wrong address (e.g. the admin's own IP on the sshd jail) will sever SSH access.
+- `Fail2banUnbanIp` is MEDIUM — removes a ban; reversible.
+- `Fail2banStatus` is LOW — read-only.
+- `UbuntuInstallFlatpak` / `UbuntuRemoveFlatpak` / `UbuntuUpdateFlatpak` are MEDIUM — sandboxed app changes; reversible.
+- `UbuntuListFlatpaks` is LOW — read-only enumeration.
 "#;
 
 const DEBIAN_PARAMS: &str = r#"
@@ -809,6 +839,24 @@ UfwStatus, UfwEnable, UfwDisable, UfwReset, DistroboxList, NetplanGetConfig.
 - `DistroboxList`: `{}`
 - `DistroboxCreate`: `{"name":"mybox","image":"ubuntu:22.04"}`
 - `DistroboxRemove`: `{"name":"mybox"}`
+
+**AppArmor**:
+- `AppArmorStatus`: `{}` (no params — lists all loaded profiles)
+- `AppArmorEnforce` / `AppArmorComplain`: `{"profile_path":"/etc/apparmor.d/usr.bin.firefox"}`
+
+**cloud-init**:
+- `CloudInitStatus`: `{}` (no params)
+
+**Flatpak (Ubuntu)**:
+- `UbuntuInstallFlatpak`: `{"username":"alice","app_id":"org.mozilla.firefox","remote":"flathub"}`
+- `UbuntuRemoveFlatpak`: `{"username":"alice","app_id":"org.mozilla.firefox"}`
+- `UbuntuUpdateFlatpak`: `{"username":"alice"}` (all apps) or `{"username":"alice","app_id":"org.mozilla.firefox"}` (one app)
+- `UbuntuListFlatpaks`: `{"username":"alice"}`
+
+**fail2ban**:
+- `Fail2banStatus`: `{}` (all jails) or `{"jail":"sshd"}` (specific jail)
+- `Fail2banBanIp`: `{"jail":"sshd","ip":"203.0.113.42"}`
+- `Fail2banUnbanIp`: `{"jail":"sshd","ip":"203.0.113.42"}`
 "#;
 
 // ---------------------------------------------------------------------------
@@ -1005,6 +1053,18 @@ pub const DEBIAN_ONLY_ACTION_NAMES: &[&str] = &[
     "GrubGetKargs",
     "GrubSetKargs",
     "CheckPendingReboot",
+    // Tier 2 — Ubuntu-only
+    "AppArmorStatus",
+    "AppArmorEnforce",
+    "AppArmorComplain",
+    "CloudInitStatus",
+    "UbuntuInstallFlatpak",
+    "UbuntuRemoveFlatpak",
+    "UbuntuUpdateFlatpak",
+    "UbuntuListFlatpaks",
+    "Fail2banStatus",
+    "Fail2banBanIp",
+    "Fail2banUnbanIp",
 ];
 
 #[cfg(test)]
@@ -1051,11 +1111,41 @@ mod tests {
             "GrubGetKargs",
             "GrubSetKargs",
             "CheckPendingReboot",
+            // Tier 2 Ubuntu-only
+            "AppArmorStatus",
+            "AppArmorEnforce",
+            "AppArmorComplain",
+            "CloudInitStatus",
+            "UbuntuInstallFlatpak",
+            "UbuntuRemoveFlatpak",
+            "UbuntuUpdateFlatpak",
+            "UbuntuListFlatpaks",
+            "Fail2banStatus",
+            "Fail2banBanIp",
+            "Fail2banUnbanIp",
         ] {
             assert!(
                 !p.contains(forbidden),
                 "Fedora prompt leaked Debian action: {}",
                 forbidden
+            );
+        }
+    }
+
+    #[test]
+    fn resolvectl_actions_appear_in_both_fedora_and_debian_prompts() {
+        let fedora = build_system_prompt(None, Some(&fedora_hint()));
+        let debian = build_system_prompt(None, Some(&debian_hint()));
+        for action in &["ResolvectlStatus", "ResolvectlSetDns"] {
+            assert!(
+                fedora.contains(action),
+                "Fedora prompt missing cross-distro action: {}",
+                action
+            );
+            assert!(
+                debian.contains(action),
+                "Debian prompt missing cross-distro action: {}",
+                action
             );
         }
     }
@@ -1070,7 +1160,13 @@ mod tests {
             "RebaseSystem",
             "RollbackDeployment",
             "CreateToolbox",
-            "InstallFlatpak",
+            // Use a newline prefix to distinguish Fedora-only `InstallFlatpak`
+            // from Ubuntu-only `UbuntuInstallFlatpak` (which is a valid Ubuntu
+            // action that appears in the Debian prompt and happens to contain
+            // `InstallFlatpak` as a substring). The Fedora risk table lists
+            // `InstallFlatpak` at the start of a line; `UbuntuInstallFlatpak`
+            // on the Debian side never appears line-leading as bare `InstallFlatpak`.
+            "\nInstallFlatpak",
             "ConfigureFirewall",
             "GetFirewallState",
             "GetLayeredPackages",

@@ -1531,7 +1531,10 @@ async fn prompt_with_ubuntu_hint_contains_apt_and_excludes_rpm_ostree() {
         "RebaseSystem",
         "RollbackDeployment",
         "GetLayeredPackages",
-        "InstallFlatpak",
+        // Use newline prefix to distinguish Fedora-only `InstallFlatpak` from
+        // Ubuntu-only `UbuntuInstallFlatpak` — the latter is a valid Ubuntu
+        // action that contains `InstallFlatpak` as a substring.
+        "\nInstallFlatpak",
         "CreateToolbox",
         "ConfigureFirewall",
         "GetFirewallState",

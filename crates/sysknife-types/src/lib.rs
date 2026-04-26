@@ -188,6 +188,24 @@ pub const KNOWN_ACTION_NAMES: &[&str] = &[
     "GrubSetKargs",
     // Ubuntu / reboot
     "CheckPendingReboot",
+    // Cross-distro / resolvectl (systemd-resolved)
+    "ResolvectlStatus",
+    "ResolvectlSetDns",
+    // Ubuntu / apparmor
+    "AppArmorStatus",
+    "AppArmorEnforce",
+    "AppArmorComplain",
+    // Ubuntu / cloud-init
+    "CloudInitStatus",
+    // Ubuntu / flatpak (Ubuntu-specific routing)
+    "UbuntuInstallFlatpak",
+    "UbuntuRemoveFlatpak",
+    "UbuntuUpdateFlatpak",
+    "UbuntuListFlatpaks",
+    // Ubuntu / fail2ban
+    "Fail2banStatus",
+    "Fail2banBanIp",
+    "Fail2banUnbanIp",
 ];
 
 /// A validated action name from the approved SysKnife catalogue.
