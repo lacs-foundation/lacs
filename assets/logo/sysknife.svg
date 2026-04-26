@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="SysKnife">
+  <title>SysKnife</title>
+  <desc>A folded multitool whose blade is a terminal prompt — the SysKnife mark.</desc>
+
+  <defs>
+    <linearGradient id="bladeGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%"  stop-color="#FFB45A"/>
+      <stop offset="100%" stop-color="#FF6B1A"/>
+    </linearGradient>
+    <linearGradient id="handleGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"  stop-color="#2B3440"/>
+      <stop offset="100%" stop-color="#1B232B"/>
+    </linearGradient>
+    <filter id="softShadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#000" flood-opacity="0.18"/>
+    </filter>
+  </defs>
+
+  <!-- Rounded square plate so the mark works at favicon size and on round avatar crops -->
+  <rect x="8" y="8" width="240" height="240" rx="48" ry="48" fill="#0F1419"/>
+
+  <!-- Knife handle (sysadmin's grip) -->
+  <g filter="url(#softShadow)">
+    <rect x="40" y="100" width="176" height="56" rx="14" ry="14" fill="url(#handleGrad)"/>
+    <!-- Hinge rivet — also doubles as the visual "anchor" for the unfolding blade -->
+    <circle cx="56" cy="128" r="6" fill="#FF6B1A" opacity="0.85"/>
+    <circle cx="200" cy="128" r="6" fill="#FF6B1A" opacity="0.55"/>
+  </g>
+
+  <!-- Unfolded blade rendered as a terminal `>` prompt
+       The chevron grows out of the handle to read as both blade and prompt -->
+  <g filter="url(#softShadow)">
+    <path d="M 80 80
+             L 132 128
+             L 80 176
+             L 96 176
+             L 156 128
+             L 96 80 Z"
+          fill="url(#bladeGrad)"/>
+  </g>
+
+  <!-- Cursor block — the `_` underscore that completes the prompt vibe -->
+  <rect x="170" y="120" width="20" height="16" rx="2" ry="2" fill="#5EEAD4"/>
+</svg>

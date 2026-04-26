@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 200" width="720" height="200" role="img" aria-label="SysKnife wordmark">
+  <title>SysKnife</title>
+
+  <defs>
+    <linearGradient id="bladeGradWM" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%"  stop-color="#FFB45A"/>
+      <stop offset="100%" stop-color="#FF6B1A"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Compact glyph (mirrors sysknife.svg, scaled) -->
+  <g transform="translate(20 36) scale(0.5)">
+    <rect x="8" y="8" width="240" height="240" rx="48" ry="48" fill="#0F1419"/>
+    <rect x="40" y="100" width="176" height="56" rx="14" ry="14" fill="#1B232B"/>
+    <circle cx="56" cy="128" r="6" fill="#FF6B1A" opacity="0.85"/>
+    <circle cx="200" cy="128" r="6" fill="#FF6B1A" opacity="0.55"/>
+    <path d="M 80 80 L 132 128 L 80 176 L 96 176 L 156 128 L 96 80 Z" fill="url(#bladeGradWM)"/>
+    <rect x="170" y="120" width="20" height="16" rx="2" ry="2" fill="#5EEAD4"/>
+  </g>
+
+  <!-- Wordmark — system-ui stack so it renders on every viewer without a font dep -->
+  <g transform="translate(170 122)">
+    <text font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Inter, sans-serif"
+          font-size="92" font-weight="800" letter-spacing="-2" fill="#0F1419">
+      Sys<tspan fill="#FF6B1A">Knife</tspan>
+    </text>
+  </g>
+
+  <!-- Tagline -->
+  <g transform="translate(174 162)">
+    <text font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+          font-size="18" fill="#475569">
+      &gt; AI-managed Linux. Plan. Approve. Audit.
+    </text>
+  </g>
+</svg>
