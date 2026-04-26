@@ -9,7 +9,9 @@
     "node": ">=18"
   },
   "files": [
-    "index.js"
+    "index.js",
+    "install-binary.js",
+    "install-daemon.js"
   ],
   "keywords": [
     "sysknife",
