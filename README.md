@@ -16,6 +16,7 @@
   <a href="https://github.com/lacs-foundation/sysknife/stargazers"><img src="https://img.shields.io/github/stars/lacs-foundation/sysknife?style=flat-square&logo=github" alt="Stars"></a>
   <a href="https://github.com/lacs-foundation/sysknife/issues"><img src="https://img.shields.io/github/issues/lacs-foundation/sysknife?style=flat-square" alt="Issues"></a>
   <a href="https://github.com/lacs-foundation/sysknife/discussions"><img src="https://img.shields.io/github/discussions/lacs-foundation/sysknife?style=flat-square&label=discuss" alt="Discussions"></a>
+  <a href="https://www.npmjs.com/package/sysknife-setup"><img src="https://img.shields.io/npm/v/sysknife-setup?style=flat-square&logo=npm&label=npx%20setup" alt="npm version"></a>
 </p>
 
 <p align="center">
