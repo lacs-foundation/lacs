@@ -4,6 +4,55 @@ Thank you for your interest in SysKnife. Contributions of all sizes are
 welcome — from typo fixes to new action families to multi-distro
 support. This document explains how to go from idea to merged PR.
 
+## Contributor License Agreement
+
+Before your first pull request is merged, the
+[CLA Assistant bot](https://github.com/contributor-assistant/github-action)
+will ask you to sign our
+[Contributor License Agreement](../../.github/CONTRIBUTOR_LICENSE_AGREEMENT.md).
+
+**Why the CLA exists — no jargon:**
+
+SysKnife is free and open source under AGPL-3.0 and will stay that way.
+To fund continued development, we also offer a paid commercial license to
+organisations that need to build proprietary products on SysKnife without
+the AGPL's copyleft obligations (think: a company embedding SysKnife in a
+closed fleet-management product).
+
+The CLA gives us the legal right to include your code in that commercial
+license. Without a CLA from every contributor, we could only ever ship the
+AGPL version — which means commercial licensing, and with it the funding
+that keeps this project maintained, is not possible.
+
+**What we commit to in return:**
+
+- The AGPL-3.0 version is permanently free and open source. No exceptions.
+- We will never use the CLA to close-source SysKnife or pull it from public
+  access. The AGPL version cannot be "taken private" — it stays public.
+- Your copyright stays with you. The CLA is non-exclusive: you can still use,
+  publish, or re-license your own contribution however you like.
+- Your name stays in the git history forever.
+
+This is the same model used by Grafana Labs (AGPL core + commercial plugins)
+and others. The difference from MongoDB/Elastic — who used CLAs to later
+close-source their projects — is that we are saying this explicitly and
+publicly, up front.
+
+**Current status:**
+
+The CLA is not yet enforced — there is no bot and no signature required today.
+We may introduce automated CLA signing in the future as commercial licensing
+matures. If and when that happens, we will announce it publicly and discuss it
+with the community before it takes effect. The
+[CLA document](../../.github/CONTRIBUTOR_LICENSE_AGREEMENT.md) is published now
+so there are no surprises.
+
+If you have questions about any of this, open a
+[Discussion](https://github.com/lacs-foundation/sysknife/discussions) — we would
+rather answer questions than lose a contributor to a misunderstanding.
+
+---
+
 ## Before You Start
 
 1. Read the [architecture overview](../architecture.md) to understand

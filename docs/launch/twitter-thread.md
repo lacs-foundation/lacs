@@ -112,7 +112,7 @@ Current state, no overclaiming:
 - Ubuntu: action families implemented, planner integration + E2E still in
   progress — not yet validated for production use
 - Arch / NixOS: roadmap
-- 1 026 tests, MIT license
+- 1 026 tests, AGPL-3.0 license
 
 ---
 

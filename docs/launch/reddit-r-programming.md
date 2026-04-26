@@ -105,7 +105,7 @@ response cannot bypass approval by claiming it already got it.
   validation against a Ubuntu VM are still in progress.
 - The protocol (LACS — Linux Agent Control Standard) is CC0 at
   <https://github.com/lacs-foundation/specification>.
-- 1 026 tests. MIT license.
+- 1 026 tests. AGPL-3.0 license.
 - Repo: <https://github.com/lacs-foundation/sysknife>
 
 I am happy to discuss the type design, the IPC framing, the provider adapter

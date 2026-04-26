@@ -3,7 +3,7 @@
 ## Title
 
 **I built SysKnife: an AI Linux sysadmin where the AI plans but cannot run
-shell. Typed actions, approval gate, tamper-evident audit chain. MIT,
+shell. Typed actions, approval gate, tamper-evident audit chain. AGPL-3.0,
 Fedora-first.**
 
 ---
@@ -66,7 +66,7 @@ for deployment changes, inverse firewall rules for firewall changes, etc.
 - 1 026 tests passing on every commit.
 - 80+ typed actions: packages, services, firewall, containers, flatpak,
   toolbox, SSH keys, kernel args, users, deployments.
-- MIT license.
+- AGPL-3.0 license.
 - Works offline with Ollama (qwen3:8b runs well on a mid-range laptop).
 
 **Links**
