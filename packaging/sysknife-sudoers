@@ -56,3 +56,63 @@ sysknife ALL=(root) NOPASSWD: /usr/bin/ostree
 # logic (firewall --permanent + --reload, group membership ensure + usermod/gpasswd).
 # Restricted to NOPASSWD invocations only — sysknife cannot launch an interactive shell.
 sysknife ALL=(root) NOPASSWD: /usr/bin/sh
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Ubuntu / Debian-family binaries
+# ─────────────────────────────────────────────────────────────────────────────
+
+# `sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get …`
+# Apt actions wrap apt-get in env to set non-interactive flags past sudo's
+# default env-stripping. Allowing /usr/bin/env grants the daemon the ability
+# to launch apt under controlled environment — the daemon's typed action layer
+# constrains which programs env actually runs.
+sysknife ALL=(root) NOPASSWD: /usr/bin/env
+
+# Apt write operations:
+#   apt-mark hold/unhold             → AptHold / AptUnhold
+#   apt-get install/remove/purge/…   → invoked via sudo env apt-get
+sysknife ALL=(root) NOPASSWD: /usr/bin/apt-mark
+sysknife ALL=(root) NOPASSWD: /usr/bin/apt-get
+
+# add-apt-repository — provided by software-properties-common.
+# AddPpa / RemovePpa.
+sysknife ALL=(root) NOPASSWD: /usr/bin/add-apt-repository
+
+# Snap write operations (install / remove / refresh / hold / revert).
+sysknife ALL=(root) NOPASSWD: /usr/bin/snap
+
+# UFW firewall — every mutating subcommand requires root.
+sysknife ALL=(root) NOPASSWD: /usr/sbin/ufw
+
+# Netplan — apply/generate/set rewrite /etc/netplan/ + reload interfaces.
+# Path varies between releases: /usr/sbin/netplan on jammy/noble, but the
+# binary may also live at /usr/bin/netplan on some installs. Allow both.
+sysknife ALL=(root) NOPASSWD: /usr/sbin/netplan
+sysknife ALL=(root) NOPASSWD: /usr/bin/netplan
+
+# AppArmor — aa-status (apparmor base), aa-enforce/aa-complain (apparmor-utils).
+sysknife ALL=(root) NOPASSWD: /usr/sbin/aa-status
+sysknife ALL=(root) NOPASSWD: /usr/sbin/aa-enforce
+sysknife ALL=(root) NOPASSWD: /usr/sbin/aa-complain
+
+# fail2ban-client — Fail2banStatus (read-only) / BanIp / UnbanIp.
+sysknife ALL=(root) NOPASSWD: /usr/bin/fail2ban-client
+
+# Ubuntu Pro CLI — ProAttach / ProDetach (mutating). ProStatus is read-only and
+# does not require root, but `pro` itself is allowed for symmetry.
+sysknife ALL=(root) NOPASSWD: /usr/bin/pro
+
+# Canonical Livepatch — LivepatchStatus shells through sudo.
+sysknife ALL=(root) NOPASSWD: /usr/bin/canonical-livepatch
+
+# do-release-upgrade — UbuntuReleaseUpgrade.
+# Long-running (20-45 min) and reboot-required; preview-profile carries the
+# warning for operators.
+sysknife ALL=(root) NOPASSWD: /usr/bin/do-release-upgrade
+
+# GRUB karg edit — GrubSetKargs runs `sudo cp`, `sudo python3`, `sudo update-grub`
+# inside its bash script to back up /etc/default/grub, edit it via Python,
+# then regenerate GRUB config. Each binary needs its own line.
+sysknife ALL=(root) NOPASSWD: /usr/bin/cp
+sysknife ALL=(root) NOPASSWD: /usr/bin/python3
+sysknife ALL=(root) NOPASSWD: /usr/sbin/update-grub

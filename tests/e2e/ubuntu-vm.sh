@@ -87,8 +87,31 @@ CLOUD_INIT_DIR="${VM_DIR}/cloud-init"
 # ---------------------------------------------------------------------------
 # Prior to the multi-LTS refactor, noble used tests/e2e/ubuntu-vm/ with
 # different filenames (ubuntu-overlay.qcow2, ubuntu-vm.pid).  When running
-# as noble and the per-release directory does not yet exist but the legacy
-# path does, emit a one-time migration notice.  The user must either:
+# Dedicated passphrase-less SSH key for the VM. Shared with atomic-vm.sh.
+SSH_KEY="${SYSKNIFE_VM_SSH_KEY:-$HOME/.ssh/sysknife-vm}"
+
+# Approximate minimum size check for cloud images. All Ubuntu LTS cloud images
+# are at least 300 MB; 314572800 = 300 * 1024 * 1024.
+# The original noble check used 550 MB but jammy images are smaller (~450 MB).
+# 300 MB is safe for all three releases.
+_MIN_IMAGE_SIZE=314572800
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+#
+# Defined BEFORE the legacy-noble migration shim below so that calling `log`
+# at module-load time does not abort with `log: command not found` under
+# `set -euo pipefail`.
+
+log()  { printf '[ubuntu-vm:%s] %s\n' "$UBUNTU_RELEASE" "$*" >&2; }
+die()  { log "ERROR: $*"; exit 1; }
+
+# ---------------------------------------------------------------------------
+# Legacy-noble migration shim (now uses log/die above)
+# ---------------------------------------------------------------------------
+# When run as noble and the per-release directory does not yet exist but the
+# legacy path does, emit a one-time migration notice. The user must either:
 #   a) run 'download' to create a fresh noble overlay in the new location, or
 #   b) manually move the files:
 #        mv tests/e2e/ubuntu-vm/ubuntu-overlay.qcow2 tests/e2e/ubuntu-vm/noble/overlay.qcow2
@@ -106,22 +129,6 @@ if [ "$UBUNTU_RELEASE" = "noble" ] && [ ! -d "$VM_DIR" ]; then
         log "  Or run '$0 download' to create a fresh noble overlay."
     fi
 fi
-
-# Dedicated passphrase-less SSH key for the VM. Shared with atomic-vm.sh.
-SSH_KEY="${SYSKNIFE_VM_SSH_KEY:-$HOME/.ssh/sysknife-vm}"
-
-# Approximate minimum size check for cloud images. All Ubuntu LTS cloud images
-# are at least 300 MB; 314572800 = 300 * 1024 * 1024.
-# The original noble check used 550 MB but jammy images are smaller (~450 MB).
-# 300 MB is safe for all three releases.
-_MIN_IMAGE_SIZE=314572800
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-log()  { printf '[ubuntu-vm:%s] %s\n' "$UBUNTU_RELEASE" "$*" >&2; }
-die()  { log "ERROR: $*"; exit 1; }
 
 require_tools() {
     local missing=()
@@ -179,7 +186,19 @@ ensure_ssh_key() {
 }
 
 is_vm_running() {
-    [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null
+    [ -f "$PID_FILE" ] || return 1
+    local pid
+    pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+    # Reject empty / non-numeric / non-positive PIDs. A corrupt PID file
+    # would otherwise silently report "not running" and the next start
+    # races a still-live QEMU on the same port.
+    case "$pid" in
+        '' | *[!0-9]* | 0)
+            log "WARNING: PID file ${PID_FILE} contains invalid value '${pid}' — treating VM as not running"
+            return 1
+            ;;
+    esac
+    kill -0 "$pid" 2>/dev/null
 }
 
 # ---------------------------------------------------------------------------
@@ -198,7 +217,11 @@ cmd_download() {
         # finished or may still be writing.
         if [ -f "${BASE_IMG_PATH}.tmp" ]; then
             local tmpsize
-            tmpsize=$(stat -c%s "${BASE_IMG_PATH}.tmp" 2>/dev/null || echo 0)
+            # Drop `2>/dev/null || echo 0`: a stat failure (permission denied,
+            # AppArmor) used to silently treat the partial download as size-0
+            # and trigger a re-download. Surface the error so the operator can
+            # see why stat failed.
+            tmpsize=$(stat -c%s "${BASE_IMG_PATH}.tmp")
             if [ "$tmpsize" -gt "$_MIN_IMAGE_SIZE" ]; then
                 log "Renaming completed download ${BASE_IMG_PATH}.tmp → ${BASE_IMG_PATH}"
                 mv "${BASE_IMG_PATH}.tmp" "$BASE_IMG_PATH"
@@ -242,6 +265,11 @@ cmd_download() {
 
 # Build the cloud-init seed ISO (NoCloud data source).
 _build_seed_iso() {
+    # Validate the public key is non-empty BEFORE we write user-data with an
+    # empty ssh_authorized_keys entry — cloud-init does not error on an empty
+    # key list, the VM simply boots without SSH access, and the operator only
+    # discovers it 240 s later when wait_for_ssh_auth times out.
+    [ -s "${SSH_KEY}.pub" ] || die "Public key ${SSH_KEY}.pub is missing or empty. Run '$0 keygen' or set SYSKNIFE_VM_SSH_KEY."
     local pubkey
     pubkey="$(cat "${SSH_KEY}.pub")"
 
@@ -283,7 +311,7 @@ runcmd:
   - mkdir -p /var/lib/sysknife-e2e
   - apt-get update -y
   - DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential pkg-config libssl-dev libsqlite3-dev curl wget jq rsync netcat-openbsd software-properties-common ufw firewalld snapd distrobox netplan.io
-  - systemctl disable --now firewalld 2>/dev/null || true
+  - if systemctl list-unit-files --quiet | grep -q '^firewalld'; then systemctl disable --now firewalld; fi
   - echo "cloud-init first-boot complete" > /var/lib/sysknife-e2e/cloud-init-done
 
 final_message: |
@@ -465,9 +493,16 @@ cmd_stop() {
         return 0
     fi
     log "Requesting clean shutdown..."
+    # Capture the SSH exit status instead of swallowing it. Three real
+    # errors used to be silently `|| true`'d into nothing: SSH key auth
+    # failure, sudo denial, systemctl-poweroff failure. Now they surface.
+    local ssh_rc=0
     # shellcheck disable=SC2046
     ssh $(ssh_opts) -p "$SSH_PORT" "${VM_USER}@127.0.0.1" \
-        'sudo systemctl poweroff' 2>/dev/null || true
+        'sudo systemctl poweroff' || ssh_rc=$?
+    if [ "$ssh_rc" -ne 0 ]; then
+        log "WARNING: SSH poweroff command exited with status ${ssh_rc}. The VM may still be running."
+    fi
     # Wait for the TCP port to close.
     local waited=0
     while nc -z -w2 127.0.0.1 "$SSH_PORT" 2>/dev/null; do
@@ -479,7 +514,14 @@ cmd_stop() {
         sleep 2
         waited=$((waited + 2))
     done
-    rm -f "$PID_FILE"
+    # Only remove the PID file if the QEMU process is actually gone — leaving
+    # a stale PID file when the VM is still alive corrupts is_vm_running()
+    # for subsequent commands and causes port-in-use errors at next start.
+    if is_vm_running; then
+        log "QEMU process is still alive; keeping PID file at ${PID_FILE} for recovery."
+    else
+        rm -f "$PID_FILE"
+    fi
     log "VM stopped."
 }
 
