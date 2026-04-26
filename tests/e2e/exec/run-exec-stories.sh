@@ -68,7 +68,7 @@ export SYSKNIFE_LLM_PROVIDER
 
 if [ -z "${SYSKNIFE_LLM_MODEL:-}" ] && [ -z "${SYSKNIFE_TEST_MODEL:-}" ]; then
     case "$SYSKNIFE_LLM_PROVIDER" in
-        openai)    SYSKNIFE_LLM_MODEL="gpt-4o" ;;
+        openai)    SYSKNIFE_LLM_MODEL="gpt-4.1" ;;
         anthropic) SYSKNIFE_LLM_MODEL="claude-sonnet-4-6" ;;
         gemini)    SYSKNIFE_LLM_MODEL="gemini-2.0-flash" ;;
         *)         SYSKNIFE_LLM_MODEL="" ;;

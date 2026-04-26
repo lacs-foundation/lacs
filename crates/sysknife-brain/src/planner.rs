@@ -563,7 +563,7 @@ impl LlmPlanner {
             ProviderConfig::OpenAI { api_key, model } => {
                 // Use async-openai directly with the Chat Completions API.
                 // rig's OpenAI backend defaults to the Responses API, which:
-                //   - emits reasoning-only items on some gpt-4o variants → parse errors
+                //   - emits reasoning-only items on some model variants → parse errors
                 //   - places the system prompt in a user message (rig issue #1599)
                 // async-openai targets /v1/chat/completions, has none of these issues.
                 Box::new(AsyncOpenAiAdapter::new(api_key, model))
