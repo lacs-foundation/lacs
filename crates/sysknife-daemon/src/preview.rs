@@ -89,13 +89,114 @@ fn preview_profile(action_name: &str) -> PreviewProfile {
         | "GetNetworkStatus"
         | "GetAuthorizedKeys"
         | "GetDateTime"
-        | "ListJobHistory" => PreviewProfile {
+        | "ListJobHistory"
+        // Ubuntu apt read-only
+        | "AptSearch"
+        | "AptListInstalled"
+        | "AptShow"
+        // Ubuntu snap read-only
+        | "SnapList"
+        | "SnapInfo"
+        // Ubuntu ufw read-only
+        | "UfwStatus"
+        // Ubuntu distrobox read-only
+        | "DistroboxList"
+        // Ubuntu netplan read-only
+        | "NetplanGetConfig" => PreviewProfile {
             risk_level: RiskLevel::Low,
             expected_side_effects: Vec::new(),
             reboot_required: false,
             rollback_available: false,
             warnings: Vec::new(),
         },
+        // ── Ubuntu apt medium-risk ────────────────────────────────────────
+        //
+        // AptUpdate / AptAutoremove are low-risk (listed in the read-only arm).
+        // The following ops change installed packages — reversible but not
+        // atomic, and may trigger service restarts via needrestart.
+        "AptInstall" | "AptRemove" | "AptPurge" | "AptHold" | "AptUnhold" => PreviewProfile {
+            risk_level: RiskLevel::Medium,
+            expected_side_effects: vec![
+                "package state will change".to_string(),
+                "services may be restarted by needrestart".to_string(),
+            ],
+            reboot_required: false,
+            rollback_available: false,
+            warnings: vec!["approval required".to_string()],
+        },
+
+        // ── Ubuntu snap medium-risk ───────────────────────────────────────
+        "SnapInstall" | "SnapRemove" | "SnapRefresh" | "SnapHold" | "SnapUnhold" => {
+            PreviewProfile {
+                risk_level: RiskLevel::Medium,
+                expected_side_effects: vec!["snap state will change".to_string()],
+                reboot_required: false,
+                rollback_available: false,
+                warnings: vec![
+                    "approval required".to_string(),
+                    "snap auto-refresh: install is paired with --hold by default".to_string(),
+                ],
+            }
+        }
+
+        // ── Ubuntu distrobox medium-risk ──────────────────────────────────
+        "DistroboxCreate" | "DistroboxRemove" => PreviewProfile {
+            risk_level: RiskLevel::Medium,
+            expected_side_effects: vec!["container lifecycle will change".to_string()],
+            reboot_required: false,
+            rollback_available: false,
+            warnings: vec!["approval required".to_string()],
+        },
+
+        // ── Ubuntu apt high-risk ──────────────────────────────────────────
+        //
+        // AptUpgrade uses dist-upgrade which can remove packages to resolve
+        // dependency conflicts, and triggers needrestart service restarts.
+        "AptUpgrade" => PreviewProfile {
+            risk_level: RiskLevel::High,
+            expected_side_effects: vec![
+                "all packages will be upgraded".to_string(),
+                "packages may be removed to resolve dependency conflicts".to_string(),
+                "services may be restarted by needrestart".to_string(),
+            ],
+            reboot_required: false,
+            rollback_available: false,
+            warnings: vec![
+                "dist-upgrade may remove packages".to_string(),
+                "exact approval required".to_string(),
+            ],
+        },
+
+        // ── Ubuntu ufw high-risk ──────────────────────────────────────────
+        "UfwEnable" | "UfwDisable" | "UfwAllow" | "UfwDeny" | "UfwReset" => PreviewProfile {
+            risk_level: RiskLevel::High,
+            expected_side_effects: vec![
+                "firewall rules will change".to_string(),
+                "network access may be immediately affected".to_string(),
+            ],
+            reboot_required: false,
+            rollback_available: false,
+            warnings: vec![
+                "misconfigured rules can lock out SSH access".to_string(),
+                "exact approval required".to_string(),
+            ],
+        },
+
+        // ── Ubuntu netplan high-risk ──────────────────────────────────────
+        "NetplanApply" => PreviewProfile {
+            risk_level: RiskLevel::High,
+            expected_side_effects: vec![
+                "network interfaces will be reconfigured immediately".to_string(),
+                "SSH session may be disconnected".to_string(),
+            ],
+            reboot_required: false,
+            rollback_available: false,
+            warnings: vec![
+                "can disconnect the current SSH session if config is wrong".to_string(),
+                "exact approval required".to_string(),
+            ],
+        },
+
         "ReloadService" => PreviewProfile {
             risk_level: RiskLevel::Medium,
             expected_side_effects: vec!["service config will be reloaded".to_string()],

@@ -57,13 +57,30 @@ pub fn min_role_for_action(action_name: &str) -> Option<CallerRole> {
         | "GetAuthorizedKeys"
         | "ListUsers"
         | "ListGroups"
-        | "ListJobHistory" => CallerRole::Observer,
+        | "ListJobHistory"
+        // ── Ubuntu / apt read-only ────────────────────────────────────────
+        //
+        // AptUpdate refreshes the package index — no package is changed.
+        // Classified Observer to match its RiskLevel::Low preview profile.
+        | "AptUpdate"
+        | "AptSearch"
+        | "AptListInstalled"
+        | "AptShow"
+        // ── Ubuntu / snap read-only ───────────────────────────────────────
+        | "SnapList"
+        | "SnapInfo"
+        // ── Ubuntu / ufw read-only ────────────────────────────────────────
+        | "UfwStatus"
+        // ── Ubuntu / distrobox read-only ──────────────────────────────────
+        | "DistroboxList"
+        // ── Ubuntu / netplan read-only ────────────────────────────────────
+        | "NetplanGetConfig" => CallerRole::Observer,
 
         // ── Medium-risk mutations (Dev) ──────────────────────────────────
         //
         // Flatpak install/remove/update, container lifecycle, service
         // control, toolbox ops, identity changes, network config,
-        // and package repo management (read-only side).
+        // package repo management, and Ubuntu-specific mutating ops.
         "InstallFlatpak"
         | "RemoveFlatpak"
         | "UpdateFlatpak"
@@ -89,7 +106,26 @@ pub fn min_role_for_action(action_name: &str) -> Option<CallerRole> {
         | "ConfigureWifi"
         | "RemovePackageRepository"
         | "EnablePackageRepository"
-        | "DisablePackageRepository" => CallerRole::Dev,
+        | "DisablePackageRepository"
+        // ── Ubuntu / apt medium-risk ──────────────────────────────────────
+        //
+        // AptAutoremove removes auto-installed leaf packages; it is a
+        // mutating operation despite its low risk level, so it requires Dev.
+        | "AptAutoremove"
+        | "AptInstall"
+        | "AptRemove"
+        | "AptPurge"
+        | "AptHold"
+        | "AptUnhold"
+        // ── Ubuntu / snap medium-risk ─────────────────────────────────────
+        | "SnapInstall"
+        | "SnapRemove"
+        | "SnapRefresh"
+        | "SnapHold"
+        | "SnapUnhold"
+        // ── Ubuntu / distrobox medium-risk ────────────────────────────────
+        | "DistroboxCreate"
+        | "DistroboxRemove" => CallerRole::Dev,
 
         // ── High-risk system mutations (Admin) ───────────────────────────
         //
@@ -125,7 +161,27 @@ pub fn min_role_for_action(action_name: &str) -> Option<CallerRole> {
         | "ConfigureFirewall"
         | "MaskService"
         | "AddPackageRepository"
-        | "SetDnsServers" => CallerRole::Admin,
+        | "SetDnsServers"
+        // ── Ubuntu / apt high-risk ────────────────────────────────────────
+        //
+        // AptUpdate: low-risk (Observer tier, listed above).
+        // AptAutoremove: low-risk (Observer tier, listed above).
+        // AptUpgrade: High — may remove packages (dist-upgrade) + service restarts.
+        | "AptUpgrade"
+        // ── Ubuntu / ufw high-risk ────────────────────────────────────────
+        //
+        // All ufw mutating ops are Admin — misconfigured firewall rules can
+        // lock out SSH access (T1562.004 Defense Evasion; NIST SC-7).
+        | "UfwEnable"
+        | "UfwDisable"
+        | "UfwAllow"
+        | "UfwDeny"
+        | "UfwReset"
+        // ── Ubuntu / netplan high-risk ────────────────────────────────────
+        //
+        // NetplanApply reconfigures network interfaces immediately and can
+        // disconnect SSH sessions (NIST SC-7; operational continuity risk).
+        | "NetplanApply" => CallerRole::Admin,
 
         _ => return None,
     };

@@ -1,19 +1,24 @@
 use sysknife_types::RiskLevel;
 
+pub mod apt;
 pub mod containers;
 pub mod deployment;
+pub mod distrobox;
 pub mod filesystem;
 pub mod flatpak;
 pub mod identity;
 pub mod layering;
 pub mod layering_ubuntu;
+pub mod netplan;
 pub mod network;
 pub mod package_repos;
 pub mod processes;
 pub mod services;
+pub mod snap;
 pub mod ssh;
 pub mod system_info;
 pub mod toolbox;
+pub mod ufw;
 pub mod users;
 pub(crate) mod validate;
 
