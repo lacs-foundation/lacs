@@ -8,8 +8,10 @@
 //! ## Timeout
 //!
 //! A full Ubuntu release upgrade typically takes 20–45 minutes. Callers
-//! MUST configure a long execution timeout (minimum 3 600 seconds / 1 hour)
-//! and inform the user that the operation requires a reboot to complete.
+//! SHOULD configure a long execution timeout (≥ 3 600 seconds / 1 hour) —
+//! this is advisory; the daemon does not enforce a minimum. Short timeouts
+//! may abort the upgrade mid-flight and leave the system in a partially-
+//! upgraded state. Inform the user a reboot is required afterward.
 //!
 //! ## Risk
 //!

@@ -1,8 +1,11 @@
 //! AppArmor profile management actions (Ubuntu / Debian).
 //!
 //! AppArmor is the default MAC (Mandatory Access Control) system on Ubuntu.
-//! These actions use the `aa-status`, `aa-enforce`, and `aa-complain` tools
-//! from the `apparmor-utils` package.
+//! These actions invoke `aa-status` (provided by the `apparmor` base package)
+//! and `aa-enforce` / `aa-complain` (provided by `apparmor-utils`, which may
+//! need a separate `apt install`). On a minimal server install the base
+//! package is present but `apparmor-utils` is not — `AppArmorEnforce` and
+//! `AppArmorComplain` will report `command not found` until it is added.
 //!
 //! ## Profile modes
 //!

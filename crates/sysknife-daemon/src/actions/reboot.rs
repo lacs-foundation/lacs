@@ -51,9 +51,18 @@ pub fn specs() -> Vec<ActionSpec> {
 ///
 /// Risk: Low. Read-only file inspection; no system changes.
 ///
-/// Exits 0 and prints the reboot sentinel if a reboot is required.
-/// Exits non-zero (silently) if no reboot is pending — the executor
-/// captures both stdout and the exit code for the shell to display.
+/// Exit-code semantics depend on which script branch fires:
+/// - **No `/var/run/reboot-required`**: echoes "No reboot required." and
+///   exits 0.
+/// - **Sentinel exists, packages file readable**: prints the sentinel
+///   contents plus `/var/run/reboot-required.pkgs`; exits 0.
+/// - **Sentinel exists but packages file is unreadable**: prints the
+///   sentinel; the inner `cat $pkgs 2>/dev/null` suppresses stderr but
+///   the script's overall exit code is the last command's status, which
+///   can be non-zero. Stdout still carries the human-readable status.
+///
+/// Callers should treat stdout as authoritative and not rely on a clean
+/// exit code as the "no reboot needed" signal.
 pub fn check_pending_reboot() -> ActionSpec {
     // `test -f` returns 1 when the file is absent; the shell fragment treats
     // that as "no reboot needed" and echoes a human-readable message instead
