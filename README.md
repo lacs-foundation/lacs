@@ -1,262 +1,255 @@
-# SysKnife — Linux Agent Control Standard
+<p align="center">
+  <a href="https://github.com/lacs-foundation/sysknife">
+    <img src="assets/logo/sysknife.svg" alt="SysKnife" width="170" height="170"/>
+  </a>
+</p>
 
-**Describe what you want in plain language. Review a typed plan with
-risk levels. Approve explicitly. Watch it execute with live output
-and automatic rollback.**
+<h1 align="center">SysKnife</h1>
 
-SysKnife never runs a shell command. Every action is a typed operation with
-a formal risk level. The AI cannot touch your system directly.
+<p align="center">
+  <em>Your sysadmin co-pilot. Plan. Approve. Audit.</em>
+</p>
 
-Every action is shown to you before it runs.
-Every execution is logged to a local SQLite audit trail.
+<p align="center">
+  <a href="https://github.com/lacs-foundation/sysknife/actions"><img src="https://img.shields.io/github/actions/workflow/status/lacs-foundation/sysknife/ci.yml?branch=main&style=flat-square&logo=github&label=CI" alt="CI"></a>
+  <a href="https://github.com/lacs-foundation/sysknife/blob/main/LICENSE"><img src="https://img.shields.io/github/license/lacs-foundation/sysknife?style=flat-square" alt="License"></a>
+  <a href="https://github.com/lacs-foundation/sysknife/stargazers"><img src="https://img.shields.io/github/stars/lacs-foundation/sysknife?style=flat-square&logo=github" alt="Stars"></a>
+  <a href="https://github.com/lacs-foundation/sysknife/issues"><img src="https://img.shields.io/github/issues/lacs-foundation/sysknife?style=flat-square" alt="Issues"></a>
+  <a href="https://github.com/lacs-foundation/sysknife/discussions"><img src="https://img.shields.io/github/discussions/lacs-foundation/sysknife?style=flat-square&label=discuss" alt="Discussions"></a>
+</p>
 
-<!-- TODO: replace with actual demo GIF once recorded on real hardware -->
-<!-- ![SysKnife demo](docs/assets/demo.gif) -->
+<p align="center">
+  <strong>Distros</strong>&nbsp;
+  <img src="https://img.shields.io/badge/Fedora%2041%2B-✓-294172?style=flat-square&logo=fedora&logoColor=white" alt="Fedora 41+">
+  <img src="https://img.shields.io/badge/Silverblue%2041%2B-✓-294172?style=flat-square&logo=fedora&logoColor=white" alt="Silverblue 41+">
+  <img src="https://img.shields.io/badge/Ubuntu%2026.04-roadmap-E95420?style=flat-square&logo=ubuntu&logoColor=white" alt="Ubuntu 26.04 roadmap">
+  <img src="https://img.shields.io/badge/Ubuntu%2024.04-roadmap-E95420?style=flat-square&logo=ubuntu&logoColor=white" alt="Ubuntu 24.04 roadmap">
+  <img src="https://img.shields.io/badge/Ubuntu%2022.04-roadmap-E95420?style=flat-square&logo=ubuntu&logoColor=white" alt="Ubuntu 22.04 roadmap">
+</p>
 
-## Try it without installing anything
+<p align="center">
+  <a href="#install">Install</a> ·
+  <a href="#how-it-works">How it works</a> ·
+  <a href="#why-not-just">Why not <em>X</em>?</a> ·
+  <a href="docs/distro-support.md">Distro matrix</a> ·
+  <a href="ROADMAP.md">Roadmap</a> ·
+  <a href="CONTRIBUTING.md">Contribute</a> ·
+  <a href="https://github.com/lacs-foundation/sysknife/discussions">Discuss</a>
+</p>
 
-```sh
-# Plan any intent — no daemon, no approval, no execution.
-export ANTHROPIC_API_KEY=sk-ant-...   # or OPENAI_API_KEY / GEMINI_API_KEY
-sysknife --dry-run "show disk usage"
-```
+<p align="center">
+  <img src="assets/demo/demo.gif" alt="SysKnife demo" width="900"/>
+</p>
 
-Works on any Linux. Prints the typed plan and exits.
+> **Describe what you want in plain language.** Review a typed plan with risk
+> levels. Approve explicitly. Watch it execute with live output and automatic
+> rollback — every action signed and audited.
 
-## Why not just use
+SysKnife never runs a shell command. Every action is a **typed operation**
+with a formal risk level. The AI cannot touch your system directly. A
+privileged daemon executes only what you approve, writes a tamper-evident
+HMAC-SHA256 audit chain, and rolls back automatically if a high-risk step
+fails.
 
-| Tool | Stars | The problem |
-|---|---|---|
-| Open Interpreter | 63k | Runs arbitrary Python/Shell. No formal risk model. No audit trail. |
-| Goose by Block | 29k | General-purpose. Ad-hoc confirmation, not typed risk levels. No sysadmin-first design. |
-| Claude Computer Use | — | Uncontrolled desktop automation, not system administration. |
-| Ansible | — | Requires YAML playbooks written in advance. Not conversational. |
-| shell-gpt / Copilot | — | Suggests raw shell commands for you to paste. You are still running raw shell. |
-| Manual commands | — | No audit trail. No rollback. One typo can be destructive. |
+---
 
-SysKnife is different: the agent proposes **typed actions** with risk levels
-and previews. You review them with full context. A privileged daemon
-handles execution with an audit trail and automatic rollback. The AI
-never touches the system directly.
+## Install
 
-## How it works
-
-```text
-sysknife-brain  →  sysknife-shell  →  sysknife-daemon
- (planner)      (approval)     (executor)
-```
-
-1. You type a natural-language request in the shell
-2. The brain proposes a plan — each step is a typed action with a risk
-   level (`Low`, `Medium`, `High`)
-3. The shell shows the plan with previews and rollback metadata
-4. You approve each step explicitly
-5. The daemon executes, streams live output, and rolls back automatically
-   if a high-risk action fails
-6. Every execution is logged to a local SQLite audit trail
-
-The brain proposes but cannot touch the system. The shell renders and
-captures approval. The daemon is the only privileged process — it
-enforces policy, executes typed actions, writes the transaction log,
-and triggers rollback when things go wrong.
-
-## Current status
-
-The core trust chain is built, tested, and wired end-to-end.
-Security hardening and multi-distro support are the active milestones.
-
-| Component | Status |
-|---|---|
-| `sysknife-brain` — LLM planner, tool loop, safety fence | complete |
-| `sysknife-daemon` — 60+ typed actions, auth, preview, transactions | complete |
-| `sysknife-daemon` — IPC dispatcher, live streaming, automatic rollback | complete |
-| `sysknife-shell` — intent, plan, approval gate, job timeline | complete |
-| daemon ↔ shell IPC (length-prefixed JSON over Unix socket) | complete |
-| systemd unit, polkit, sysusers, tmpfiles, Makefile | complete |
-| `~/.config/sysknife/config.toml` support | complete |
-| AppImage + RPM + Flatpak bundles | complete |
-| Role-to-action allowlist, structured audit log | complete |
-| Multi-distro support (apt, dnf, pacman) | roadmap |
-
-230+ tests pass across Rust and TypeScript.
-
-## Quick start
-
-**Prerequisites:** Rust stable, pnpm, [Tauri prerequisites][tauri-prereqs]
-
-[tauri-prereqs]: https://tauri.app/start/prerequisites/
+The fastest path is the npx-based setup wizard that detects your distro,
+provisions the daemon, and writes the MCP config for Claude Code / Cursor /
+any MCP-capable client.
 
 ```sh
+# detects Fedora vs Ubuntu, asks for the LLM provider, sets everything up.
+npx @sysknife/setup
+```
+
+Manual install per distro:
+
+<details>
+<summary><strong>Fedora 41+ / Silverblue 41+</strong></summary>
+
+```sh
+# Install
 git clone https://github.com/lacs-foundation/sysknife
 cd sysknife
 make build
 sudo make install
 sudo systemctl enable --now sysknife-daemon
-```
 
-Launch the shell:
+# Run a dry plan
+export OPENAI_API_KEY=sk-...        # or ANTHROPIC_API_KEY / GEMINI_API_KEY
+sysknife --dry-run "show disk usage"
+```
+</details>
+
+<details>
+<summary><strong>Ubuntu 26.04 / 24.04 / 22.04</strong> (roadmap — Phase 2)</summary>
+
+Ubuntu support is the active milestone — see
+[`ROADMAP.md`](ROADMAP.md) and
+[`docs/distro-support.md`](docs/distro-support.md). The action layer is being
+abstracted so apt, snap, flatpak, ufw, and netplan are first-class peers
+of rpm-ostree on Silverblue. The CLI / shell / MCP server already build and
+plan correctly on Ubuntu — only the privileged action set is gated.
+</details>
+
+<details>
+<summary><strong>Without installing anything (cloud-only dry run)</strong></summary>
 
 ```sh
-cd apps/sysknife-shell && pnpm install && pnpm tauri dev
-```
-
-### LLM provider
-
-SysKnife works with **Ollama** (no API key, recommended for getting started)
-or with **Anthropic**, **OpenAI**, or **Gemini**.
-
-**Ollama (recommended for privacy and offline use):**
-
-```sh
-ollama pull llama3.2
-# SysKnife auto-detects Ollama when no cloud API key is set.
-```
-
-**Anthropic:**
-
-```sh
+# Plans only. No daemon, no approval, no execution.
 export ANTHROPIC_API_KEY=sk-ant-...
+sysknife --dry-run "show disk usage and list services that ate cpu in the last hour"
+```
+</details>
+
+## How it works
+
+```
+sysknife-brain   →   sysknife-shell   →   sysknife-daemon
+  (planner)         (approval gate)        (executor)
+   talks to LLM      shows the plan,        only privileged
+   never to OS       takes y/n              process; signs
+                                            every action
 ```
 
-**Optional config file** (`~/.config/sysknife/config.toml`):
+1. You type a natural-language request.
+2. The brain proposes a plan — each step is a **typed action** with
+   a risk level (`Low` · `Medium` · `High`).
+3. The shell shows the plan with previews, side-effects, and rollback
+   metadata.
+4. You approve each step explicitly (or set `--yes` up to a risk ceiling).
+5. The daemon executes, streams live output, rolls back automatically on
+   high-risk failure.
+6. Every execution is logged to a hash-chained SQLite or Postgres audit
+   trail you can verify with `sysknife audit verify`.
+
+The brain *proposes*; only the daemon is privileged. The daemon *enforces*
+policy, executes typed actions, writes the chain, and triggers rollback.
+The trust boundary is mechanical — no shell strings cross the wire.
+
+## Why not just …?
+
+| Tool | The gap |
+|---|---|
+| **Open Interpreter** | Runs arbitrary Python/Shell. No formal risk model. No audit chain. |
+| **Goose / Continue** | General-purpose. Ad-hoc confirmation, not typed risk levels. |
+| **Claude Computer Use** | Uncontrolled desktop automation, not system administration. |
+| **Ansible** | YAML written in advance. Not conversational. No risk classification. |
+| **shell-gpt / Copilot** | Suggests raw shell commands. You still run raw shell. |
+| **Manual** | No audit trail. No rollback. One typo = lost work. |
+
+SysKnife is different by construction: typed actions, signed audit chain,
+explicit approval gate, automatic rollback for high-risk paths, polkit-mediated
+privilege boundary. The AI never holds a shell.
+
+## Status
+
+The trust chain is built, tested, and shipping. Multi-distro is the active
+milestone.
+
+| Component | State |
+|---|---|
+| `sysknife-brain` — LLM planner, tool loop, safety fence | ✅ |
+| `sysknife-daemon` — 60+ typed actions, auth, preview, transactions | ✅ |
+| Live IPC + streaming + automatic rollback | ✅ |
+| Tauri shell — intent, plan, approval gate | ✅ |
+| MCP server (Claude Code / Cursor / any MCP client) | ✅ |
+| Tamper-evident HMAC-SHA256 audit chain | ✅ |
+| RFC 5424 syslog forwarding (Splunk / Sentinel / QRadar) | ✅ |
+| Postgres backend (RDS / Cloud SQL / Neon / Supabase) | ✅ |
+| **Ubuntu LTS support (22.04 / 24.04 / 26.04)** | 🛠 active |
+| Telegram approval interface | 📋 roadmap |
+
+**860+ tests** pass across Rust and TypeScript on every commit.
+
+## Configure your LLM
+
+SysKnife works with **Ollama** (no key, recommended for privacy / offline /
+homelab) or **OpenAI**, **Anthropic**, **Gemini**, **Groq**, **DeepSeek**,
+**Mistral**, **xAI**.
 
 ```toml
+# ~/.config/sysknife/config.toml
 [llm]
-provider = "ollama"
-model    = "llama3.2"
+provider     = "ollama"          # or anthropic / openai / gemini / groq / ...
+model        = "qwen3:8b"        # provider-specific
+ollama_url   = "http://localhost:11434"
+max_turns    = 10
 
 [daemon]
 socket   = "/run/sysknife/daemon.sock"
 database = "/var/lib/sysknife/daemon.sqlite"
+
+[storage]                         # production-recommended
+backend = "postgres"
+url     = "postgres://sysknife:${PG_PASSWORD}@db.example.com/audit?sslmode=verify-full"
 ```
 
-Config file values act as defaults. Environment variables always win.
-
-| Variable | Default | Description |
-|---|---|---|
-| `SYSKNIFE_LLM_PROVIDER` | auto-detect | `anthropic`, `openai`, `gemini`, or `ollama` |
-| `ANTHROPIC_API_KEY` | — | Required when provider is `anthropic` |
-| `OPENAI_API_KEY` | — | Required when provider is `openai` |
-| `GEMINI_API_KEY` | — | Required when provider is `gemini` |
-| `SYSKNIFE_LLM_MODEL` | provider default | Override the model name |
-| `SYSKNIFE_OLLAMA_URL` | `http://localhost:11434` | Ollama base URL |
-| `SYSKNIFE_BRAIN_MAX_TURNS` | `5` | Planning turn limit (minimum 1) |
-
-## Building from source
-
-```sh
-# Clone
-git clone https://github.com/lacs-foundation/sysknife
-cd sysknife
-
-# Run all Rust tests
-cargo nextest run --workspace --locked
-
-# Run frontend tests
-cd apps/sysknife-shell && pnpm install && pnpm test && cd ../..
-```
-
-Run the full stack locally:
-
-```sh
-# Terminal 1 — daemon (privileged actions require root)
-cargo run -p sysknife-daemon
-
-# Terminal 2 — shell
-cd apps/sysknife-shell && pnpm install && pnpm tauri dev
-```
-
-See [docs/developer-guide.md](docs/developer-guide.md) for the full
-development setup including pre-commit hooks and E2E story testing.
+Env vars always win over the config file. Full reference in
+[`docs/configuration.md`](docs/configuration.md).
 
 ## MCP server
 
-SysKnife exposes an [MCP](https://modelcontextprotocol.io/) server so Claude
-Code, Claude Desktop, Cursor, and any other MCP-capable agent can invoke the
-planner directly.
-
-### Setup wizard (recommended)
+SysKnife exposes an [MCP](https://modelcontextprotocol.io/) server so any
+MCP-capable agent (Claude Code, Cursor, etc.) can plan + approve + execute
+through SysKnife's risk-gated path. Set up with one command:
 
 ```sh
-npx sysknife-setup
+npx @sysknife/setup
+# detects sysknife, asks for the daemon socket and LLM provider,
+# writes .mcp.json + the Claude Code approval hook.
 ```
 
-The wizard detects your `sysknife` binary, asks for the daemon socket and LLM
-provider, and creates `.mcp.json` plus the Claude Code approval hook. Then
-reload Claude Code with `/reload-plugins`.
-
-### Connecting to a daemon in a VM
-
-Run the daemon inside a VM and connect the MCP client on your host via
-**SSH socket tunnel** or **virtio-vsock** (KVM/QEMU only):
-
-```sh
-# SSH tunnel (any hypervisor)
-ssh -fN -L /tmp/sysknife-vm.sock:/run/sysknife/daemon.sock <user>@<vm-host>
-# → set SYSKNIFE_SOCKET=/tmp/sysknife-vm.sock in .mcp.json
-
-# virtio-vsock (faster, no SSH required)
-# → set SYSKNIFE_SOCKET=vsock://<CID>:9734 and SYSKNIFE_TOKEN=<hex>
-```
-
-See **[docs/vm-daemon-setup.md](docs/vm-daemon-setup.md)** for the full
-walkthrough — token generation, libvirt XML, and troubleshooting.
-
-### How the approval flow works
-
-The server exposes two tools: `sysknife_plan` and `sysknife_execute`. The
-calling agent passes a natural-language intent to `sysknife_plan`, presents
-the returned risk-labelled plan to the user, waits for approval, then calls
-`sysknife_execute`. The approval flow is preserved at the MCP layer.
+The MCP layer enforces the same approval contract as the CLI: agents must
+call `sysknife_plan` first, present the plan, wait for explicit human
+approval, then call `sysknife_execute`. High-risk actions are refused
+outright at the MCP boundary — they require the CLI/GUI confirmation flow.
 
 ## Roadmap
 
 See [ROADMAP.md](ROADMAP.md) for the full milestone breakdown.
 
-Upcoming highlights:
-
-- **Multi-distro** — apt (Debian/Ubuntu), dnf (Fedora Workstation), pacman (Arch)
-- **Telegram interface** — approve SysKnife plans from your phone via inline buttons
-- **`sysknife audit export`** — export execution history as JSON for analysis
-
-## Contributing
-
-Contributions are welcome. Issues tagged `good first issue` are
-well-scoped with clear acceptance criteria — a great place to start.
-
-**Areas where contributions have high impact:**
-
-- Multi-distro action families (apt / dnf / pacman)
-- Integration test hardening against a real daemon socket
-- Demo recording on real Silverblue hardware
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for workflow, branch conventions,
-and PR checklist. Open an issue before starting any substantial change.
+- 🛠 **Phase 2 — Ubuntu LTS support (22.04 / 24.04 / 26.04)** [active]
+- 📋 Telegram inline-button approvals
+- 📋 `sysknife audit export` (CEF / NDJSON for SIEM ingest)
+- 📋 Fleet plan/execute (one plan, N targets, parallel approval)
+- 📋 GUI (Tauri shell) for Wayland desktop linux
 
 ## Protocol
 
-SysKnife is the reference implementation of the
-**LACS (Linux Agent Control Standard)** protocol.
-The protocol specification — typed actions, risk classification, approval
-gates, audit requirements — is published separately and is CC0 licensed
-(public domain):
+SysKnife is the reference implementation of the **LACS (Linux Agent Control
+Standard)** protocol — typed actions, risk classification, approval gates,
+audit requirements. The spec is CC0 (public domain):
 
 → **[lacs-foundation/specification](https://github.com/lacs-foundation/specification)**
 
-Other implementations of LACS for other distributions or languages are
-explicitly encouraged.
+Other implementations for other distros and languages are explicitly
+encouraged.
+
+## Contributing
+
+We want help. **Multi-distro** is the highest-impact area to plug into right
+now — see [`docs/distro-support.md`](docs/distro-support.md) for the
+roadmap matrix and [`CONTRIBUTING.md`](CONTRIBUTING.md) for the workflow.
+
+Issues labelled
+[`good first issue`](https://github.com/lacs-foundation/sysknife/labels/good%20first%20issue)
+are scoped with clear acceptance criteria.
 
 ## Documentation
 
 - [Architecture overview](docs/architecture.md)
+- [Distro support matrix](docs/distro-support.md)
 - [Developer guide](docs/developer-guide.md)
 - [Testing guide](docs/contributing/testing.md)
-- [Contributing guide](docs/contributing/CONTRIBUTING.md)
-- [Roadmap](ROADMAP.md)
-- [ADR 0001: System boundaries](docs/adr/0001-system-boundaries.md)
-- [ADR 0002: Brain provider layer](docs/adr/0002-brain-provider-layer.md)
-- [ADR 0003: IPC wire protocol](docs/adr/0003-ipc-wire-protocol.md)
+- [VM daemon setup](docs/vm-daemon-setup.md)
 - [Security policy](SECURITY.md)
+- [Roadmap](ROADMAP.md)
+- [ADR 0001 — System boundaries](docs/adr/0001-system-boundaries.md)
+- [ADR 0002 — Brain provider layer](docs/adr/0002-brain-provider-layer.md)
+- [ADR 0003 — IPC wire protocol](docs/adr/0003-ipc-wire-protocol.md)
 
 ## License
 
@@ -264,4 +257,8 @@ MIT. See [LICENSE](LICENSE).
 
 ---
 
-Built by [Vladimir Rotariu](https://github.com/vladimirrotariu).
+<p align="center">
+  Built by <a href="https://github.com/vladimirrotariu">Vladimir Rotariu</a>.
+  ·
+  Issues, ideas, war stories — <a href="https://github.com/lacs-foundation/sysknife/discussions">come say hi</a>.
+</p>
