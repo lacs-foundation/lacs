@@ -50,5 +50,5 @@ chrono = { version = "0.4", features = ["serde"] }
 [dev-dependencies]
 sysknife-brain = { path = "../sysknife-brain" }
 serde_json = { workspace = true }
-syslog_loose = "0.21"
+syslog_loose = "0.23"
 tempfile = "3"
