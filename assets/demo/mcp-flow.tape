@@ -9,7 +9,7 @@
 
 Output "assets/demo/mcp-flow.gif"
 
-Set Theme         "Catppuccin Frappe"
+Set Theme         "Catppuccin Mocha"
 Set FontSize      18
 Set Width         1200
 Set Height        720
@@ -26,23 +26,23 @@ Enter
 Sleep 400ms
 Show
 
-# Header bar + first user turn render (≈1.1s).
-Sleep 1200ms
+# Header bar + first user turn render (≈1.6s).
+Sleep 1800ms
 
-# Hold on the assistant acknowledgement + sysknife_plan spinner.
-Sleep 1500ms
+# Hold on the assistant acknowledgement + sysknife_plan spinner (~2s spinner).
+Sleep 2800ms
 
-# Hold on the tool-result plan card so viewer can read risk pills.
-Sleep 2500ms
+# Hold on the tool-result plan card so viewer can read risk pills (6s).
+Sleep 6000ms
 
 # Assistant plan summary + approval prompt + "y" typed.
-Sleep 2000ms
+Sleep 3000ms
 
-# sysknife_execute spinner + step 1 streaming (≈3s).
-Sleep 4000ms
+# sysknife_execute spinner (~2s) + step 1 streaming (≈4.5s).
+Sleep 7000ms
 
-# Step 2 + step 3 streaming (≈3s).
-Sleep 4000ms
+# Step 2 + step 3 streaming (≈5s each with 1.5s post-step hold).
+Sleep 7000ms
 
-# Hold on the final summary + audit hash.
-Sleep 1500ms
+# Hold on the final summary + audit hash (3s).
+Sleep 3000ms

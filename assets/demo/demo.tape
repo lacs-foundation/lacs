@@ -10,7 +10,7 @@
 
 Output "assets/demo/demo.gif"
 
-Set Theme         "Catppuccin Frappe"
+Set Theme         "Catppuccin Mocha"
 Set FontSize      24
 Set Width         1200
 Set Height        720
@@ -23,14 +23,14 @@ Sleep 400ms
 Type "bash assets/demo/demo-mock.sh"
 Enter
 
-# Spinner (≈1.4s) + plan card render.
-Sleep 2200ms
+# Prompt render + spinner (~2s) + plan card render.
+Sleep 3500ms
 
-# Hold on the plan card so the reader can read risk pills.
-Sleep 4500ms
+# Hold on the plan card so the reader can read risk pills (6s).
+Sleep 6000ms
 
-# Mock streams steps 1, 2, 3 — runtime ≈11s.
-Sleep 12s
+# Mock streams steps 1, 2, 3 — runtime ≈17s (slower per-line + 1.5s holds).
+Sleep 18s
 
-# Hold on the final ✓ + audit-hash line.
-Sleep 2s
+# Hold on the final ✓ + audit-hash line (3s).
+Sleep 3000ms
