@@ -1,7 +1,7 @@
 use crate::actions::{
-    apt, containers, deployment, distrobox, filesystem, flatpak, grub, identity, layering, netplan,
-    network, package_repos, ppa, processes, reboot, services, snap, ssh, system_info, toolbox, ufw,
-    users,
+    apparmor, apt, cloudinit, containers, deployment, distrobox, fail2ban, filesystem, flatpak,
+    grub, identity, layering, netplan, network, package_repos, ppa, processes, reboot, resolvectl,
+    services, snap, ssh, system_info, toolbox, ufw, users,
     validate::{
         validated_group, validated_hostname, validated_locale, validated_ppa_name,
         validated_safe_arg, validated_timezone, validated_unit_name, validated_username,
@@ -626,6 +626,91 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
         // ── netplan ──────────────────────────────────────────────────────
         "NetplanGetConfig" => Ok(netplan::netplan_get_config()),
         "NetplanApply" => Ok(netplan::netplan_apply()),
+
+        // ── resolvectl (cross-distro / systemd-resolved) ──────────────────
+        "ResolvectlStatus" => Ok(resolvectl::resolvectl_status()),
+        "ResolvectlSetDns" => {
+            let interface = validated_safe_arg(require_str(params, "interface")?, "interface")?;
+            let servers: Vec<String> = params
+                .get("servers")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str())
+                        .map(String::from)
+                        .collect()
+                })
+                .unwrap_or_default();
+            if servers.is_empty() {
+                return Err(ExecutorError::MissingParam("servers"));
+            }
+            let server_refs: Vec<&str> = servers.iter().map(String::as_str).collect();
+            Ok(resolvectl::resolvectl_set_dns(&interface, &server_refs))
+        }
+
+        // ── apparmor ──────────────────────────────────────────────────────
+        "AppArmorStatus" => Ok(apparmor::apparmor_status()),
+        "AppArmorEnforce" => {
+            let profile_path =
+                validated_safe_arg(require_str(params, "profile_path")?, "profile_path")?;
+            Ok(apparmor::apparmor_enforce(&profile_path))
+        }
+        "AppArmorComplain" => {
+            let profile_path =
+                validated_safe_arg(require_str(params, "profile_path")?, "profile_path")?;
+            Ok(apparmor::apparmor_complain(&profile_path))
+        }
+
+        // ── cloud-init ────────────────────────────────────────────────────
+        "CloudInitStatus" => Ok(cloudinit::cloud_init_status()),
+
+        // ── Ubuntu Flatpak ─────────────────────────────────────────────────
+        "UbuntuInstallFlatpak" => {
+            let username = validated_username(resolve_username(params)?, "username")?;
+            let app_id = validated_safe_arg(require_str(params, "app_id")?, "app_id")?;
+            let remote = validated_safe_arg(require_str(params, "remote")?, "remote")?;
+            Ok(flatpak::ubuntu_install_flatpak(&username, &app_id, &remote))
+        }
+        "UbuntuRemoveFlatpak" => {
+            let username = validated_username(resolve_username(params)?, "username")?;
+            let app_id = validated_safe_arg(require_str(params, "app_id")?, "app_id")?;
+            Ok(flatpak::ubuntu_remove_flatpak(&username, &app_id))
+        }
+        "UbuntuUpdateFlatpak" => {
+            let username = validated_username(resolve_username(params)?, "username")?;
+            let app_id = params
+                .get("app_id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| validated_safe_arg(s, "app_id"))
+                .transpose()?;
+            Ok(flatpak::ubuntu_update_flatpak(&username, app_id.as_deref()))
+        }
+        "UbuntuListFlatpaks" => {
+            let username = validated_username(resolve_username(params)?, "username")?;
+            Ok(flatpak::ubuntu_list_flatpaks(&username))
+        }
+
+        // ── fail2ban ──────────────────────────────────────────────────────
+        "Fail2banStatus" => {
+            let jail = params
+                .get("jail")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| validated_safe_arg(s, "jail"))
+                .transpose()?;
+            Ok(fail2ban::fail2ban_status(jail.as_deref()))
+        }
+        "Fail2banBanIp" => {
+            let jail = validated_safe_arg(require_str(params, "jail")?, "jail")?;
+            let ip = require_str(params, "ip")?;
+            fail2ban::fail2ban_ban_ip(&jail, ip).map_err(|_| ExecutorError::InvalidParam("ip"))
+        }
+        "Fail2banUnbanIp" => {
+            let jail = validated_safe_arg(require_str(params, "jail")?, "jail")?;
+            let ip = require_str(params, "ip")?;
+            fail2ban::fail2ban_unban_ip(&jail, ip).map_err(|_| ExecutorError::InvalidParam("ip"))
+        }
 
         _ => Err(ExecutorError::UnknownAction(action_name.to_string())),
     }

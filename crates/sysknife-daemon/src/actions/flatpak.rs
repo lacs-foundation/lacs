@@ -12,6 +12,10 @@ pub fn specs() -> Vec<ActionSpec> {
         remove_flatpak_remote("testuser", "remote"),
         get_flatpak_app_info("testuser", "app-id"),
         update_flatpak("testuser", Some("com.example.App")),
+        ubuntu_install_flatpak("testuser", "app-id", "flathub"),
+        ubuntu_remove_flatpak("testuser", "app-id"),
+        ubuntu_update_flatpak("testuser", Some("com.example.App")),
+        ubuntu_list_flatpaks("testuser"),
     ]
 }
 
@@ -147,6 +151,87 @@ pub fn get_flatpak_app_info(username: &str, app_id: &str) -> ActionSpec {
     ActionSpec {
         action_name: "GetFlatpakAppInfo",
         mechanism: flatpak_as(username, &["info", "--user", app_id]),
+        risk_level: RiskLevel::Low,
+        reboot_required: false,
+        rollback_available: false,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Ubuntu-specific Flatpak actions
+//
+// On Ubuntu, Flatpak is not installed by default (unlike Fedora Atomic where
+// it ships with the base image). These Ubuntu-routed actions use the same
+// argv construction as their Fedora counterparts — `flatpak_as` is reused
+// verbatim — but carry distinct action names so the daemon's policy layer
+// and the brain's routing can treat them separately. No code is duplicated:
+// every Ubuntu wrapper delegates directly to the shared `flatpak_as` helper.
+// ---------------------------------------------------------------------------
+
+/// Install a Flatpak app on Ubuntu (`sudo runuser -u <user> -- flatpak install --user -y <remote> <app>`).
+///
+/// Identical argv to `InstallFlatpak` on Fedora. Distinct action name for
+/// Ubuntu-specific routing in the daemon and LLM prompt.
+///
+/// Risk: Medium. Installs a sandboxed application from a Flatpak remote.
+pub fn ubuntu_install_flatpak(username: &str, app_id: &str, remote: &str) -> ActionSpec {
+    ActionSpec {
+        action_name: "UbuntuInstallFlatpak",
+        mechanism: flatpak_as(username, &["install", "--user", "-y", remote, app_id]),
+        risk_level: RiskLevel::Medium,
+        reboot_required: false,
+        rollback_available: false,
+    }
+}
+
+/// Remove a Flatpak app on Ubuntu (`sudo runuser -u <user> -- flatpak uninstall --user -y <app>`).
+///
+/// Risk: Medium. Uninstalls a sandboxed Flatpak application.
+pub fn ubuntu_remove_flatpak(username: &str, app_id: &str) -> ActionSpec {
+    ActionSpec {
+        action_name: "UbuntuRemoveFlatpak",
+        mechanism: flatpak_as(username, &["uninstall", "--user", "-y", app_id]),
+        risk_level: RiskLevel::Medium,
+        reboot_required: false,
+        rollback_available: false,
+    }
+}
+
+/// Update Flatpak app(s) on Ubuntu.
+///
+/// When `app_id` is `Some`, updates only that application; when `None`, updates
+/// all installed Flatpak apps for the user.
+///
+/// Risk: Medium. May pull new versions of installed apps.
+pub fn ubuntu_update_flatpak(username: &str, app_id: Option<&str>) -> ActionSpec {
+    let mechanism = match app_id {
+        Some(id) => flatpak_as(username, &["update", "--user", "-y", id]),
+        None => flatpak_as(username, &["update", "--user", "-y"]),
+    };
+    ActionSpec {
+        action_name: "UbuntuUpdateFlatpak",
+        mechanism,
+        risk_level: RiskLevel::Medium,
+        reboot_required: false,
+        rollback_available: false,
+    }
+}
+
+/// List installed Flatpak apps on Ubuntu.
+///
+/// Risk: Low. Read-only enumeration of the user's Flatpak installation.
+pub fn ubuntu_list_flatpaks(username: &str) -> ActionSpec {
+    ActionSpec {
+        action_name: "UbuntuListFlatpaks",
+        mechanism: flatpak_as(
+            username,
+            &[
+                "list",
+                "--user",
+                "--app",
+                "--columns=application,name,version,origin",
+            ],
+        ),
         risk_level: RiskLevel::Low,
         reboot_required: false,
         rollback_available: false,
