@@ -5,6 +5,45 @@ use std::convert::TryFrom;
 use sysknife_proto::sysknife::v1 as proto;
 
 // ---------------------------------------------------------------------------
+// DistroHint — planner-facing snapshot of the running distro
+// ---------------------------------------------------------------------------
+
+/// Planner-facing distro snapshot injected into the system prompt.
+///
+/// This is a deliberately lightweight type: it captures only what the planner
+/// needs to pick the right action family (`family`) and to produce accurate
+/// human-readable output (`version`).  Heavy detection logic and the full
+/// `DistroId` enum stay in `sysknife-core`; the CLI converts `DistroId` →
+/// `DistroHint` at startup so the brain never depends on `sysknife-core`.
+///
+/// # Design rationale
+///
+/// Moving `DistroId` to `sysknife-types` would add proto-bridge boilerplate
+/// and force every crate that imports types to compile the detection logic.
+/// A thin snapshot type is smaller-diff and still gives the planner everything
+/// it needs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DistroHint {
+    /// Broad distro family: `"fedora"`, `"debian"`, or `"other"`.
+    ///
+    /// Use `DISTRO_FAMILY_FEDORA`, `DISTRO_FAMILY_DEBIAN`, and
+    /// `DISTRO_FAMILY_OTHER` for comparison to avoid magic strings.
+    pub family: &'static str,
+    /// Human-readable version string, e.g. `"Fedora 41"`, `"Ubuntu 24.04"`.
+    /// `None` when the version could not be determined.
+    pub version: Option<String>,
+}
+
+/// Family label for Fedora-family distros (Fedora, FedoraSilverblue, etc.).
+pub const DISTRO_FAMILY_FEDORA: &str = "fedora";
+
+/// Family label for Debian-family distros (Ubuntu, Debian, etc.).
+pub const DISTRO_FAMILY_DEBIAN: &str = "debian";
+
+/// Family label for distros that do not fit into a known family.
+pub const DISTRO_FAMILY_OTHER: &str = "other";
+
+// ---------------------------------------------------------------------------
 // ActionName — validated action catalogue primitive
 // ---------------------------------------------------------------------------
 
