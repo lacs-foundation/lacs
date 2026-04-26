@@ -115,6 +115,86 @@ jobs:
           fi
           cd packages/setup && npm publish --access public
 
+  publish-github-packages:
+    name: Publish @lacs-foundation/sysknife-setup to GitHub Packages
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@lacs-foundation'
+
+      - name: Smoke-test the package
+        run: node packages/setup/index.js --help
+
+      - name: Rewrite package name + publishConfig
+        # Mutates the on-disk package.json only for this job's workspace.
+        # The original file in the repo is never committed with these changes.
+        run: |
+          cd packages/setup
+          node -e "
+            const fs = require('fs');
+            const p = JSON.parse(fs.readFileSync('package.json','utf8'));
+            p.name = '@lacs-foundation/sysknife-setup';
+            p.publishConfig = { registry: 'https://npm.pkg.github.com' };
+            fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
+          "
+
+      - name: Publish to GitHub Packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd packages/setup && npm publish --access public
+
+  publish-crates:
+    name: Publish to crates.io
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y cmake
+
+      - name: Publish in dependency order (or skip if token absent)
+        # CARGO_REGISTRY_TOKEN must be set as a repository secret.
+        # If absent, log a notice and exit 0 so the release still succeeds.
+        # Publish order follows the internal dependency graph:
+        #   types → proto, core → brain → daemon → daemon-test → cli
+        # --no-verify skips the redundant pre-publish rebuild; the build job
+        # already verified the workspace compiles cleanly.
+        # sleep 30 lets crates.io index each crate before its dependents publish.
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
+            echo "::notice title=crates.io publish skipped::CARGO_REGISTRY_TOKEN secret is not set."
+            exit 0
+          fi
+          for crate in sysknife-types sysknife-proto sysknife-core sysknife-brain \
+                       sysknife-daemon sysknife-daemon-test; do
+            cargo publish -p "$crate" --token "$CARGO_REGISTRY_TOKEN" --no-verify
+            sleep 30
+          done
+          cargo publish -p sysknife-cli --token "$CARGO_REGISTRY_TOKEN" --no-verify
+
   release:
     name: Create GitHub release
     needs: build

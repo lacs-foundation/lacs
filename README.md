@@ -285,6 +285,15 @@ are scoped with clear acceptance criteria.
 - [ADR 0002 — Brain provider layer](docs/adr/0002-brain-provider-layer.md)
 - [ADR 0003 — IPC wire protocol](docs/adr/0003-ipc-wire-protocol.md)
 
+## Where to find SysKnife
+
+| Channel | Install | Notes |
+|---------|---------|-------|
+| **npm** | `npx sysknife-setup` | [npmjs.com/package/sysknife-setup](https://www.npmjs.com/package/sysknife-setup) — zero-install setup wizard |
+| **GitHub Packages** | `npm install @lacs-foundation/sysknife-setup` | Requires `.npmrc` pointing at `https://npm.pkg.github.com`; provides redundancy if npm is unavailable |
+| **crates.io** | `cargo install sysknife-cli` / `cargo install sysknife-daemon` | Available once `CARGO_REGISTRY_TOKEN` is configured — see [docs/release.md](docs/release.md) |
+| **GitHub Releases** | Download from [Releases](https://github.com/lacs-foundation/sysknife/releases) | Prebuilt x86_64 + aarch64 binaries with SHA-256 checksums on every tag |
+
 ## License
 
 [AGPL-3.0-only](LICENSE). Free to use, modify, and distribute under the terms
