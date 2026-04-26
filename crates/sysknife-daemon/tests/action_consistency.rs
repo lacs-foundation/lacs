@@ -12,8 +12,8 @@ use std::collections::BTreeSet;
 use serde_json::json;
 use sysknife_brain::planning_tools::propose_plan::KNOWN_ACTIONS;
 use sysknife_daemon::actions::{
-    containers, deployment, filesystem, flatpak, identity, layering, network, package_repos,
-    processes, services, ssh, system_info, toolbox, users,
+    apt, containers, deployment, distrobox, filesystem, flatpak, identity, layering, netplan,
+    network, package_repos, processes, services, snap, ssh, system_info, toolbox, ufw, users,
 };
 use sysknife_daemon::executor::build_action_spec;
 use sysknife_daemon::policy::min_role_for_action;
@@ -69,6 +69,22 @@ fn all_spec_action_names() -> BTreeSet<&'static str> {
         names.insert(spec.action_name);
     }
     for spec in users::specs() {
+        names.insert(spec.action_name);
+    }
+    // Ubuntu action families
+    for spec in apt::specs() {
+        names.insert(spec.action_name);
+    }
+    for spec in snap::specs() {
+        names.insert(spec.action_name);
+    }
+    for spec in ufw::specs() {
+        names.insert(spec.action_name);
+    }
+    for spec in distrobox::specs() {
+        names.insert(spec.action_name);
+    }
+    for spec in netplan::specs() {
         names.insert(spec.action_name);
     }
     names

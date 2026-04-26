@@ -1,6 +1,6 @@
 use crate::actions::{
-    containers, deployment, filesystem, flatpak, identity, layering, network, package_repos,
-    processes, services, ssh, system_info, toolbox, users,
+    apt, containers, deployment, distrobox, filesystem, flatpak, identity, layering, netplan,
+    network, package_repos, processes, services, snap, ssh, system_info, toolbox, ufw, users,
     validate::{
         validated_group, validated_hostname, validated_locale, validated_safe_arg,
         validated_timezone, validated_unit_name, validated_username,
@@ -456,6 +456,114 @@ pub fn build_action_spec(action_name: &str, params: &Value) -> Result<ActionSpec
             let public_key = validated_public_key(require_str(params, "public_key")?)?;
             Ok(ssh::remove_authorized_key(&username, &public_key))
         }
+
+        // ── apt ──────────────────────────────────────────────────────────
+        "AptUpdate" => Ok(apt::apt_update()),
+        "AptUpgrade" => Ok(apt::apt_upgrade()),
+        "AptInstall" => {
+            let package = validated_safe_arg(require_str(params, "package")?, "package")?;
+            Ok(apt::apt_install(&package))
+        }
+        "AptRemove" => {
+            let package = validated_safe_arg(require_str(params, "package")?, "package")?;
+            Ok(apt::apt_remove(&package))
+        }
+        "AptPurge" => {
+            let package = validated_safe_arg(require_str(params, "package")?, "package")?;
+            Ok(apt::apt_purge(&package))
+        }
+        "AptAutoremove" => Ok(apt::apt_autoremove()),
+        "AptHold" => {
+            let package = validated_safe_arg(require_str(params, "package")?, "package")?;
+            Ok(apt::apt_hold(&package))
+        }
+        "AptUnhold" => {
+            let package = validated_safe_arg(require_str(params, "package")?, "package")?;
+            Ok(apt::apt_unhold(&package))
+        }
+        "AptSearch" => {
+            let term = validated_safe_arg(require_str(params, "term")?, "term")?;
+            Ok(apt::apt_search(&term))
+        }
+        "AptListInstalled" => Ok(apt::apt_list_installed()),
+        "AptShow" => {
+            let package = validated_safe_arg(require_str(params, "package")?, "package")?;
+            Ok(apt::apt_show(&package))
+        }
+
+        // ── snap ─────────────────────────────────────────────────────────
+        "SnapInstall" => {
+            let name = validated_safe_arg(require_str(params, "name")?, "name")?;
+            let channel = params
+                .get("channel")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| validated_safe_arg(s, "channel"))
+                .transpose()?;
+            let auto_update = params
+                .get("auto_update")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            Ok(snap::snap_install(&name, channel.as_deref(), auto_update))
+        }
+        "SnapRemove" => {
+            let name = validated_safe_arg(require_str(params, "name")?, "name")?;
+            Ok(snap::snap_remove(&name))
+        }
+        "SnapRefresh" => {
+            let name = params
+                .get("name")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| validated_safe_arg(s, "name"))
+                .transpose()?;
+            Ok(snap::snap_refresh(name.as_deref()))
+        }
+        "SnapHold" => {
+            let name = validated_safe_arg(require_str(params, "name")?, "name")?;
+            Ok(snap::snap_hold(&name))
+        }
+        "SnapUnhold" => {
+            let name = validated_safe_arg(require_str(params, "name")?, "name")?;
+            Ok(snap::snap_unhold(&name))
+        }
+        "SnapList" => Ok(snap::snap_list()),
+        "SnapInfo" => {
+            let name = validated_safe_arg(require_str(params, "name")?, "name")?;
+            Ok(snap::snap_info(&name))
+        }
+
+        // ── ufw ──────────────────────────────────────────────────────────
+        "UfwEnable" => Ok(ufw::ufw_enable()),
+        "UfwDisable" => Ok(ufw::ufw_disable()),
+        "UfwAllow" => {
+            let port_or_service =
+                validated_safe_arg(require_str(params, "port_or_service")?, "port_or_service")?;
+            Ok(ufw::ufw_allow(&port_or_service))
+        }
+        "UfwDeny" => {
+            let port_or_service =
+                validated_safe_arg(require_str(params, "port_or_service")?, "port_or_service")?;
+            Ok(ufw::ufw_deny(&port_or_service))
+        }
+        "UfwReset" => Ok(ufw::ufw_reset()),
+        "UfwStatus" => Ok(ufw::ufw_status()),
+
+        // ── distrobox ────────────────────────────────────────────────────
+        "DistroboxList" => Ok(distrobox::distrobox_list()),
+        "DistroboxCreate" => {
+            let name = validated_safe_arg(require_str(params, "name")?, "name")?;
+            let image = validated_safe_arg(require_str(params, "image")?, "image")?;
+            Ok(distrobox::distrobox_create(&name, &image))
+        }
+        "DistroboxRemove" => {
+            let name = validated_safe_arg(require_str(params, "name")?, "name")?;
+            Ok(distrobox::distrobox_remove(&name))
+        }
+
+        // ── netplan ──────────────────────────────────────────────────────
+        "NetplanGetConfig" => Ok(netplan::netplan_get_config()),
+        "NetplanApply" => Ok(netplan::netplan_apply()),
 
         _ => Err(ExecutorError::UnknownAction(action_name.to_string())),
     }

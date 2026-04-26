@@ -103,6 +103,40 @@ pub const KNOWN_ACTION_NAMES: &[&str] = &[
     "AddAuthorizedKey",
     "RemoveAuthorizedKey",
     "ListJobHistory",
+    // Ubuntu / apt
+    "AptUpdate",
+    "AptUpgrade",
+    "AptInstall",
+    "AptRemove",
+    "AptPurge",
+    "AptAutoremove",
+    "AptHold",
+    "AptUnhold",
+    "AptSearch",
+    "AptListInstalled",
+    "AptShow",
+    // Ubuntu / snap
+    "SnapInstall",
+    "SnapRemove",
+    "SnapRefresh",
+    "SnapHold",
+    "SnapUnhold",
+    "SnapList",
+    "SnapInfo",
+    // Ubuntu / ufw
+    "UfwEnable",
+    "UfwDisable",
+    "UfwAllow",
+    "UfwDeny",
+    "UfwReset",
+    "UfwStatus",
+    // Ubuntu / distrobox
+    "DistroboxList",
+    "DistroboxCreate",
+    "DistroboxRemove",
+    // Ubuntu / netplan
+    "NetplanGetConfig",
+    "NetplanApply",
 ];
 
 /// A validated action name from the approved SysKnife catalogue.
