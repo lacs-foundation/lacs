@@ -20,6 +20,8 @@
 #   - All steps are low risk
 set -euo pipefail
 
+DISTRO_FAMILY="${SYSKNIFE_DISTRO_FAMILY:-$(. /etc/os-release && echo "${ID_LIKE:-$ID}" | tr ' ' '\n' | head -1)}"
+
 INTENT="My system has been acting weird since yesterday's rpm-ostree update — show me the full deployment history, what packages I've layered on top of the base, whether any systemd services are currently in a failed state, and how much disk space is left"
 
 echo "=== Story 11: Post-update diagnostic (4-action compound) ==="
@@ -34,18 +36,23 @@ echo "$PLAN" | jq .
 ACTIONS=$(echo "$PLAN" | jq -r '.plan.steps[].action')
 
 HAS_DEPLOY=$(echo "$ACTIONS" | grep -cE "ListDeployments|GetDeploymentHistory" || true)
-HAS_LAYERED=$(echo "$ACTIONS" | grep -c "GetLayeredPackages" || true)
+HAS_LAYERED=$(echo "$ACTIONS" | grep -cE "GetLayeredPackages|AptListInstalled" || true)
 HAS_SERVICES=$(echo "$ACTIONS" | grep -c "ListServices" || true)
 HAS_DISK=$(echo "$ACTIONS" | grep -c "GetDiskUsage" || true)
 
-if [[ "$HAS_DEPLOY" -lt 1 ]]; then
-  echo "FAIL: expected ListDeployments or GetDeploymentHistory"
-  echo "Actions: $ACTIONS"
-  exit 1
-fi
+# Deployment history is Fedora/OSTree-specific — only assert on Fedora-family hosts.
+case "$DISTRO_FAMILY" in
+  fedora|rhel|centos)
+    if [[ "$HAS_DEPLOY" -lt 1 ]]; then
+      echo "FAIL: expected ListDeployments or GetDeploymentHistory"
+      echo "Actions: $ACTIONS"
+      exit 1
+    fi
+    ;;
+esac
 
 if [[ "$HAS_LAYERED" -lt 1 ]]; then
-  echo "FAIL: expected GetLayeredPackages"
+  echo "FAIL: expected GetLayeredPackages or AptListInstalled"
   echo "Actions: $ACTIONS"
   exit 1
 fi

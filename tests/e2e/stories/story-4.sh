@@ -23,12 +23,12 @@ if [[ "$STEP_COUNT" == "0" ]]; then
   exit 1
 fi
 
-# 2. Contains GetFirewallState.
-HAS_FW=$(echo "$PLAN" | jq '[.plan.steps[] | select(.action == "GetFirewallState")] | length')
+# 2. Contains GetFirewallState (Fedora) or UfwStatus (Ubuntu).
+HAS_FW=$(echo "$PLAN" | jq '[.plan.steps[] | select(.action == "GetFirewallState" or .action == "UfwStatus")] | length')
 if [[ "$HAS_FW" == "0" ]]; then
-  echo "FAIL: no GetFirewallState step found"
+  echo "FAIL: no GetFirewallState or UfwStatus step found"
   echo "Actions present: $(echo "$PLAN" | jq -r '.plan.steps[].action')"
   exit 1
 fi
 
-echo "PASS: Story 4 — plan includes GetFirewallState"
+echo "PASS: Story 4 — plan includes GetFirewallState or UfwStatus"

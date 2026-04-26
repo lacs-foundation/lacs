@@ -25,16 +25,17 @@ echo "$PLAN" | jq .
 
 # --- Assertions ---
 
-# Find the install step (could be InstallPackages or AddLayeredPackage).
+# Find the install step (could be InstallPackages, AddLayeredPackage, or AptInstall).
 INSTALL_STEP=$(echo "$PLAN" | jq '
   .plan.steps[] | select(
     .action == "InstallPackages" or
-    .action == "AddLayeredPackage"
+    .action == "AddLayeredPackage" or
+    .action == "AptInstall"
   )
 ')
 
 if [[ -z "$INSTALL_STEP" || "$INSTALL_STEP" == "null" ]]; then
-  echo "FAIL: no InstallPackages or AddLayeredPackage step found"
+  echo "FAIL: no InstallPackages, AddLayeredPackage, or AptInstall step found"
   echo "Actions: $(echo "$PLAN" | jq -r '.plan.steps[].action')"
   exit 1
 fi

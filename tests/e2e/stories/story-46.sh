@@ -30,9 +30,9 @@ if echo "$ACTIONS" | grep -q "UpdateSystem"; then
   exit 1
 fi
 
-STEP=$(echo "$PLAN" | jq '.plan.steps[] | select(.action == "GetPendingUpdates")')
+STEP=$(echo "$PLAN" | jq '.plan.steps[] | select(.action == "GetPendingUpdates" or .action == "AptUpdate")')
 if [[ -z "$STEP" || "$STEP" == "null" ]]; then
-  echo "FAIL: no GetPendingUpdates step found"
+  echo "FAIL: no GetPendingUpdates (Fedora) or AptUpdate (Ubuntu) step found"
   echo "Actions: $ACTIONS"
   exit 1
 fi
@@ -43,4 +43,4 @@ if [[ "$RISK" != "low" ]]; then
   exit 1
 fi
 
-echo "PASS: Story 46 — plan has GetPendingUpdates with low risk, not UpdateSystem"
+echo "PASS: Story 46 — plan has GetPendingUpdates or AptUpdate with low risk, not UpdateSystem"

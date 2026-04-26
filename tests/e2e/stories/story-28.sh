@@ -11,6 +11,15 @@
 # isolates the kernel-args action, which has zero coverage in stories 1-20.
 set -euo pipefail
 
+DISTRO_FAMILY="${SYSKNIFE_DISTRO_FAMILY:-$(. /etc/os-release && echo "${ID_LIKE:-$ID}" | tr ' ' '\n' | head -1)}"
+case "$DISTRO_FAMILY" in
+  fedora|rhel|centos) ;;
+  *)
+    echo "SKIP: $0 requires a Fedora-family host (got: $DISTRO_FAMILY)"
+    exit 0
+    ;;
+esac
+
 INTENT="show me the current kernel boot arguments and list all my deployments"
 
 echo "=== Story 28: GetKernelArguments + ListDeployments compound ==="

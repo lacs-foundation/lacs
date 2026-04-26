@@ -32,16 +32,16 @@ echo "$PLAN" | jq .
 
 ACTIONS=$(echo "$PLAN" | jq -r '.plan.steps[].action')
 
-CFW_STEP=$(echo "$PLAN" | jq '.plan.steps[] | select(.action == "ConfigureFirewall")')
+CFW_STEP=$(echo "$PLAN" | jq '.plan.steps[] | select(.action == "ConfigureFirewall" or .action == "UfwAllow")')
 if [[ -z "$CFW_STEP" || "$CFW_STEP" == "null" ]]; then
-  echo "FAIL: no ConfigureFirewall step found (mutation required, not a read)"
+  echo "FAIL: no ConfigureFirewall (Fedora) or UfwAllow (Ubuntu) step found (mutation required, not a read)"
   echo "Actions: $ACTIONS"
   exit 1
 fi
 
 PARAMS_STR=$(echo "$CFW_STEP" | jq -c '.params')
 if ! echo "$PARAMS_STR" | grep -q "8080"; then
-  echo "FAIL: port 8080 not found in ConfigureFirewall params"
+  echo "FAIL: port 8080 not found in firewall step params"
   echo "Full params: $PARAMS_STR"
   exit 1
 fi
@@ -52,5 +52,5 @@ if [[ "$RISK" != "medium" ]]; then
   exit 1
 fi
 
-echo "PASS: Story 35 — plan has ConfigureFirewall with port 8080, medium risk"
+echo "PASS: Story 35 — plan has ConfigureFirewall or UfwAllow with port 8080, medium risk"
 echo "  Params: $PARAMS_STR"

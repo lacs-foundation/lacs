@@ -31,8 +31,8 @@ if ! echo "$ACTIONS" | grep -q "GetNetworkStatus"; then
   exit 1
 fi
 
-if ! echo "$ACTIONS" | grep -q "GetFirewallState"; then
-  echo "FAIL: GetFirewallState not found in plan — query errors must not drop requested actions"
+if ! echo "$ACTIONS" | grep -qE "GetFirewallState|UfwStatus"; then
+  echo "FAIL: GetFirewallState (Fedora) or UfwStatus (Ubuntu) not found in plan — query errors must not drop requested actions"
   echo "Actions: $ACTIONS"
   exit 1
 fi
@@ -45,4 +45,4 @@ while IFS= read -r risk; do
   fi
 done <<< "$RISKS"
 
-echo "PASS: Story 16 — plan has GetNetworkStatus + GetFirewallState, all low risk"
+echo "PASS: Story 16 — plan has GetNetworkStatus + firewall action, all low risk"
