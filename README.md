@@ -72,8 +72,9 @@ What this does:
 
 1. Detects the sysknife binary (or tells you how to build it).
 2. Asks for your LLM provider + key (OpenAI / Anthropic / Gemini / Ollama).
-3. Asks which AI clients to wire up — all three checked by default.
-4. Writes the per-client MCP config so the next chat session sees
+3. Asks which AI integration to wire up, or lets you pick `--claude`,
+   `--cursor`, `--codex`, or `--all` directly.
+4. Writes the integration-specific MCP config so the next chat session sees
    `sysknife_plan` and `sysknife_execute` as first-class tools.
 
 | Client          | Files written                                        |

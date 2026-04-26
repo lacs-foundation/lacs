@@ -76,11 +76,14 @@ ssh -fN \
 
 ### Configure and connect (SSH tunnel)
 
-Run the setup wizard on the host:
+Run the setup wizard on the host and choose the integration you want:
 
 ```sh
 npx sysknife-setup
 ```
+
+Use `--claude`, `--cursor`, `--codex`, or `--all` if you want a direct
+path without the picker.
 
 When prompted for the daemon socket, enter `/tmp/sysknife-vm.sock`.
 
@@ -193,11 +196,14 @@ admin:<paste-token-here>
 
 ### Configure and connect (vsock)
 
-Run the setup wizard on the host:
+Run the setup wizard on the host and choose the integration you want:
 
 ```sh
 npx sysknife-setup
 ```
+
+Use `--claude`, `--cursor`, `--codex`, or `--all` if you want a direct
+path without the picker.
 
 When prompted for the daemon socket, enter `vsock://<CID>:9734` — for example
 `vsock://10:9734`. The wizard detects the `vsock://` prefix and prompts for

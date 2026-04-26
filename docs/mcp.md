@@ -111,8 +111,16 @@ npx sysknife-setup
 ```
 
 The wizard detects your installed `sysknife` binary, asks for the daemon
-socket and LLM provider, and writes `.mcp.json` plus the Claude Code
-approval hook. No manual file editing needed.
+socket and LLM provider, and then asks which integration to configure.
+No manual file editing needed.
+
+If you already know the target, skip the picker:
+
+```sh
+npx sysknife-setup --claude
+npx sysknife-setup --cursor
+npx sysknife-setup --codex
+```
 
 `.mcp.json` is gitignored — it contains secrets and local paths.
 

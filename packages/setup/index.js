@@ -21,6 +21,8 @@
 //     AGENTS.md                                                  project instructions
 //
 // Single VM:    npx sysknife-setup
+// Cursor only:  npx sysknife-setup --cursor
+// Codex only:   npx sysknife-setup --codex
 // Multiple VMs: the wizard prompts "Add another VM?" and collects each target.
 //   Each target becomes a separate server entry so the AI client sees
 //   independent, named tool sets (sysknife-web, sysknife-db, …).
@@ -98,6 +100,36 @@ function ask(rl, lineQueue, question, defaultVal) {
   });
 }
 
+async function askIntegration(rl, lineQueue) {
+  console.log();
+  hr();
+  console.log(`  ${B}Integration to configure${X}`);
+  console.log();
+  console.log(`  1) Claude Code`);
+  console.log(`  2) Cursor`);
+  console.log(`  3) Codex CLI`);
+  console.log(`  4) All three`);
+  console.log();
+
+  while (true) {
+    const answer = (await ask(rl, lineQueue, 'Choose integration', '')).trim().toLowerCase();
+    if (answer === '1' || answer === 'claude' || answer === 'claude code') {
+      return { doClaude: true, doCursor: false, doCodex: false };
+    }
+    if (answer === '2' || answer === 'cursor') {
+      return { doClaude: false, doCursor: true, doCodex: false };
+    }
+    if (answer === '3' || answer === 'codex' || answer === 'codex cli') {
+      return { doClaude: false, doCursor: false, doCodex: true };
+    }
+    if (answer === '4' || answer === 'all' || answer === 'all three') {
+      return { doClaude: true, doCursor: true, doCodex: true };
+    }
+
+    console.log(`  ${Y}Please choose 1, 2, 3, or 4.${X}`);
+  }
+}
+
 /** Strip characters that are unsafe in MCP server key names. */
 function sanitizeName(s) {
   return s.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'vm';
@@ -161,6 +193,13 @@ const API_KEY_VARS = {
   gemini:    'GEMINI_API_KEY',
   ollama:    null,
 };
+
+const ARG_SET = new Set(process.argv.slice(2));
+const WANT_CLAUDE = ARG_SET.has('--claude');
+const WANT_CURSOR = ARG_SET.has('--cursor');
+const WANT_CODEX = ARG_SET.has('--codex') || ARG_SET.has('--codex-only');
+const WANT_ALL = ARG_SET.has('--all');
+const HAVE_EXPLICIT_INTEGRATION_FLAGS = WANT_CLAUDE || WANT_CURSOR || WANT_CODEX || WANT_ALL;
 
 // ---------------------------------------------------------------------------
 // Hookify rule content (Claude Code only)
@@ -362,7 +401,7 @@ function targetNextStep(target) {
 async function main() {
   console.log();
   console.log(`${B}SysKnife Setup${X}`);
-  console.log(`  Configures MCP for Claude Code, Cursor, and Codex CLI.`);
+  console.log(`  Configures MCP for the selected integration.`);
   console.log(`  Supports single and multi-VM (fleet) configurations.`);
   console.log();
 
@@ -447,19 +486,19 @@ async function main() {
   console.log();
   const model = await ask(rl, lineQueue, 'Model name', MODEL_DEFAULTS[provider]);
 
-  // ── 5. Client selection ───────────────────────────────────────────────────
+  // ── 5. Integration selection ─────────────────────────────────────────────
 
-  console.log();
-  hr();
-  console.log(`  ${B}AI clients to configure${X}  ${D}(press Enter to accept defaults)${X}`);
-  console.log();
-  const wantClaude = await ask(rl, lineQueue, 'Configure Claude Code?', 'Y');
-  const wantCursor = await ask(rl, lineQueue, 'Configure Cursor?',      'Y');
-  const wantCodex  = await ask(rl, lineQueue, 'Configure Codex CLI?',   'Y');
+  let doClaude;
+  let doCursor;
+  let doCodex;
 
-  const doClaude = !wantClaude.toLowerCase().startsWith('n');
-  const doCursor = !wantCursor.toLowerCase().startsWith('n');
-  const doCodex  = !wantCodex.toLowerCase().startsWith('n');
+  if (HAVE_EXPLICIT_INTEGRATION_FLAGS) {
+    doClaude = WANT_ALL || WANT_CLAUDE;
+    doCursor = WANT_ALL || WANT_CURSOR;
+    doCodex = WANT_ALL || WANT_CODEX;
+  } else {
+    ({ doClaude, doCursor, doCodex } = await askIntegration(rl, lineQueue));
+  }
 
   if (!doClaude && !doCursor && !doCodex) {
     console.log();
@@ -729,6 +768,11 @@ if (process.argv.includes('--help') || process.argv.includes('-h')) {
   npx sysknife-setup [OPTIONS]
 
 \x1b[1mOPTIONS\x1b[0m
+  --claude      Configure Claude Code only.
+  --cursor      Configure Cursor only.
+  --codex       Configure Codex CLI only.
+  --codex-only  Alias for --codex.
+  --all         Configure Claude Code, Cursor, and Codex CLI.
   --help, -h    Show this help message and exit.
 
 \x1b[1mDESCRIPTION\x1b[0m
@@ -757,8 +801,14 @@ if (process.argv.includes('--help') || process.argv.includes('-h')) {
       writing them to config files in plain text.
 
 \x1b[1mEXAMPLES\x1b[0m
-  \x1b[2m# Single VM — defaults to /run/sysknife/daemon.sock\x1b[0m
+  \x1b[2m# Pick one integration interactively\x1b[0m
   npx sysknife-setup
+
+  \x1b[2m# Codex-only setup\x1b[0m
+  npx sysknife-setup --codex
+
+  \x1b[2m# Cursor-only setup\x1b[0m
+  npx sysknife-setup --cursor
 
   \x1b[2m# From an SSH-tunnelled socket\x1b[0m
   \x1b[2m# (answer socket prompt with the tunnel path)\x1b[0m

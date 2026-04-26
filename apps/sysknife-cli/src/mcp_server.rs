@@ -1,6 +1,6 @@
 //! MCP server entry point for `sysknife mcp-server`.
 //!
-//! Exposes five tools:
+//! Exposes five tools plus one discovery resource:
 //!
 //! - `sysknife_plan`         — turn a natural-language intent into a risk-labelled plan.
 //! - `sysknife_execute`      — execute a plan returned by `sysknife_plan`.
@@ -36,9 +36,14 @@ use std::path::PathBuf;
 
 use rmcp::{
     handler::server::wrapper::{Json, Parameters},
-    schemars, tool, tool_router,
+    model::{
+        AnnotateAble, Implementation, ListResourceTemplatesResult, ListResourcesResult,
+        PaginatedRequestParams, ReadResourceRequestParams, ReadResourceResult, Resource,
+        ResourceContents, ServerCapabilities, ServerInfo,
+    },
+    schemars, tool, tool_handler, tool_router,
     transport::stdio,
-    ErrorData, ServiceExt,
+    ErrorData, ServerHandler, ServiceExt,
 };
 use serde::{Deserialize, Serialize};
 use sysknife_types::RiskLevel;
@@ -272,7 +277,21 @@ pub struct AuditVerifyReport {
 #[derive(Debug, Clone)]
 pub struct SysknifeMcpServer;
 
-#[tool_router(server_handler)]
+const SYSKNIFE_DISCOVERY_URI: &str = "sysknife://about";
+const SYSKNIFE_DISCOVERY_NAME: &str = "about";
+const SYSKNIFE_DISCOVERY_TITLE: &str = "SysKnife MCP server";
+const SYSKNIFE_DISCOVERY_DESCRIPTION: &str = "Discovery resource for Codex and other MCP clients.";
+const SYSKNIFE_DISCOVERY_BODY: &str = "SysKnife exposes a small tool set for planning and executing Linux system administration tasks.\n\nUse `sysknife_plan` first, present the plan to the user, wait for explicit approval, and only then call `sysknife_execute`.\n\nAvailable read-only tools: `sysknife_history`, `sysknife_doctor`, and `sysknife_audit_verify`.";
+
+fn sysknife_about_resource() -> Resource {
+    rmcp::model::RawResource::new(SYSKNIFE_DISCOVERY_URI, SYSKNIFE_DISCOVERY_NAME)
+        .with_title(SYSKNIFE_DISCOVERY_TITLE)
+        .with_description(SYSKNIFE_DISCOVERY_DESCRIPTION)
+        .with_mime_type("text/plain")
+        .no_annotation()
+}
+
+#[tool_router]
 impl SysknifeMcpServer {
     /// Plan a Linux system administration intent.
     ///
@@ -362,6 +381,63 @@ impl SysknifeMcpServer {
     )]
     async fn sysknife_audit_verify(&self) -> Result<Json<AuditVerifyReport>, ErrorData> {
         Ok(Json(audit_verify_inner().await))
+    }
+}
+
+#[tool_handler]
+impl ServerHandler for SysknifeMcpServer {
+    fn get_info(&self) -> ServerInfo {
+        ServerInfo::new(
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_resources()
+                .build(),
+        )
+        .with_server_info(Implementation::from_build_env())
+        .with_instructions(
+            "SysKnife provides planning and execution tools for Linux system administration.",
+        )
+    }
+
+    async fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
+    ) -> Result<ListResourcesResult, ErrorData> {
+        Ok(ListResourcesResult {
+            resources: vec![sysknife_about_resource()],
+            next_cursor: None,
+            meta: None,
+        })
+    }
+
+    async fn list_resource_templates(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, ErrorData> {
+        Ok(ListResourceTemplatesResult {
+            resource_templates: Vec::new(),
+            next_cursor: None,
+            meta: None,
+        })
+    }
+
+    async fn read_resource(
+        &self,
+        ReadResourceRequestParams { uri, .. }: ReadResourceRequestParams,
+        _context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
+    ) -> Result<ReadResourceResult, ErrorData> {
+        match uri.as_str() {
+            SYSKNIFE_DISCOVERY_URI => Ok(ReadResourceResult::new(vec![ResourceContents::text(
+                SYSKNIFE_DISCOVERY_BODY,
+                uri,
+            )])),
+            _ => Err(ErrorData::resource_not_found(
+                "resource_not_found",
+                Some(serde_json::json!({ "uri": uri })),
+            )),
+        }
     }
 }
 
@@ -961,6 +1037,32 @@ mod tests {
         assert!(
             desc.to_lowercase().contains("stop"),
             "sysknife_plan description must tell the agent to STOP after planning; got: {desc}"
+        );
+    }
+
+    #[test]
+    fn discovery_resource_is_present_and_readable() {
+        let resource = sysknife_about_resource();
+        assert_eq!(resource.uri, SYSKNIFE_DISCOVERY_URI);
+        assert_eq!(resource.name, SYSKNIFE_DISCOVERY_NAME);
+        assert_eq!(resource.title.as_deref(), Some(SYSKNIFE_DISCOVERY_TITLE));
+        assert_eq!(
+            resource.description.as_deref(),
+            Some(SYSKNIFE_DISCOVERY_DESCRIPTION)
+        );
+        assert_eq!(resource.mime_type.as_deref(), Some("text/plain"));
+    }
+
+    #[test]
+    fn get_info_exposes_resources_capability_for_codex() {
+        let info = SysknifeMcpServer.get_info();
+        assert!(
+            info.capabilities.resources.is_some(),
+            "Codex-compatible MCP servers should advertise resources"
+        );
+        assert!(
+            info.capabilities.tools.is_some(),
+            "SysKnife must continue advertising tools"
         );
     }
 

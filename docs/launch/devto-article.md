@@ -169,8 +169,9 @@ ollama pull qwen3:8b
 sysknife "show disk usage"
 ```
 
-The MCP server lets Claude Code and Cursor call `sysknife_plan` and
-`sysknife_execute` directly. Setup with `npx sysknife-setup`.
+The MCP server lets Claude Code, Cursor, and Codex CLI call
+`sysknife_plan` and `sysknife_execute` directly. Setup with
+`npx sysknife-setup` and pick the integration you want.
 
 ---
 

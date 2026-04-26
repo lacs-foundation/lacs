@@ -1,7 +1,7 @@
 # Quick Start
 
-> **Recommended:** use SysKnife through Claude Code, Claude Desktop, or
-> Cursor via the [MCP Server](mcp.md). You get the full
+> **Recommended:** use SysKnife through Claude Code, Claude Desktop,
+> Cursor, or Codex CLI via the [MCP Server](mcp.md). You get the full
 > plan/approve/execute loop without leaving your AI assistant.
 
 ## Prerequisites

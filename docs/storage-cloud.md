@@ -7,8 +7,9 @@ SysKnife supports two audit-log backends, selected at daemon startup:
   durability, nothing to forward to a SOC, no centralised retention.
 - **Postgres** — managed or self-hosted. **Recommended for production.**
 
-Set the backend in `~/.config/sysknife/config.toml` or use `npx sysknife-setup`
-which prompts you at install time.
+Set the backend in `~/.config/sysknife/config.toml` or via environment
+variables before starting the daemon. `npx sysknife-setup` configures the
+MCP integration, not the storage backend.
 
 ```toml
 [storage]
@@ -147,16 +148,10 @@ You decide. Default to `verify-full` with a configurable `ca_file`. Allow
 | `cannot execute INSERT in a read-only transaction` | URL points at an Aurora reader or a CockroachDB follower. Use the writer/cluster endpoint. |
 | First write hangs ~600 ms intermittently | Neon scale-to-zero cold start. Raise `acquire_timeout_secs` to 30. |
 
-## Choosing between SQLite and Postgres at setup time
-
-`npx sysknife-setup` will offer the choice:
-
-```text
-? Audit-log backend:
-  ❯ Managed Postgres (recommended for production)
-    Local SQLite (testing / sandbox only)
-```
+## Choosing between SQLite and Postgres
 
 Pick **Postgres** unless you have a specific reason to keep audit history
-on the host. The setup wizard validates the URL by attempting a connection
-and surfaces TLS / firewall / DNS errors before the daemon starts.
+on the host. Configure it in `~/.config/sysknife/config.toml` or with
+environment variables before starting the daemon. The daemon validates the
+URL by attempting a connection and surfaces TLS / firewall / DNS errors
+before it begins normal operation.

@@ -61,22 +61,19 @@ only privileged process.
 
 ---
 
-## Recommended: use via Claude Code or Claude Desktop (MCP)
+## Recommended: use via Claude Code, Cursor, or Codex CLI (MCP)
 
 The fastest way to use SysKnife is through the MCP server. Claude Code,
-Claude Desktop, and Cursor all support it. You get the full
+Cursor, and Codex CLI all support it. You get the full
 plan/approve/execute loop inside your AI assistant — no separate
 terminal needed.
 
 ```sh
-# 1. Build the binary
-cargo build -p sysknife-cli --release
+# 1. Run the setup wizard
+npx sysknife-setup
 
-# 2. Add to .mcp.json (copy .mcp.json.example and fill in your values)
-cp .mcp.json.example .mcp.json
-
-# 3. Reload the MCP server in your client
-# In Claude Code: /reload-plugins
+# 2. Pick the integration you want
+#    or use one of: --claude, --cursor, --codex, --all
 ```
 
 See the [MCP Server guide](mcp.md) for the full setup, including SSH

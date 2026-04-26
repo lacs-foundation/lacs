@@ -11,9 +11,18 @@ npx sysknife-setup
 Run from the root of your project. The wizard is interactive and scriptable
 via stdin redirection.
 
+Choose one integration interactively, or pass a flag to go straight to it:
+
+```sh
+npx sysknife-setup --claude
+npx sysknife-setup --cursor
+npx sysknife-setup --codex
+```
+
 ## What gets written
 
-The wizard asks which AI clients to configure (all three selected by default).
+The wizard asks which integration to configure, then writes only the files
+for that client.
 
 ### Claude Code
 
@@ -61,5 +70,10 @@ entry (`sysknife-web`, `sysknife-db`, …) across all written config files.
 ## Options
 
 ```
+--claude      Configure Claude Code only
+--cursor      Configure Cursor only
+--codex       Configure Codex CLI only
+--codex-only  Alias for --codex
+--all         Configure Claude Code, Cursor, and Codex CLI
 --help, -h    Show help and exit
 ```
