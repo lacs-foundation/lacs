@@ -84,6 +84,36 @@ jobs:
             sha256sums-linux-${{ matrix.arch }}.txt
           retention-days: 1
 
+  publish-npm:
+    name: Publish sysknife-setup to npm
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Smoke-test the package
+        run: node packages/setup/index.js --help
+
+      - name: Publish to npm
+        if: ${{ secrets.NPM_TOKEN != '' }}
+        run: cd packages/setup && npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Notice when NPM_TOKEN is absent
+        if: ${{ secrets.NPM_TOKEN == '' }}
+        run: |
+          echo "::notice title=npm publish skipped::NPM_TOKEN secret is not set; \
+          configure it in Settings -> Secrets -> Actions to enable automatic publishing."
+
   release:
     name: Create GitHub release
     needs: build

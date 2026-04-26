@@ -220,6 +220,9 @@ pub struct DoctorReport {
     pub brain_provider: String,
     /// Configured brain model identifier.
     pub brain_model: String,
+    /// Detected Linux distribution, e.g. `"Ubuntu 24.04"` or `"Fedora 41"`.
+    /// Set to `"unknown (<reason>)"` when `/etc/os-release` cannot be read.
+    pub distro: String,
     /// Resolved audit DB path. For Postgres deployments, the literal string
     /// `"postgres"` instead of a filesystem path.
     pub audit_db_path: String,
@@ -645,6 +648,16 @@ async fn doctor_inner() -> DoctorReport {
     let socket = resolve_socket_target();
     let socket_label = format!("{socket:?}");
 
+    // Detect the running distro — non-fatal if /etc/os-release is absent.
+    let distro = match sysknife_core::distro::detect() {
+        Ok(d) => d.to_string(),
+        Err(e) => {
+            let label = format!("unknown ({})", e);
+            warnings.push(format!("distro detection failed: {e}"));
+            label
+        }
+    };
+
     // Daemon connectivity — `curated_state` is sync, so spawn_blocking.
     let client = DaemonClient::new(socket);
     let daemon_reachable = match tokio::task::spawn_blocking(move || client.curated_state()).await {
@@ -691,6 +704,7 @@ async fn doctor_inner() -> DoctorReport {
         daemon_reachable,
         brain_provider,
         brain_model,
+        distro,
         audit_db_path,
         audit_chain_status,
         warnings,

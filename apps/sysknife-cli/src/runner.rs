@@ -257,6 +257,12 @@ pub async fn run_doctor(
     let socket_label = format!("{socket:?}");
     let client = DaemonClient::new(socket);
 
+    // Detect the running distro once; failure is non-fatal for doctor.
+    let distro_label = match sysknife_core::distro::detect() {
+        Ok(d) => d.to_string(),
+        Err(e) => format!("unknown ({})", e),
+    };
+
     // `curated_state` is a blocking sync call; use spawn_blocking so the
     // multi-threaded runtime is not blocked on one thread indefinitely.
     let state_result = tokio::task::spawn_blocking(move || client.curated_state())
@@ -272,6 +278,7 @@ pub async fn run_doctor(
                     "host": state.host_name(),
                     "provider": config.provider_name(),
                     "model": config.model_name(),
+                    "distro": distro_label,
                 });
                 log.println(&serde_json::to_string(&out).expect("static JSON"));
             } else {
@@ -280,6 +287,7 @@ pub async fn run_doctor(
                     state.host_name(),
                     config.provider_name(),
                     config.model_name(),
+                    &distro_label,
                     log,
                 );
             }
@@ -625,6 +633,11 @@ fn emit_verify_outcome(
 pub async fn run_intent(intent: String, opts: &RunOpts, log: &Logger) -> Result<(), CliError> {
     let config = BrainConfig::from_env().map_err(|e| CliError::ConfigOrDaemon(e.to_string()))?;
 
+    // Detect the running distro once at intent startup.
+    // Failure is non-fatal: routing checks are skipped when detection fails
+    // (the daemon will produce its own error at execution time).
+    let distro = sysknife_core::distro::detect().ok();
+
     let plan_client = DaemonClient::new(opts.socket.clone());
 
     // Layer 3: planning event channel — planner emits PlanEvent as it works;
@@ -748,6 +761,20 @@ pub async fn run_intent(intent: String, opts: &RunOpts, log: &Logger) -> Result<
                         .max_risk
                         .expect("ExceedsCeiling implies --max-risk was set"),
                 });
+            }
+        }
+    }
+
+    // ---- distro routing guard ---------------------------------------------
+    // Validate every step's action against the detected distro before
+    // executing anything.  This surfaces a clear error for obviously wrong
+    // plans (e.g. AptInstall on Fedora) without touching the daemon.
+    if !opts.dry_run {
+        for step in plan.steps() {
+            if let Err(msg) =
+                crate::distro_routing::check_action_distro(step.action_name(), distro.as_ref())
+            {
+                return Err(CliError::ConfigOrDaemon(msg));
             }
         }
     }

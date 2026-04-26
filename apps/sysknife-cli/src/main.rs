@@ -1,6 +1,7 @@
 mod approval;
 mod cli;
 mod client;
+mod distro_routing;
 mod error;
 mod mcp_server;
 mod render;
