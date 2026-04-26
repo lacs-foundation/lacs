@@ -8,15 +8,19 @@
 //! ## GrubSetKargs
 //!
 //! Modifies `GRUB_CMDLINE_LINUX_DEFAULT` in `/etc/default/grub`, then runs
-//! `sudo update-grub` to regenerate the GRUB config.
+//! `update-grub` to regenerate the GRUB config.
 //!
-//! **Backup:** before the edit, the current `/etc/default/grub` is copied to
-//! `/etc/default/grub.sysknife.bak`.  On `update-grub` failure the backup is
-//! restored via a shell `||` expression so the original file is never lost.
+//! **Backup:** before the edit, the current `/etc/default/grub` is backed up
+//! to `/etc/default/grub.sysknife.bak` by the helper.  On `update-grub`
+//! failure the helper restores the backup automatically.
 //!
-//! **Shell pipeline:** the entire operation is expressed as a single `bash -c`
-//! fragment so that the backup, edit, and grub-update are atomic from the
-//! executor's perspective (one `ActionSpec` / one process).
+//! **Helper script:** the entire operation is delegated to the root-owned
+//! helper script `/usr/lib/sysknife/grub-kargs-edit` (installed from
+//! `packaging/sysknife-grub-kargs-edit`).  This replaces the previous
+//! `bash -c` pipeline approach and eliminates the three unconstrained sudo
+//! grants for `python3`, `cp`, and `update-grub` (red-team HI1/HI2/HI3).
+//! The sudoers entry grants NOPASSWD only on the exact helper path:
+//!   `sysknife ALL=(root) NOPASSWD: /usr/lib/sysknife/grub-kargs-edit *`
 //!
 //! **Reboot required:** kernel argument changes do not take effect until the
 //! next boot.
@@ -33,11 +37,12 @@ use sysknife_types::RiskLevel;
 // Constants
 // ---------------------------------------------------------------------------
 
-/// GRUB configuration file path.
-const GRUB_DEFAULT: &str = "/etc/default/grub";
-
-/// Backup path written before any modification.
-const GRUB_BACKUP: &str = "/etc/default/grub.sysknife.bak";
+/// Installed path of the privileged GRUB kargs helper script.
+///
+/// The helper is installed to this path with mode 0755 and owned by root.
+/// See `packaging/sysknife-grub-kargs-edit` for the source and
+/// `packaging/sysknife-sudoers` for the corresponding NOPASSWD grant.
+const GRUB_KARGS_HELPER: &str = "/usr/lib/sysknife/grub-kargs-edit";
 
 // ---------------------------------------------------------------------------
 // specs() — for action_consistency tests
@@ -61,7 +66,7 @@ pub fn specs() -> Vec<ActionSpec> {
 pub fn grub_get_kargs() -> ActionSpec {
     ActionSpec {
         action_name: "GrubGetKargs",
-        mechanism: command_mechanism("grep", ["-E", r"^GRUB_CMDLINE_LINUX", GRUB_DEFAULT]),
+        mechanism: command_mechanism("grep", ["-E", r"^GRUB_CMDLINE_LINUX", "/etc/default/grub"]),
         risk_level: RiskLevel::Low,
         reboot_required: false,
         rollback_available: false,
@@ -72,20 +77,20 @@ pub fn grub_get_kargs() -> ActionSpec {
 /// original file, then run `update-grub`.
 ///
 /// Risk: High. Kernel argument changes affect every boot. Incorrect arguments
-/// can prevent the system from booting. A backup is written to
-/// `/etc/default/grub.sysknife.bak` and restored on `update-grub` failure.
+/// can prevent the system from booting. The helper script writes a backup to
+/// `/etc/default/grub.sysknife.bak` and restores it on `update-grub` failure.
 ///
-/// `append` — arguments to add (shell-safe strings, validated before call).
-/// `delete` — arguments to remove (shell-safe strings, validated before call).
+/// `append` — arguments to add (validated before call).
+/// `delete` — arguments to remove (validated before call).
 ///
 /// At least one of `append` / `delete` MUST be non-empty — calling with both
 /// empty is a no-op that still rewrites the GRUB config and runs `update-grub`,
 /// which is wasteful and misleading. The constructor returns
 /// `Err(KargsError::BothEmpty)` in that case.
 ///
-/// The implementation uses a Python one-liner to perform the in-line edit so
-/// the operation is portable across `sed` variants and handles quoting
-/// correctly.
+/// The underlying mechanism is a single `sudo` invocation of the root-owned
+/// helper script `GRUB_KARGS_HELPER` (no shell involved), which closes the
+/// unconstrained `python3`, `cp`, and `update-grub` sudoers grants.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum KargsError {
     #[error("at least one of append or delete must be non-empty")]
@@ -96,88 +101,28 @@ pub fn grub_set_kargs(append: &[&str], delete: &[&str]) -> Result<ActionSpec, Ka
     if append.is_empty() && delete.is_empty() {
         return Err(KargsError::BothEmpty);
     }
-    let append_str = append.join(" ");
-    let delete_args: Vec<String> = delete
-        .iter()
-        .map(|d| {
-            format!(
-                r#"line = re.sub(r'(?<!\S){re}(?!\S)\s*', '', line)"#,
-                re = regex_escape(d)
-            )
-        })
-        .collect();
-    let delete_block = delete_args.join("; ");
 
-    // Python script that:
-    // 1. Reads /etc/default/grub
-    // 2. Finds GRUB_CMDLINE_LINUX_DEFAULT="..."
-    // 3. Removes requested args from the value
-    // 4. Appends new args
-    // 5. Writes the file back in-place
-    let python_script = format!(
-        r#"import re, sys
-with open('{grub}', 'r') as f: lines = f.readlines()
-out = []
-for line in lines:
-    if line.startswith('GRUB_CMDLINE_LINUX_DEFAULT='):
-        m = re.match(r'^(GRUB_CMDLINE_LINUX_DEFAULT=")([^"]*)(".*)', line)
-        if m:
-            line = m.group(2).strip()
-            {delete_block}
-            line = (line + ' {append_str}').strip()
-            line = 'GRUB_CMDLINE_LINUX_DEFAULT="' + line + '"\n'
-        out.append(line)
-    else:
-        out.append(line)
-with open('{grub}', 'w') as f: f.writelines(out)
-"#,
-        grub = GRUB_DEFAULT,
-        delete_block = if delete_block.is_empty() {
-            "pass".to_string()
-        } else {
-            delete_block
-        },
-        append_str = append_str,
-    );
-
-    // Full shell command:
-    // 1. Back up the original file.
-    // 2. Run the Python edit.
-    // 3. Run update-grub; on failure, restore backup.
-    let shell_cmd = format!(
-        "sudo cp {backup} {grub}.tmp 2>/dev/null || true && \
-         sudo cp {grub} {backup} && \
-         sudo python3 -c {script:?} && \
-         sudo update-grub || (sudo cp {backup} {grub} && exit 1)",
-        grub = GRUB_DEFAULT,
-        backup = GRUB_BACKUP,
-        script = python_script,
-    );
+    // The helper accepts comma-separated lists. Empty list → empty string after
+    // the flag (the helper treats "" as "no tokens in this set").
+    let append_csv = append.join(",");
+    let delete_csv = delete.join(",");
 
     Ok(ActionSpec {
         action_name: "GrubSetKargs",
-        mechanism: command_mechanism("bash", ["-c", &shell_cmd]),
+        mechanism: command_mechanism(
+            "sudo",
+            [
+                GRUB_KARGS_HELPER,
+                "--append",
+                &append_csv,
+                "--delete",
+                &delete_csv,
+            ],
+        ),
         risk_level: RiskLevel::High,
         reboot_required: true,
         rollback_available: true,
     })
-}
-
-/// Minimal regex escaping for literal argument strings.
-///
-/// Only escapes characters that are special in Python `re` patterns and that
-/// could plausibly appear in kernel argument values.  Full escaping is not
-/// needed because `validated_safe_arg` in the executor already rejects
-/// shell-special characters.
-fn regex_escape(s: &str) -> String {
-    s.chars()
-        .flat_map(|c| match c {
-            '.' | '^' | '$' | '*' | '+' | '?' | '(' | ')' | '[' | ']' | '{' | '}' | '|' | '\\' => {
-                vec!['\\', c]
-            }
-            other => vec![other],
-        })
-        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -209,7 +154,10 @@ mod tests {
         let (prog, args) = extract_cmd(&spec);
         assert_eq!(prog, "grep");
         let joined = args.join(" ");
-        assert!(joined.contains(GRUB_DEFAULT), "missing grub path: {joined}");
+        assert!(
+            joined.contains("/etc/default/grub"),
+            "missing grub path: {joined}"
+        );
         assert!(
             joined.contains("GRUB_CMDLINE_LINUX"),
             "missing pattern: {joined}"
@@ -239,49 +187,53 @@ mod tests {
     }
 
     #[test]
-    fn grub_set_kargs_uses_bash() {
+    fn grub_set_kargs_invokes_sudo_helper() {
+        // The mechanism must be: program=sudo, args[0]=GRUB_KARGS_HELPER.
+        // No bash, no python3, no cp — those are now inside the helper itself.
         let spec = grub_set_kargs(&["quiet"], &["splash"]).unwrap();
-        let (prog, _) = extract_cmd(&spec);
-        assert_eq!(prog, "bash");
-    }
-
-    #[test]
-    fn grub_set_kargs_shell_fragment_contains_backup_path() {
-        let spec = grub_set_kargs(&["quiet"], &[]).unwrap();
-        let (_, args) = extract_cmd(&spec);
-        let joined = args.join(" ");
-        assert!(
-            joined.contains(GRUB_BACKUP),
-            "missing backup path: {joined}"
+        let (prog, args) = extract_cmd(&spec);
+        assert_eq!(prog, "sudo", "program must be sudo");
+        assert_eq!(
+            args[0], GRUB_KARGS_HELPER,
+            "first arg must be the helper path"
         );
     }
 
     #[test]
-    fn grub_set_kargs_shell_fragment_contains_update_grub() {
+    fn grub_set_kargs_argv_shape_append_only() {
+        // sudo /usr/lib/sysknife/grub-kargs-edit --append quiet --delete ""
         let spec = grub_set_kargs(&["quiet"], &[]).unwrap();
-        let (_, args) = extract_cmd(&spec);
-        let joined = args.join(" ");
-        assert!(
-            joined.contains("update-grub"),
-            "missing update-grub: {joined}"
-        );
+        let (prog, args) = extract_cmd(&spec);
+        assert_eq!(prog, "sudo");
+        assert_eq!(args[0], GRUB_KARGS_HELPER);
+        assert_eq!(args[1], "--append");
+        assert_eq!(args[2], "quiet");
+        assert_eq!(args[3], "--delete");
+        assert_eq!(args[4], "");
     }
 
     #[test]
-    fn grub_set_kargs_append_args_appear_in_script() {
-        let spec = grub_set_kargs(&["nomodeset", "quiet"], &[]).unwrap();
-        let (_, args) = extract_cmd(&spec);
-        let joined = args.join(" ");
-        assert!(joined.contains("nomodeset"), "missing nomodeset: {joined}");
-        assert!(joined.contains("quiet"), "missing quiet: {joined}");
-    }
-
-    #[test]
-    fn grub_set_kargs_delete_args_appear_in_script() {
+    fn grub_set_kargs_argv_shape_delete_only() {
+        // sudo /usr/lib/sysknife/grub-kargs-edit --append "" --delete splash
         let spec = grub_set_kargs(&[], &["splash"]).unwrap();
-        let (_, args) = extract_cmd(&spec);
-        let joined = args.join(" ");
-        assert!(joined.contains("splash"), "missing splash: {joined}");
+        let (prog, args) = extract_cmd(&spec);
+        assert_eq!(prog, "sudo");
+        assert_eq!(args[0], GRUB_KARGS_HELPER);
+        assert_eq!(args[1], "--append");
+        assert_eq!(args[2], "");
+        assert_eq!(args[3], "--delete");
+        assert_eq!(args[4], "splash");
+    }
+
+    #[test]
+    fn grub_set_kargs_argv_shape_both() {
+        // Multiple kargs join as comma-separated CSV.
+        let spec = grub_set_kargs(&["nomodeset", "quiet"], &["splash", "quiet"]).unwrap();
+        let (prog, args) = extract_cmd(&spec);
+        assert_eq!(prog, "sudo");
+        assert_eq!(args[0], GRUB_KARGS_HELPER);
+        assert_eq!(args[2], "nomodeset,quiet", "append CSV");
+        assert_eq!(args[4], "splash,quiet", "delete CSV");
     }
 
     #[test]
@@ -308,18 +260,6 @@ mod tests {
         // append/delete must be non-empty". A direct Rust caller can't bypass.
         let err = grub_set_kargs(&[], &[]).unwrap_err();
         assert_eq!(err, KargsError::BothEmpty);
-    }
-
-    // ── regex_escape ──────────────────────────────────────────────────────────
-
-    #[test]
-    fn regex_escape_plain_string_unchanged() {
-        assert_eq!(regex_escape("quiet"), "quiet");
-    }
-
-    #[test]
-    fn regex_escape_dot_is_escaped() {
-        assert_eq!(regex_escape("ro.dm"), r"ro\.dm");
     }
 
     // ── specs() completeness ─────────────────────────────────────────────────

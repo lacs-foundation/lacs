@@ -232,6 +232,12 @@ visudo -cf packaging/sysknife-sudoers || fail "visudo validate"
 install -Dm 440 packaging/sysknife-sudoers "${SUDOERS_DIR}/sysknife" \
     || fail "Install sudoers fragment"
 
+# Privileged helper scripts — root-owned, mode 0755, not writable by sysknife.
+# grub-kargs-edit: invoked by GrubSetKargs via `sudo /usr/lib/sysknife/grub-kargs-edit`.
+# Replaces the previous unconstrained python3/cp/update-grub grants (HI1/HI2/HI3).
+install -Dm 755 packaging/sysknife-grub-kargs-edit /usr/lib/sysknife/grub-kargs-edit \
+    || fail "Install sysknife-grub-kargs-edit"
+
 # ---------------------------------------------------------------------------
 # Step 6: Add VM user to sysknife groups
 # ---------------------------------------------------------------------------
