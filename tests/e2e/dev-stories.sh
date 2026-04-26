@@ -23,7 +23,7 @@
 #
 # LLM provider is auto-detected (same logic as BrainConfig::from_env):
 #   - ANTHROPIC_API_KEY set  → provider=anthropic, model=claude-sonnet-4-6
-#   - OPENAI_API_KEY set     → provider=openai,    model=gpt-4o-2024-11-20
+#   - OPENAI_API_KEY set     → provider=openai,    model=gpt-4.1
 #   - GEMINI_API_KEY set     → provider=gemini,    model=gemini-2.0-flash
 #   - otherwise              → provider=ollama,    model=qwen3:8b (must be pulled)
 #
@@ -195,7 +195,7 @@ STORY_NAMES[54]="UpdateFlatpak — update all, no specific app (destructive)"
 ALLOW_DESTRUCTIVE="${SYSKNIFE_ALLOW_DESTRUCTIVE:-0}"
 STORY_TIMEOUT="${SYSKNIFE_STORY_TIMEOUT:-120}"
 # Delay between stories (seconds). Avoids TPM rate-limit errors when running
-# all 20 stories back-to-back against a cloud LLM. Each gpt-4o story uses
+# all 20 stories back-to-back against a cloud LLM. Each story uses
 # ~3 K tokens; at 30 K TPM the safe cadence is one story per ~6 s.
 # Default 10 s is conservative; set SYSKNIFE_STORY_DELAY=0 to disable.
 STORY_DELAY="${SYSKNIFE_STORY_DELAY:-10}"

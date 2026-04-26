@@ -3,7 +3,7 @@
 //! Replaces the rig-based OpenAI path to avoid three rig issues:
 //!
 //! 1. rig defaults to `/v1/responses` (Responses API), not `/v1/chat/completions`.
-//! 2. The Responses API emits reasoning content items for some gpt-4o variants,
+//! 2. The Responses API emits reasoning content items for some model variants,
 //!    causing `from_rig_response` to return "unsupported content types" errors.
 //! 3. rig issue #1599: on the Responses API path, the system prompt ends up in
 //!    a user message instead of the `instructions` field — a regression from a
@@ -663,7 +663,7 @@ mod tests {
                 logprobs: None,
             }],
             created: 0,
-            model: "gpt-4o".into(),
+            model: "gpt-4.1".into(),
             system_fingerprint: None,
             object: "chat.completion".into(),
             usage: None,
@@ -689,7 +689,7 @@ mod tests {
                 logprobs: None,
             }],
             created: 0,
-            model: "gpt-4o".into(),
+            model: "gpt-4.1".into(),
             system_fingerprint: None,
             object: "chat.completion".into(),
             usage: None,
@@ -769,7 +769,7 @@ mod tests {
             id: "test".into(),
             choices: vec![],
             created: 0,
-            model: "gpt-4o".into(),
+            model: "gpt-4.1".into(),
             system_fingerprint: None,
             object: "chat.completion".into(),
             usage: None,
@@ -799,7 +799,7 @@ mod tests {
                 logprobs: None,
             }],
             created: 0,
-            model: "gpt-4o".into(),
+            model: "gpt-4.1".into(),
             system_fingerprint: None,
             object: "chat.completion".into(),
             usage: None,
@@ -837,7 +837,7 @@ mod tests {
                 logprobs: None,
             }],
             created: 0,
-            model: "gpt-4o".into(),
+            model: "gpt-4.1".into(),
             system_fingerprint: None,
             object: "chat.completion".into(),
             usage: None,

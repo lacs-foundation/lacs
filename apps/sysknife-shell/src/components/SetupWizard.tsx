@@ -98,7 +98,7 @@ const CLOUD_PROVIDERS: { id: CloudProvider; label: string; placeholder: string; 
 
 const DEFAULT_CLOUD_MODELS: Record<CloudProvider, string> = {
   anthropic: "claude-sonnet-4-20250514",
-  openai: "gpt-4o",
+  openai: "gpt-4.1",
   gemini: "gemini-2.0-flash",
   groq: "llama-3.3-70b-versatile",
   deepseek: "deepseek-chat",
