@@ -92,7 +92,14 @@ pub fn min_role_for_action(action_name: &str) -> Option<CallerRole> {
         // ── Ubuntu / Flatpak read-only ────────────────────────────────────
         | "UbuntuListFlatpaks"
         // ── Ubuntu / fail2ban read-only ───────────────────────────────────
-        | "Fail2banStatus" => CallerRole::Observer,
+        | "Fail2banStatus"
+        // ── Ubuntu Pro / Livepatch / Multipass read-only (Tier 3) ─────────
+        //
+        // ProStatus, LivepatchStatus, MultipassList are all read-only queries
+        // that require no subscription or elevated role.
+        | "ProStatus"
+        | "LivepatchStatus"
+        | "MultipassList" => CallerRole::Observer,
 
         // ── Medium-risk mutations (Dev) ──────────────────────────────────
         //
@@ -170,7 +177,12 @@ pub fn min_role_for_action(action_name: &str) -> Option<CallerRole> {
         // ── Ubuntu / fail2ban medium-risk ──────────────────────────────────
         //
         // UnbanIp removes a ban; the address can be re-banned if needed.
-        | "Fail2banUnbanIp" => CallerRole::Dev,
+        | "Fail2banUnbanIp"
+        // ── Ubuntu / netplan medium-risk (Tier 3) ─────────────────────────
+        //
+        // NetplanGenerate regenerates backend config files without reloading
+        // interfaces — a dry-run / validation step that does not apply changes.
+        | "NetplanGenerate" => CallerRole::Dev,
 
         // ── High-risk system mutations (Admin) ───────────────────────────
         //
@@ -244,7 +256,33 @@ pub fn min_role_for_action(action_name: &str) -> Option<CallerRole> {
         // Fail2banBanIp immediately blocks an IP for all traffic passing
         // through the named jail. Banning the admin's own IP on sshd severs
         // remote access. (T1562.004 Defense Evasion; NIST SC-7.)
-        | "Fail2banBanIp" => CallerRole::Admin,
+        | "Fail2banBanIp"
+        // ── Ubuntu / ufw Tier 3 high-risk ────────────────────────────────
+        //
+        // UfwDeleteRule removes a numbered rule — misconfigured deletion can
+        // expose services or drop needed traffic (T1562.004 Defense Evasion).
+        // UfwLimit adds rate-limiting; can inadvertently block legitimate
+        // traffic under high-connection workloads — same lock-out risk as
+        // other ufw mutations.
+        | "UfwDeleteRule"
+        | "UfwLimit"
+        // ── Ubuntu / netplan Tier 3 high-risk ────────────────────────────
+        //
+        // NetplanSet mutates the netplan config in-memory; misconfigurations
+        // applied via NetplanApply can disconnect SSH sessions (NIST SC-7).
+        | "NetplanSet"
+        // ── Ubuntu Pro Tier 3 high-risk ───────────────────────────────────
+        //
+        // ProAttach binds the machine to a subscription contract (T1078.003
+        // Valid Accounts — contract modification). ProDetach removes it.
+        | "ProAttach"
+        | "ProDetach"
+        // ── Ubuntu release upgrade Tier 3 high-risk ───────────────────────
+        //
+        // UbuntuReleaseUpgrade upgrades the entire OS to the next release.
+        // Takes 20–45 minutes, requires reboot, and is effectively irreversible
+        // without a full reinstall (High; Admin gating).
+        | "UbuntuReleaseUpgrade" => CallerRole::Admin,
 
         _ => return None,
     };

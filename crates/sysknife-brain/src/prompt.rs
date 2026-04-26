@@ -721,7 +721,8 @@ GrubGetKargs,
 DistroboxList,
 AppArmorStatus, CloudInitStatus,
 UbuntuListFlatpaks,
-Fail2banStatus
+Fail2banStatus,
+ProStatus, LivepatchStatus, MultipassList
 
 ### Medium risk (Debian-specific)
 
@@ -732,16 +733,19 @@ AddPpa, RemovePpa,
 DistroboxCreate, DistroboxRemove,
 AppArmorComplain,
 UbuntuInstallFlatpak, UbuntuRemoveFlatpak, UbuntuUpdateFlatpak,
-Fail2banUnbanIp
+Fail2banUnbanIp,
+NetplanGenerate
 
 ### High risk (Debian-specific)
 
 AptUpgrade,
 GrubSetKargs,
-UfwEnable, UfwDisable, UfwAllow, UfwDeny, UfwReset,
-NetplanApply,
+UfwEnable, UfwDisable, UfwAllow, UfwDeny, UfwReset, UfwDeleteRule, UfwLimit,
+NetplanApply, NetplanSet,
 AppArmorEnforce,
-Fail2banBanIp
+Fail2banBanIp,
+ProAttach, ProDetach,
+UbuntuReleaseUpgrade
 "#;
 
 const DEBIAN_SELECTION_RULES: &str = r#"
@@ -761,8 +765,18 @@ const DEBIAN_SELECTION_RULES: &str = r#"
 - `SnapClassicInstall` installs a snap with classic confinement (full system access) — MEDIUM.
 - `UfwAllow` and `UfwDeny` mutate firewall rules — HIGH (lock-out risk on remote sessions).
 - `UfwEnable` and `UfwDisable` toggle the firewall on/off — HIGH.
+- `UfwDeleteRule` removes a numbered rule (`ufw status numbered` shows indices) — HIGH. Use when the user says "delete rule 3" or "remove rule number N". Param: `rule_number` (positive integer). Never use for named port/service removal — use `UfwDeny` or `UfwReset` instead.
+- `UfwLimit` adds rate-limiting on a port/service (blocks IPs with >6 connections/30 s) — HIGH. Use for SSH brute-force mitigation ("rate limit SSH", "limit port 22"). Prefer `UfwAllow` when the intent is simply to open a port without rate limiting.
+- `NetplanSet` sets a single netplan key in-memory — HIGH. Run `NetplanApply` afterward to activate. Use when changing a specific setting (e.g. DHCP, DNS). Prefer `NetplanSet` + `NetplanApply` over editing YAML files directly.
+- `NetplanGenerate` regenerates backend config files without reloading interfaces — MEDIUM. Use as a dry-run / validation step before `NetplanApply`.
 - `NetplanApply` applies pending network configuration — HIGH (can disconnect the active interface).
 - `DistroboxCreate` creates an isolated container that can be cleanly removed — MEDIUM.
+- `ProStatus` shows Ubuntu Pro subscription state — LOW, read-only. Use for "is Ubuntu Pro active?", "what Pro services are enabled?".
+- `ProAttach` binds the machine to an Ubuntu Pro subscription — HIGH. Requires a token param (treated as a credential — never log or echo it). Use only when the user provides an explicit token.
+- `ProDetach` removes the active Ubuntu Pro subscription — HIGH. No params.
+- `LivepatchStatus` shows Canonical Livepatch kernel-patch state — LOW, read-only. Requires `canonical-livepatch` installed and Ubuntu Pro; surfaces "command not found" if binary is absent.
+- `MultipassList` lists Multipass VMs — LOW, read-only. Use for "list VMs", "show multipass instances".
+- `UbuntuReleaseUpgrade` upgrades to the next Ubuntu release — HIGH. Tier 3: takes 20–45 minutes, requires reboot. Only propose when the user explicitly requests a distribution upgrade. Do NOT propose for routine `apt upgrade`.
 - For system package installation, use `AptInstall`. Never propose rpm-ostree actions on this distro.
 - `AppArmorStatus` shows all loaded profiles — LOW, read-only. `AppArmorComplain` puts a profile into learning mode (logs violations but does not block) — MEDIUM. `AppArmorEnforce` activates enforcement (violations are blocked) — HIGH. Always prefer `AppArmorComplain` first to audit a profile before enforcing it.
 - `CloudInitStatus` shows the cloud-init provisioning result — LOW, read-only. Use for "did cloud-init run correctly?" or "were there provisioning errors?". Ubuntu/Debian only — Fedora Atomic uses Ignition instead.
@@ -806,7 +820,9 @@ const DEBIAN_PARAMS: &str = r#"
 **No params** — use `{}`: AptUpdate, AptAutoremove, AptListInstalled,
 AptListUpgradable, AptHistoryList, CheckPendingReboot,
 GrubGetKargs,
-UfwStatus, UfwEnable, UfwDisable, UfwReset, DistroboxList, NetplanGetConfig.
+UfwStatus, UfwEnable, UfwDisable, UfwReset, DistroboxList, NetplanGetConfig,
+NetplanApply, NetplanGenerate,
+ProStatus, ProDetach, LivepatchStatus, MultipassList, UbuntuReleaseUpgrade.
 
 **Apt**:
 - `AptInstall` / `AptRemove` / `AptPurge`: `{"package":"vim"}`
@@ -829,11 +845,20 @@ UfwStatus, UfwEnable, UfwDisable, UfwReset, DistroboxList, NetplanGetConfig.
 - `GrubSetKargs`: `{"append":["quiet","nomodeset"],"delete":["splash"]}` — either list may be `[]` but at least one must be non-empty
 
 **UFW**:
-- `UfwAllow` / `UfwDeny`: `{"rule":"22/tcp"}` or `{"rule":"ssh"}`
+- `UfwAllow` / `UfwDeny`: `{"port_or_service":"22/tcp"}` or `{"port_or_service":"ssh"}`
+- `UfwDeleteRule`: `{"rule_number":3}` — positive integer from `ufw status numbered`
+- `UfwLimit`: `{"target":"22"}` or `{"target":"ssh"}`
 
 **Netplan**:
 - `NetplanGetConfig`: `{}`
+- `NetplanSet`: `{"key":"ethernets.eth0.dhcp4","value":"true"}`
+- `NetplanGenerate`: `{}`
 - `NetplanApply`: `{}`
+
+**Ubuntu Pro**:
+- `ProStatus`: `{}`
+- `ProAttach`: `{"token":"<ubuntu-pro-token>"}` — token is a credential; never echo or log it
+- `ProDetach`: `{}`
 
 **Distrobox**:
 - `DistroboxList`: `{}`
@@ -1050,6 +1075,8 @@ pub const DEBIAN_ONLY_ACTION_NAMES: &[&str] = &[
     "DistroboxRemove",
     "NetplanGetConfig",
     "NetplanApply",
+    "NetplanSet",
+    "NetplanGenerate",
     "GrubGetKargs",
     "GrubSetKargs",
     "CheckPendingReboot",
@@ -1065,6 +1092,15 @@ pub const DEBIAN_ONLY_ACTION_NAMES: &[&str] = &[
     "Fail2banStatus",
     "Fail2banBanIp",
     "Fail2banUnbanIp",
+    // Tier 3
+    "UbuntuReleaseUpgrade",
+    "ProStatus",
+    "ProAttach",
+    "ProDetach",
+    "LivepatchStatus",
+    "MultipassList",
+    "UfwDeleteRule",
+    "UfwLimit",
 ];
 
 #[cfg(test)]
@@ -1107,6 +1143,8 @@ mod tests {
             "UfwAllow",
             "UfwStatus",
             "NetplanApply",
+            "NetplanSet",
+            "NetplanGenerate",
             "DistroboxCreate",
             "GrubGetKargs",
             "GrubSetKargs",
@@ -1123,6 +1161,15 @@ mod tests {
             "Fail2banStatus",
             "Fail2banBanIp",
             "Fail2banUnbanIp",
+            // Tier 3 Ubuntu-only actions
+            "UbuntuReleaseUpgrade",
+            "ProStatus",
+            "ProAttach",
+            "ProDetach",
+            "LivepatchStatus",
+            "MultipassList",
+            "UfwDeleteRule",
+            "UfwLimit",
         ] {
             assert!(
                 !p.contains(forbidden),
